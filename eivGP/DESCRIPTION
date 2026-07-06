@@ -1,0 +1,23 @@
+Package: eivGP
+Title: eivGP
+Version: 0.0.0.0001
+Authors@R: 
+    person("Sheng", "Jiang", , "jiangsheng@cuhk.edu.cn", role = c("aut", "cre"))
+Description: Errors-in-variables Gaussian processes for mixed-input tasks.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 8.0.0
+Imports: 
+    GA,
+    ggplot2,
+    laGP,
+    LaplacesDemon,
+    lhs,
+    magrittr,
+    mvtnorm,
+    pgdraw,
+    scatterplot3d,
+    tidyverse
+LitrVersionUsed: 0.9.3
+LitrId: 9f3201a73edd7095d1dc038264f25706

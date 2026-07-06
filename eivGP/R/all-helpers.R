@@ -1,0 +1,578 @@
+# Generated from _main.Rmd: do not edit by hand
+
+#' Gradient of the Log Conditional Density w.r.t U (Ordinal)
+#' 
+#' @param U Vector of current latent variables.
+#' @param r GP residual vector (C^-1 * y).
+#' @param phi Auxiliary variable for the determinant-free trick.
+#' @param K Kernel matrix.
+#' @param length.scale.u Length-scale parameter for latent input u.
+#' @param X.tilde Matrix of predictors with intercept.
+#' @param beta Coefficient vector for u ~ X.
+#' @param sigma.u2 Variance of the latent variable u.
+#' 
+#' @return A vector of gradients (same length as U).
+#' @export
+Gradient.ordinal <- function (U, r, phi, K, length.scale.u, X.tilde, beta, sigma.u2) {
+  
+  # Calculate the C.tilde matrix which combines GP residual and auxiliary variables
+  C.tilde <- (phi %*% t(phi) - r %*% t(r)) * K
+  
+  # Gradient composed of:
+  # 1. Non-Gaussian part (from GP likelihood)
+  # 2. Gaussian part (from the linear prior: u | X, beta, sigma.u2)
+  D.U <- 2 * length.scale.u * (diag(apply(C.tilde, 1, sum)) - C.tilde) %*% U - (U - X.tilde %*% beta) / sigma.u2
+  
+  return(D.U)
+}
+
+#' Gradient of the Log Conditional Density w.r.t U (Nominal)
+#' 
+#' @param U Matrix of current latent variables (n x d).
+#' @param phi Auxiliary matrix/vector from data augmentation.
+#' @param r GP residual vector (C^-1 * y).
+#' @param K Current kernel matrix.
+#' @param mn.u Posterior mean for latent variables (n x d).
+#' @param Qn.u Array of precision matrices (d x d x n) for the Gaussian part.
+#' @param length.scale.u Length-scale parameter for latent input u.
+#' 
+#' @return A matrix of gradients (n x d).
+#' @export
+Gradient.nominal <- function (U, phi, r, K, mn.u, Qn.u, length.scale.u) {
+  
+  n <- nrow(U)
+  
+  # 1. GP Likelihood part (Non-Gaussian part)
+  C.tilde <- (phi %*% t(phi) - r %*% t(r)) * K
+  D.U <- 2 * length.scale.u * (diag(apply(C.tilde, 1, sum)) - C.tilde) %*% U
+  
+  # 2. Gaussian part (from the stick-breaking choice model prior)
+  # This part is computed individually for each sample i
+  for (i in 1:n) {
+    D.U[i, ] <- D.U[i, ] - Qn.u[,,i] %*% (U[i, ] - mn.u[i, ])
+  }
+  
+  return(D.U)
+}
+
+
+#' Given hyper-parameter (rho, theta), estimate the marginal likelihood up to a constant factor by Monte Carlo.
+#' @param theta lengthscales of x and u
+#' @param rho signal-to-noise ratio. That is, the GP variance is rho^2*sigma.error2
+#' @param U.hist Samples of U from p(U|X, c)
+#' @param d: the dimension of u
+#' @param IG.a.error,IG.b.error parameters of the IG prior for sigma.error2
+#' 
+#' @return A vector storing the samples of marginal likelihood.
+#' @export
+EstimateEvidence <- function (theta, rho,
+                              U.hist,
+                              IG.a.error, IG.b.error,
+                              X, y, d = 1) {
+  
+  n <- nrow(U.hist)
+  n.mc <- ncol(U.hist)%/%d
+  mar.likelihood.hist <- rep(0, n.mc)
+  for (k in 1:n.mc) {
+    U <- U.hist[, ((k-1)*d+1):(k*d), drop = FALSE]
+    C <- KernelMatrix(W = cbind(X, U), Theta = c(theta, rho^2)) + diag(n)
+    C.chol <- t(chol(C)) # the (lower-triangular) Cholesky factor of C, i.e., C = C.chol%*%t(C.chol)
+    det.C <- prod(diag(C.chol))^2
+    #det.C <- c(determinant(C, logarithm = FALSE)$modulus) # C>0
+    r <- forwardsolve(C.chol, y)
+    a.tilde <- IG.a.error + n/2
+    b.tilde <- IG.b.error + sum(r^2)/2
+    #b.tilde <- IG.b.error + t(y)%*%solve(C)%*%y/2
+    mar.likelihood.hist[k] <- b.tilde^(-a.tilde)/sqrt(det.C)
+  }
+  return(mar.likelihood.hist)
+}  
+
+
+#' Unified Function to Generate Initial Values for U (and Tau)
+#' 
+#' @param input.type String. "ordinal" or "nominal".
+#' @param Gibbs.data List containing data parameters (n, m, c, U.obs, u.obs.idx, etc.).
+#' 
+#' @return A list of initial values (e.g., U0, Tau0).
+#' @export
+get.initial <- function(input.type, Gibbs.data = list()) {
+  
+  if (!(input.type %in% c("ordinal", "nominal"))) {
+    stop("Input Error: 'input.type' must be 'ordinal' or 'nominal'.")
+  }
+  
+  if (input.type == "ordinal") {
+    return(get.initial.ordinal(Gibbs.data))
+  } else {
+    return(get.initial.nominal(Gibbs.data))
+  }
+}
+
+
+#' Generate initial values for Ordinal Models
+#' @param Gibbs.data List containing data parameters (n, m, c, U.obs, u.obs.idx, etc.).
+#' 
+#' @return A list of initial values (e.g., U0, Tau0).
+get.initial.ordinal <- function(Gibbs.data) {
+  
+  # Unpack Inputs
+  n <- Gibbs.data$n           # or length(Gibbs.data$c)
+  m <- Gibbs.data$m
+  c.vec <- Gibbs.data$c
+  u.obs.idx <- Gibbs.data$u.obs.idx
+  U.obs <- Gibbs.data$U.obs
+  u.lb <- if(!is.null(Gibbs.data$u.lb)) Gibbs.data$u.lb else -Inf
+  u.ub <- if(!is.null(Gibbs.data$u.ub)) Gibbs.data$u.ub else Inf
+  
+  # Generate initial value of U and Tau for Gibbs.
+  # When U.obs is given, it is allowed that U is totally missing for some classes.
+  U <- rep(0, n)
+  
+  if (length(u.obs.idx) > 0) {
+    Tau.aug <- c(u.lb, rep(0, m - 1), u.ub)
+    
+    for (j in 1:(m - 1)) {
+      # Draw tau_j
+      lower.idx <- max(Tau.aug[j], U.obs[c.vec[u.obs.idx] <= j])
+      upper.idx <- min(u.ub, U.obs[c.vec[u.obs.idx] > j])
+      Tau.aug[j + 1] <- DrawTrunNormal(0, 1, lower.idx, upper.idx)  
+    }
+    
+    U <- DrawTrunNormal(0, 1, Tau.aug[c.vec], Tau.aug[c.vec + 1])
+    U[u.obs.idx] <- U.obs
+    Tau <- Tau.aug[2:m]
+    
+  } else {
+    # If no observed U, randomly initialize thresholds and U
+    Tau <- sort(rnorm(m - 1, u.lb, u.ub))
+    Tau.aug <- c(u.lb, Tau, u.ub)
+    U <- DrawTrunNormal(0, 1, Tau.aug[c.vec], Tau.aug[c.vec + 1])
+  }
+  
+  return(list(U0 = U, Tau0 = Tau, Tau.aug0 = Tau.aug))
+}
+
+
+
+#' Generate initial values for Ordinal Models
+#' @param Gibbs.data List containing data parameters (n, m, c, U.obs, u.obs.idx, etc.).
+#' 
+#' @return A list of initial values (e.g., U0, Tau0).
+get.initial.nominal <- function(Gibbs.data) {
+  
+  # Unpack Inputs
+  n <- Gibbs.data$n
+  m <- Gibbs.data$m
+  c.vec <- Gibbs.data$c
+  u.obs.idx <- Gibbs.data$u.obs.idx
+  U.obs <- Gibbs.data$U.obs
+  
+  # This function generates initial U according to a Gaussian model 
+  # fitted from the observed U for each class.
+  d <- ncol(U.obs)
+  U <- matrix(0, n, d)
+  
+  for (j in 1:m) {
+    # Extract observed U for class j
+    U.obs.j <- U.obs[which(c.vec[u.obs.idx] == j), , drop = FALSE]
+    
+    if (nrow(U.obs.j) > 0) {
+      mu.j <- apply(U.obs.j, 2, mean)
+      # Center the observations
+      U.obs.j.centered <- t(t(U.obs.j) - mu.j)
+      # Calculate covariance
+      Sigma.j <- t(U.obs.j.centered) %*% U.obs.j.centered / sum(c.vec[u.obs.idx] == j)
+      
+      # Sample missing U for this class
+      if (sum(c.vec == j) > 0) {
+        U[c.vec == j, ] <- rmvnorm(sum(c.vec == j), mu.j, Sigma.j)
+      }
+    }
+  }
+  
+  
+  # Ensure observed indices retain their actual true values
+  if (length(u.obs.idx) > 0) {
+    U[u.obs.idx, ] <- U.obs
+  }
+  
+  # Return consistently wrapped in a list
+  return(list(U0 = U))
+}
+
+
+#' Oracle prediction using the data-generating process.
+#' 
+#' @param input.type String. "ordinal" or "nominal".
+#' @param Gibbs.data List containing data inputs (e.g., X, c, X.star, c.star, code, limits).
+#' @param Gibbs.param List containing the true underlying parameters (e.g., beta, B.tilde, Tau,f).
+#' @param Gibbs.other List containing other settings (e.g., uniform, n.mc, seed).
+#' 
+#' @return A list containing the oracle histories (U.star.hist, y.predict.hist, etc.).
+#' @export
+predict.oracle <- function(input.type, Gibbs.data, Gibbs.param, Gibbs.other) {
+  
+  if (!(input.type %in% c("ordinal", "nominal"))) {
+    stop("Input Error: 'input.type' must be 'ordinal' or 'nominal'.")
+  }
+  
+  # Set random seed if provided
+  if (!is.null(Gibbs.other$seed)) {
+    set.seed(Gibbs.other$seed)
+  }
+  
+  if (input.type == "ordinal") {
+    message("Running Oracle Predictor for Ordinal model...")
+    return(predict.oracle.ordinal(Gibbs.data, Gibbs.param, Gibbs.other))
+  } else {
+    message("Running Oracle Predictor for Nominal model...")
+    return(predict.oracle.nominal(Gibbs.data, Gibbs.param, Gibbs.other))
+  }
+}
+
+#' Oracle prediction using the data-generating process.
+#' @param Gibbs.data List containing data inputs (e.g., X, c, X.star, c.star, code, limits).
+#' @param Gibbs.param List containing the true underlying parameters (e.g., beta, B.tilde, Tau,f).
+#' @param Gibbs.other List containing other settings (e.g., uniform, n.mc, seed).
+#' @return A list containing the oracle histories (U.star.hist, y.predict.hist, etc.).
+predict.oracle.ordinal <- function(Gibbs.data, Gibbs.param, Gibbs.other) {
+  
+  # 1. Unpack Inputs
+  
+  # Gibbs.data
+  code <- Gibbs.data$code
+  X.star <- Gibbs.data$X.star
+  c.star <- Gibbs.data$c.star
+  u.lb <- if(!is.null(Gibbs.data$u.lb)) Gibbs.data$u.lb else -Inf
+  u.ub <- if(!is.null(Gibbs.data$u.ub)) Gibbs.data$u.ub else Inf
+  
+  # Gibbs.param
+  beta <- Gibbs.param$beta
+  sigma.u2 <- Gibbs.param$sigma.u2
+  sigma.error2 <- Gibbs.param$sigma.error2
+  Tau <- Gibbs.param$Tau
+  
+  # Gibbs.other
+  uniform <- if(!is.null(Gibbs.other$uniform)) Gibbs.other$uniform else FALSE
+  n.mc <- if(!is.null(Gibbs.other$n.mc)) Gibbs.other$n.mc else 10000
+  seed <- if(! is.null(Gibbs.other$seed)) Gibbs.other$seed else 999
+  
+  # 2. Compute Constants and Initialize
+  n.star <- length(c.star)
+  U.star.hist <- matrix(0, nrow = n.star, ncol = n.mc)
+  f.predict.hist <- matrix(0, nrow = n.star, ncol = n.mc)
+  y.predict.hist <- matrix(0, nrow = n.star, ncol = n.mc)
+  
+  X.star.tilde <- cbind(1, X.star)
+  
+  # 3. Prediction Loop
+  for (idx in 1:n.mc) {
+    # Draw U.star
+    Tau.aug <- c(u.lb, Tau, u.ub)
+    if (uniform) {
+      # Uniform design independent of x
+      U.star <- runif(n.star, Tau.aug[c.star], Tau.aug[c.star+1])
+    } else {
+      # Gaussian DGP design
+      U.star <- DrawTrunNormal(X.star.tilde %*% beta, rep(sqrt(sigma.u2), n.star), 
+                               Tau.aug[c.star], Tau.aug[c.star+1])
+    }
+    U.star.hist[, idx] <- U.star
+    
+    # Draw y.star and f.star
+    f.predict.hist[, idx] <- ResponseFunction(X.star, as.matrix(U.star), code) 
+    y.predict.hist[, idx] <- f.predict.hist[, idx] + rnorm(n.star, 0, sqrt(sigma.error2))
+  }
+  
+  # Return Results
+  return(list(U.star.hist = U.star.hist,
+              y.predict.hist = y.predict.hist, 
+              f.predict.hist = f.predict.hist))
+}
+
+#' Oracle prediction using the data-generating process.
+#' @param Gibbs.data List containing data inputs (e.g., X, c, X.star, c.star, code, limits).
+#' @param Gibbs.param List containing the true underlying parameters (e.g., beta, B.tilde, Tau,f).
+#' @param Gibbs.other List containing other settings (e.g., uniform, n.mc, seed).
+#' 
+#' @return A list containing the oracle histories (U.star.hist, y.predict.hist, etc.).
+predict.oracle.nominal <- function(Gibbs.data, Gibbs.param, Gibbs.other) {
+  
+  # 1. Unpack Inputs
+  
+  # Gibbs.data
+  X <- Gibbs.data$X
+  c.vec <- Gibbs.data$c
+  u.lb <- if(!is.null(Gibbs.data$u.lb)) Gibbs.data$u.lb else -Inf
+  u.ub <- if(!is.null(Gibbs.data$u.ub)) Gibbs.data$u.ub else Inf
+  
+  # Gibbs.param
+  B.tilde <- Gibbs.param$B.tilde
+  Sigma.u <- Gibbs.param$Sigma.u
+  
+  # Gibbs.other
+  f <- Gibbs.other$f # True classifier function
+  uniform <- if(!is.null(Gibbs.other$uniform)) Gibbs.other$uniform else FALSE
+  n.mc <- Gibbs.other$n.mc
+  
+  # 2. Compute Constants and Initialize
+  n <- length(c.vec)
+  d <- ncol(Sigma.u)
+  cnt <- matrix(0, n, n.mc)
+  U.hist <- matrix(0, n, d*n.mc)
+  X.tilde <- cbind(1, X)
+  mean.u <- X.tilde %*% B.tilde
+  Chol.u <- t(chol(Sigma.u))
+  
+  # 3. Prediction Loop
+  for (idx in 1:n.mc) {
+    U <- matrix(0, n, d)
+    for (i in 1:n) {
+      cntt <- 0
+      # Accept-Reject sampling using the true classifier
+      while (TRUE) {
+        cntt <- cntt + 1
+        if (!uniform) {
+          U.prime <- c(mean.u[i, ] + Chol.u %*% rnorm(d))
+        } else {
+          U.prime <- runif(d, u.lb, u.ub)
+        }
+        c.prime <- f(U.prime[1], U.prime[2])$c
+        if (c.prime == c.vec[i]) {
+          U[i, ] <- U.prime
+          break
+        }
+      }
+      cnt[i, idx] <- cntt
+    }
+    U.hist[, ((idx-1)*d+1):(idx*d)] <- U
+  }
+  
+  # Return Results
+  return(list(U.hist = U.hist, cnt = cnt))
+}
+
+
+#' TBD
+#' 
+#' @param x: TBD
+#' @export
+GetMode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+
+#' Compute the kernel matrix K_{WV} with the inverse exponential squared kernel.
+#' 
+#' @param W: The data matrix with each row being an observation.
+#' @param Theta: The last one is the overall variance, and the rest are lengthscales.
+#' @param V: The second data matrix, by default is the same as W.
+#' 
+#' @export 
+KernelMatrix <- function (W, Theta, V = NULL, eps = 0) {
+  if (length(Theta) != ncol(W)+1) {
+    stop("Wrong number of kernel parameters!")
+  }
+  if (any(Theta < 0)) {
+    stop('Negative kernel parameter!')
+  }
+  
+  if (is.null(V)) 
+    V <- W
+  if (nrow(W) <= nrow(V)) {
+    K <- t(sapply(1:nrow(W), function(idx) exp(-apply((t(V)-W[idx,])^2*Theta[1:ncol(W)], 2, sum))))
+  } else {
+    K <- sapply(1:nrow(V), function(idx) exp(-apply((t(W)-V[idx,])^2*Theta[1:ncol(W)], 2, sum)))
+  }
+  K <- Theta[ncol(W)+1]*K  # Scale the kernel matrix
+  if (is.null(V) && eps>0) {
+    diag(K) <- diag(K) + eps # add a small perturbation to the kernel matrix for numerical inversion
+  }
+  return(K)
+}
+
+
+#' Compute energy distance.
+#' 
+#' @param X: predictions (a vector);
+#' @param Y: samples from the target
+#' 
+#' @export 
+EnergyDistance <- function (X, Y) {
+  n <- length(X)
+  m <- length(Y)
+  sxy <- 0
+  sxx <- 0
+  syy <- 0
+  for (i in 1:n) {
+    for (j in 1:m) {
+      sxy <- sxy + abs(X[i] - Y[j])
+    }
+  }
+  for (i in 1:n) {
+    for (j in 1:n) {
+      sxx <- sxx + abs(X[i] - X[j])
+    }
+  }
+  for (i in 1:m) {
+    for (j in 1:m) {
+      syy <- syy + abs(Y[i] - Y[j])
+    }
+  }
+  return(2*sxy/(n*m) - sxx/n^2 - syy/m^2)
+}
+
+#' Binary encoding of categorical variables
+#' 
+#' @param c: observed categorical variables in discrete space
+#' @param m: number of elements in such discrete space.
+#' 
+#' @export 
+BinaryEncode <- function (c, m) {
+  n <- length(c)
+  n.mat <- matrix(0, n, m)
+  N.mat <- matrix(0, n, m) 
+  for (i in 1:n) {
+    n.mat[i, c[i]] <- 1
+    N.mat[i, 1:c[i]] <- 1
+  }
+  n.mat <- n.mat[, -m]
+  N.mat <- N.mat[, -m]
+  kappa.mat <- n.mat - N.mat/2
+  return(list(n.mat = n.mat, N.mat = N.mat, kappa.mat = kappa.mat))
+}
+
+#' The mapping from (m-1) stick-breaking probabilities to m multinomial 
+#' probabilities (adding up to 1).
+#' 
+#' @param prob.tilde: m-1 Stick-breaking probabilities
+#'
+#' @export
+StickBreak <- function (prob.tilde) {
+  m <- length(prob.tilde) + 1
+  prob.tilde <- c(prob.tilde, 1)
+  prob <- rep(0, m)
+  prob[1] <- prob.tilde[1]
+  for (j in 2:m) {
+    prob[j] <- prod(1 - prob.tilde[1:(j-1)])*prob.tilde[j]
+  }
+  return(prob)
+}
+
+#' The mapping from m multinomial probabilities (adding up to 1) to (m-1) stick
+#' -breaking probabilities
+#' 
+#' @param prob: an multinomial mass function on several points. 
+#' @return m-1 Stick-breaking probabilities
+#' @export 
+StickBreak.inv <- function (prob) {
+  m <- length(prob)
+  prob.tilde <- rep(0, m-1)
+  prob.tilde[1] <- prob[1]
+  for (j in 2:(m-1)){
+    prob.tilde[j] <- prob[j]/(1 - sum(prob[1:(j-1)]))
+  }
+  return(prob.tilde)
+}
+
+#' Compute Categorical Probabilities via Stick-Breaking Multinomial Logistic
+#' Regression
+#' 
+#' @param gamma.mat: coefficient matrix within intercept
+#' @param U: matrix of continues latent variable.
+#' @return A list contain: prob,prob.tilde,linear score psi.
+#' @export 
+Classify.stickbreak <- function (gamma.mat, U) {
+  n <- nrow(U)
+  d <- ncol(U)
+  m <- nrow(gamma.mat) + 1
+  ##
+  U.tilde <- cbind(1, U)
+  psi.mat <- U.tilde%*%t(gamma.mat)
+  prob.tilde <- 1/(1 + exp(-psi.mat))
+  prob <- matrix(0, n, m)
+  for (i in 1:n) {
+    prob[i, ] <- StickBreak(prob.tilde[i, ]) 
+  }
+  ##
+  return(list(psi.mat = psi.mat, prob.tilde = prob.tilde, prob = prob))
+}
+
+#'
+#' @param x1,x2 basic input
+xexp <- function (x1, x2) {
+  x <- cbind(x1, x2)
+  
+  f <- x1*exp(-x1^2 - x2^2)
+  c <- rep(0, length(f))
+  c[x2 >= 1.3] <- 1
+  c[(x2 < 1.3) & (x1 <= 0)] <- 2
+  c[(x2 < 1.3) & (x1 > 0)] <- 3
+  
+  # return
+  return(list(f = f, c = c))
+}
+
+#' Ground Truth Response Functions for Numerical Experiments
+#' 
+#' @param X: Matrix of observed quantitative inputs.
+#' @param U: Matrix of latent continuous variables.
+#' @param code: Character string defining the function type.
+#' @return A vector of noise-free response values.
+#' @export 
+ResponseFunction <- function (X, U, code) {
+  if (code == 'sin') {
+    return(sin(U))
+  } else if (code == 'cos') {
+    return(cos(U))
+  } else if (code == 'quad') {
+    return((X + U)^2)
+  } else if (code == 'doppler') {
+    return(sqrt(U*(1-U))*sin(2.1*pi/(U+0.05)))
+  } else if (code == 'sin-step') {
+    U.ref <- c(0:4)*pi/2
+    U <- apply(U, 1, function(u) U.ref[which.min(abs(u - U.ref))])
+    return(sin(U))
+  } else if (code == 'quad-step') {
+    U.ref <- c(-1.5, -1, 0, 1, 1.5)
+    U <- apply(U, 1, function(u) U.ref[which.min(abs(u - U.ref))])
+    return((X + U)^2)
+  } else {
+    stop('Invalid code!')
+  }
+}
+
+#' Visualize the 2D Response Surface f(x, u)
+#' 
+#' @param code: Character string indicating the test function to visualize 
+#'   (e.g., 'sin', 'cos', 'quad', 'doppler').
+#' @param nx: Resolution of the grid (number of points along each axis).
+#' @param lb.u,ub.u: Lower and upper bounds for the latent U.
+#' @param lb.x,ub.x: Lower and upper bounds for the X.
+#' @return  A 3D perspective plot rendered using the `plot3D::persp3D` function.
+#' @export
+PlotResponse <- function (code, nx = 100, lb.u = -2, ub.u = 2, lb.x = -2, ub.x = 2) {
+  x <- seq(lb.x, ub.x, length = nx)
+  u <- seq(lb.u, ub.u, length = nx)
+  W <- expand.grid(x, u)
+  y <- ResponseFunction(matrix(W[, 1], ncol = 1), matrix(W[, 2], ncol = 1), code)
+  persp3D(x, u, matrix(y, ncol = nx), xlab = "x", ylab = "u", zlab = "y")
+}
+
+
+#' Simulate Independent Truncated Normal Variables by Inverse Probability Integral Transform.
+#' 
+#' @param mu Vector of means for the underlying normal distributions.
+#' @param sigma Vector of standard deviations.
+#' @param lb Vector of lower bounds for truncation.
+#' @param ub Vector of upper bounds for truncation.
+#' 
+#' @return A vector of samples from the truncated normal distribution(s).
+#' @export
+DrawTrunNormal <- function (mu, sigma, lb, ub) {
+  n <- max(length(mu), length(sigma), length(lb), length(ub))
+  u <- runif(n, pnorm(lb, mu, sigma), pnorm(ub, mu, sigma))
+  return(qnorm(u, mu, sigma))
+}

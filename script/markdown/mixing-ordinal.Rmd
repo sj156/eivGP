@@ -1,0 +1,481 @@
+---
+title: "Check the mixing of MCMC and analyze the inference results"
+author: "Penghui Fu, Sheng Jiang"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: 
+    toc: true
+    number_sections: true
+header-includes:
+  - \usepackage{pdflscape}
+  - \newcommand{\blandscape}{\begin{landscape}}
+  - \newcommand{\elandscape}{\end{landscape}}
+fontsize: 12pt
+params:
+  main.dir: 'script/main-code/'
+  fig.dir: 'penghui-local/output/figures/'
+  results.file: 'penghui-local/output/MCMC/EIV-ordinal-cos-10.rds'
+---
+
+```{r setup, include=FALSE}
+library(here)
+knitr::opts_knit$set(root.dir = here())
+knitr::opts_chunk$set(collapse = TRUE, message = FALSE, tidy = TRUE, tidy.opts = list(width.cutoff=60), fig.align = 'center', fig.width = 8, fig.height = 6)
+```
+
+# Preliminary
+
+Load packages and functions.
+
+```{r}
+library(akima)
+library(ggplot2)
+library(gridExtra)
+library(ggridges)
+library(patchwork)
+library(laGP)
+library(mvtnorm)
+library(LaplacesDemon)
+source(paste0(params$main.dir, 'basics-common.R'))
+source(paste0(params$main.dir, 'basics-ordinal.R'))
+source(paste0(params$main.dir, 'plot-config.R'))
+```
+
+```{r}
+code <- 'cos'  # code for the regression function
+```
+
+Extract simulation results. 
+
+```{r}
+simu.results <- readRDS(params$results.file)
+##
+X <- simu.results$X 
+y <- simu.results$y 
+sd.y <- simu.results$sd.y 
+c <- simu.results$c 
+##
+v0 <- simu.results$v0 
+g <- simu.results$g 
+IG.a.u <- simu.results$IG.a.u 
+IG.b.u <- simu.results$IG.b.u 
+IG.a.error <- simu.results$IG.a.error 
+IG.b.error <- simu.results$IG.b.error 
+u.lb <- simu.results$u.lb 
+u.ub <- simu.results$u.ub
+##
+theta.eb <- simu.results$theta.eb 
+rho.eb <- simu.results$rho.eb
+theta.mle.obs <- simu.results$theta.mle.obs
+rho.mle.obs <- simu.results$rho.mle.obs
+##
+beta.hist <- simu.results$beta.hist 
+beta.true <- simu.results$beta.true
+sigma.u2.hist <- simu.results$sigma.u2.hist 
+sigma.u2.true <- simu.results$sigma.u2.true
+sigma.error2.hist <- simu.results$sigma.error2.hist 
+sigma.error2.true <- simu.results$sigma.error2.true
+Tau.hist <- simu.results$Tau.hist 
+Tau.true <- simu.results$Tau.true
+U.hist <- simu.results$U.hist 
+U.true <- simu.results$U.true
+f.hist <- simu.results$f.hist 
+f.true <- simu.results$f.true
+##
+accep.hist <- simu.results$accep.hist 
+stepsize.hist <- simu.results$stepsize.hist 
+time.hist <- simu.results$time.hist
+##
+n <- nrow(X)
+d.x <- ncol(X)
+m <- nrow(Tau.hist) + 1
+##
+x.ub <- simu.results$x.ub
+x.lb <- simu.results$x.lb
+u.obs.idx <- simu.results$u.obs.idx
+u.mis.idx <- 1:n[-u.obs.idx]
+U.obs <- simu.results$U.obs
+## 
+rm(simu.results)
+gc()
+```
+
+# Mixing reports
+
+The overall acceptance rate of MCMC is `r mean(accep.hist)`.
+
+The overall running time for MCMC is 
+```{r, echo = FALSE}
+time.hist[nrow(time.hist), ]
+```
+
+The average running time for one iteration of MCMC is 
+```{r, echo = FALSE}
+time.hist[nrow(time.hist), ] / (ncol(Tau.hist)-1)
+```
+
+The step sizes are 
+```{r, fig.cap = 'Stepsize of LMC', echo = FALSE}
+plot(stepsize.hist$k, stepsize.hist$stepsize, xlab = 'iteration', ylab = 'stepsize', type = 'o')
+```
+
+```{r fig.cap = 'Mixing plot for beta', echo = FALSE}
+par(mfrow = c(d.x+1, 2), mar = c(2,2,2,2))
+for (idx.beta in 1:(d.x+1)) {
+  plot(beta.hist[idx.beta, ],
+       xlab = 'iteration',
+       ylab = paste('beta', idx.beta-1, sep = "_"),
+       main = paste('Gibbs samples of beta', idx.beta-1, sep = "_"),
+       type = 'l', cex = 0.1, lwd = 0.05, col = "mediumpurple1")
+  abline(mean(beta.hist[idx.beta, ]), 0, col = 'mediumpurple4')
+  abline(beta.true[idx.beta], 0, col = 'firebrick')
+  
+  plot(density(beta.hist[idx.beta, ]), lwd = 2, col = "mediumpurple1", main = paste('Posterior density of beta', idx.beta-1, sep = "_"))
+  abline(v = beta.true[idx.beta], lwd = 2, col = 'firebrick')
+}
+par(mfrow = c(1, 1))
+```
+
+```{r fig.cap = 'Mixing plot for sigma.u2', fig.width = 6.5*2, echo = FAlSE}
+par(mfrow = c(1, 2), mar = c(2,2,2,2))
+plot(sigma.u2.hist, 
+     xlab = 'iteration', 
+     ylab = 'Sigma.u^2', 
+     type = 'l', cex = 0.1, lwd = 0.05, col = '#FFCC00')
+abline(mean(sigma.u2.hist), 0, col = '#CC9900')
+abline(sigma.u2.true, 0, col = 'firebrick')
+
+plot(density(sigma.u2.hist),
+     xlim = c(min(sigma.u2.hist, sigma.u2.true),
+              max(sigma.u2.hist, sigma.u2.true)),
+     lwd = 2, col = '#FFCC00', main = 'Posterior density of sigma.u^2_')
+abline(v = sigma.u2.true, col = 'firebrick')
+par(mfrow = c(1, 1))
+```
+
+```{r fig.cap = 'Mixing plot for Tau', fig.height = 4.5*m, echo = FALSE}
+par(mfrow = c(m-1, 1), mar = c(2,2,2,2))
+for (idx.tau in 1:(m-1)) {
+  plot(Tau.hist[idx.tau, ], 
+       xlab = 'iteration', 
+       ylab = paste('Tau', idx.tau, sep = "_"), main = paste('Gibbs samples of Tau', idx.tau, sep = "_"), 
+       type = 'l', cex = 0.1, lwd = 0.05, col = "deepskyblue")
+  abline(mean(Tau.hist[idx.tau,]), 0, col = 'dodgerblue')
+  abline(Tau.true[idx.tau], 0, col = 'firebrick')
+}
+par(mfrow = c(1, 1))
+```
+
+```{r fig.cap = 'Mixing plot for sigma.error2', echo = FALSE}
+plot(sigma.error2.hist, 
+       xlab = 'iteration', 
+       ylab = 'Sigma.error^2', 
+       type = 'l', cex = 0.1, lwd = 0.05, col = "springgreen2")
+  abline(mean(sigma.error2.hist), 0, col = 'springgreen4')
+  abline(sigma.error2.true/(sd.y^2), 0, col = 'firebrick')
+```
+
+```{r fig.cap = 'Mixing plot for u', echo = FALSE,  collapse = FALSE}
+idx <- 1
+plot(U.hist[idx, ], 
+     xlab = 'iteration', 
+     ylab = sprintf('u_%i', idx), 
+     main = sprintf("Samples of u_%i", idx), 
+     type = 'l', cex = 0.5, lwd = 0.5, col = 'goldenrod')
+abline(U.true[idx, 1], 0, col = 'firebrick')
+abline(mean(U.hist[idx, ]), 0, col = 'goldenrod4')
+```
+
+```{r echo = FALSE}
+# Monte Carlo trace for two U
+idx <- c(97, 78)
+skip <- 1000
+plot(U.hist[idx[1], ], U.hist[idx[2], ],
+     cex = 0.5, col = 'grey',
+     xlab = sprintf('u^(%i)', idx[1]), ylab = sprintf('u^(%i)', idx[2])
+    )
+iter.idx <- seq(1, ncol(U.hist), skip)
+points(U.hist[idx[1], iter.idx], U.hist[idx[2], iter.idx],
+       cex = 0.5, pch = 16)
+text(U.hist[idx[1], iter.idx], U.hist[idx[2], iter.idx], 
+     label = paste0('iter:', iter.idx), 
+     pos = 3, offset = 0.2, cex = 0.7, col = 'blue')
+arrows(U.hist[idx[1], iter.idx[-length(iter.idx)]], U.hist[idx[2], iter.idx[-length(iter.idx)]],
+       U.hist[idx[1], iter.idx[-1]], U.hist[idx[2], iter.idx[-1]],
+       length = 0.1, col = 'blue', lwd = 2)
+```
+
+# Imputation of u
+
+```{r}
+burnin <- 20000
+U.pos.quan <- U.hist[, burnin:ncol(U.hist)] |> apply(1, function(x) quantile(x, c(0.025, 0.975))) |> t()
+u_df <- data.frame(f.true = f.true, U.true = U.true, class = as.character(c))
+u_df$U.pos.mean <- U.hist[, burnin:ncol(U.hist)] |> apply(1, mean)
+u_df$U.pos.lq <- U.pos.quan[, 1]
+u_df$U.pos.uq <- U.pos.quan[, 2]
+u_df$Coverage <- (u_df$U.pos.lq <= U.true) & (U.true <= u_df$U.pos.uq)
+```
+
+Visualization.
+
+```{r, fig.cap = 'Imputed u vs true u', echo = FALSE}
+ggfig <-
+ggplot(u_df, aes(x = U.true, y = U.pos.mean, color = class)) +
+  geom_point(size = 3) +
+  scale_color_viridis_d(name = "Class") + 
+  labs(x = 'True U', y = 'Mean of imputed U') +
+  lims(x = c(min(U.true, u_df$U.pos.mean), max(U.true, u_df$U.pos.mean)),
+       y = c(min(U.true, u_df$U.pos.mean), max(U.true, u_df$U.pos.mean))) + 
+  geom_abline(slope = 1, intercept = 0, linewidth = 1, color = 'brown') +
+  my_theme
+ggsave(paste0(params$fig.dir, 'Imputed-u-vs-true-u.pdf'), plot = ggfig, width = 8, height = 6)
+
+ggfig <-
+ggplot(u_df, aes(y = f.true, col = Coverage)) +
+  geom_function(fun = function(u) ResponseFunction(X=0, U=u, code=code), color = '#FF7F0E', linewidth = 1) +
+  geom_point(aes(x = U.pos.mean, shape = "Imputed"), size = 3) + 
+  geom_point(aes(x = U.true, shape = "True"), size = 3) + 
+  geom_vline(xintercept = Tau.true, linewidth = 1) +
+  scale_shape_manual(values = c("Imputed" = 16, "True" = 18), 
+                      name = "Type") +
+  labs(x = 'U', y = 'True f') +
+  geom_segment(aes(x = U.pos.lq, y = f.true, xend = U.pos.uq, yend = f.true)) + 
+  my_theme
+ggsave(paste0(params$fig.dir, 'Imputed-u-quantile.pdf'), plot = ggfig, width = 8, height = 6)
+```
+
+# Inference of f
+Create a grid.
+
+```{r}
+X.grid <- 0  # for visualization, fix x
+U.grid <- seq(u.lb, u.ub, length = 100)
+W.grid <- cbind(X.grid, U.grid)
+```
+
+Fit a GP using the fully observed data (i.e., with $u_\text{obs}$.
+
+```{r}
+W <- cbind(X, U.true)
+gp <- newGPsep(W[u.obs.idx,], y[u.obs.idx], d = 0.1, g = 0.01, dK = TRUE)
+gp.mle <- mleGPsep(gp, param = "both", tmin = c(1e-3, 1e-3), tmax=c(1e3, var(y)))
+f.pred.gp <- predGPsep(gp, W.grid, lite = TRUE, nonug = TRUE)
+```
+
+```{r}
+# call the destructor function. Otherwise, memory will leak.
+deleteGPsep(gp)
+```
+
+Create a data frame
+
+```{r}
+f_df <- data.frame(u = W.grid[, 2])
+f_df$f.pred <- f.pred.gp$mean*sd.y
+f_df$f.true <- ResponseFunction(W.grid[,1], W.grid[,2], code)
+f_df$error <- abs(f_df$f.pred - f_df$f.true)
+# for 95% CI
+f_df$f.lq <- (f.pred.gp$mean + qnorm(0.025)*sqrt(f.pred.gp$s2))*sd.y 
+f_df$f.uq <- (f.pred.gp$mean + qnorm(0.975)*sqrt(f.pred.gp$s2))*sd.y 
+f_df$width <- f_df$f.uq - f_df$f.lq
+f_df$cover <- (f_df$f.lq <= f_df$f.true) & (f_df$f.true <= f_df$f.uq)
+```
+
+Predict f on a grid using the EIV-GP model fitted from the whole data.
+
+```{r}
+burnin <- 20000
+skip <- 40
+idx <- seq(burnin, length(sigma.error2.hist), by = skip)
+#tic <- proc.time()[3]
+pred.eiv <- Predict.y(1, y, X, W.grid[, 1, drop = FALSE], 
+                      sigma.error2.hist[idx], U.hist[, idx], U.grid,
+                      theta.mle.obs, rho.mle.obs, # theta.eb, rho.eb
+                      single.ustar = TRUE, separate = TRUE, seed = 888)
+#toc <- proc.time()[3]
+#toc - tic  
+
+## create data frame
+f_eiv_df <- data.frame(u = W.grid[,2])
+f_eiv_df$f.pred <- apply(pred.eiv$f.predict.hist, 1, mean)*sd.y
+f_eiv_df$f.true <- ResponseFunction(W.grid[,1], W.grid[,2], code)
+f_eiv_df$error <- abs(f_eiv_df$f.pred - f_eiv_df$f.true)
+# for 95% CI
+f_eiv_df$f.lq <- apply(pred.eiv$f.predict.hist, 1, function(x) quantile(x, 0.025))*sd.y
+f_eiv_df$f.uq <- apply(pred.eiv$f.predict.hist, 1, function(x) quantile(x, 0.975))*sd.y
+f_eiv_df$width <- f_eiv_df$f.uq - f_eiv_df$f.lq
+f_eiv_df$cover <- (f_eiv_df$f.lq <= f_eiv_df$f.true) & (f_eiv_df$f.true <= f_eiv_df$f.uq)
+```
+
+Visualization.
+
+```{r echo=FALSE}
+ggfig <-
+ggplot(f_df, aes(x = u)) + 
+  geom_path(aes(y = f.pred, color = 'Prediction'), linewidth = 1, linetype = 'dashed') + 
+  geom_path(aes(y = f.true, color = 'True'), linewidth = 1) +
+  scale_color_manual(values = c('Prediction' = 'black', 'True' = '#FF7F0E'), name = 'Type') + 
+  geom_ribbon(aes(ymin = f.lq, ymax = f.uq), fill = "lightblue", alpha = 0.5) +
+  labs(x = 'u', y = 'f') +
+  lims(y = c(min(f_df$f.lq, f_eiv_df$f.lq, f_df$f.true), max(f_df$f.uq, f_eiv_df$f.uq, f_df$f.true))) + 
+  my_theme
+ggsave(paste0(params$fig.dir, 'prediction-f-GP.pdf'), plot = ggfig, width = 8, height = 6)
+
+ggfig <-
+ggplot(f_eiv_df, aes(x = u)) + 
+  geom_path(aes(y = f.pred, color = 'Prediction'), linewidth = 1, linetype = 'dashed') + 
+  geom_path(aes(y = f.true, color = 'True'), linewidth = 1) +
+  scale_color_manual(values = c('Prediction' = 'black', 'True' = '#FF7F0E'), name = 'Type') + 
+  geom_ribbon(aes(ymin = f.lq, ymax = f.uq), fill = "lightblue", alpha = 0.5) +
+  labs(x = 'u', y = 'f') +
+  lims(y = c(min(f_df$f.lq, f_eiv_df$f.lq, f_df$f.true), max(f_df$f.uq, f_eiv_df$f.uq, f_df$f.true))) + 
+  my_theme
+ggsave(paste0(params$fig.dir, 'prediction-f-EIV.pdf'), plot = ggfig, width = 8, height = 6)
+
+```
+
+# Mixed-input prediction
+Create a test data set.
+
+```{r}
+set.seed(666)
+num.x <- 1  # number of x.star for each class
+c.star <- rep(1:m, each = num.x)
+X.star <- matrix(rep(x.lb + (1:num.x)*(x.ub-x.lb)/(num.x+1), m), ncol = 1)
+#n.star <- m*num.x
+#X.star <- (x.ub - x.lb)*maximinLHS(n + n.star, d.x)[-(1:n), 1, drop = FALSE] + x.lb
+#U.star <- matrix(rmvnorm(1, cbind(1, X.star)%*%beta.true, sigma.u2.true*diag(n.star)), n.star, 1)
+#U.star <- matrix(runif(n.star, u.lb, u.ub), n.star, 1)
+#c.star <- apply(U.star, 1, function(u) match(T, c(u-Tau.true,-Inf) <= 0))  # generate c.star
+```
+
+Oracle prediction (according to the data-generating process).
+
+```{r}
+n.mc <- 2000
+predict.oracle <- Predict.y.oracle(code, X.star, c.star, beta.true, sigma.u2.true, sigma.error2.true, Tau.true, u.lb, u.ub, n.mc, 999)
+U.star.oracle <- predict.oracle$U.star.hist
+f.star.oracle <- predict.oracle$f.predict.hist
+y.star.oracle <- predict.oracle$y.predict.hist
+```
+
+EIV-GP prediction
+
+```{r}
+## set indices for thinning
+burnin <- 20000
+skip <- 20
+idx <- seq(burnin, length(sigma.error2.hist), by = skip)
+## generate u.star
+U.star.thin <- Gibbs.U.star(X.star, c.star, beta.hist[,idx], sigma.u2.hist[idx], Tau.hist[,idx], u.lb, u.ub, seed = 222)
+## predict f.star and y.star
+predict.result <- Predict.y(ncol(U.true), y, X, X.star, sigma.error2.hist[idx], U.hist[,idx], U.star.thin, theta.mle.obs, rho.mle.obs, seed = 888) #theta.eb, rho.eb,
+f.star.pred <- predict.result$f.predict.hist
+y.star.pred <- predict.result$y.predict.hist
+```
+
+Mixed-input GP prediction (the embedding approach, not using $u$)
+
+```{r}
+# create embedding for discrete categories
+emb.unif <- c/(m+1)
+gp.unif <- newGPsep(cbind(X, emb.unif), y, d = 0.1, g = 0.01, dK = TRUE)
+gp.unif.mle <- mleGPsep(gp.unif, param = "both", tmin = c(1e-3, 1e-3), tmax=c(1e3, 10^2))
+gp.unif.pred <- predGPsep(gp.unif, cbind(X.star, c.star), lite = TRUE, nonug = FALSE)
+##
+emb.gaussian <- qnorm(c/(m+1))
+gp.gaussian <- newGPsep(cbind(X, emb.gaussian), y, d = 0.1, g = 0.01, dK = TRUE)
+gp.gaussian.mle <- mleGPsep(gp.gaussian, param = "both", tmin = c(1e-3, 1e-3), tmax=c(1e3, 10^2))
+gp.gaussian.pred <- predGPsep(gp.gaussian, cbind(X.star, c.star), lite = TRUE, nonug = FALSE)
+## generate MC samples
+n.mc <- 2000
+y.star.pred.gp.unif <- matrix(0, length(c.star), n.mc)
+for (idx in 1:n.mc) {
+  y.star.pred.gp.unif[, idx] <-  gp.unif.pred$mean + rnorm(length(c.star))*sqrt(gp.unif.pred$s2)
+}
+y.star.pred.gp.gaussian <- matrix(0, length(c.star), n.mc)
+for (idx in 1:n.mc) {
+  y.star.pred.gp.gaussian[, idx] <-  gp.gaussian.pred$mean + rnorm(length(c.star))*sqrt(gp.unif.pred$s2)
+}
+```
+
+Visualization.
+
+```{r fig.cap = 'Prediction visualization for y', fig.width= 3*8, fig.height = 6, echo = FALSE}
+for (idx in 1:length(c.star)) {
+  ## 
+  mp_df <- data.frame(y = y.star.pred[idx, ]*sd.y, group = "EIV") 
+  mp_df <- rbind(mp_df, data.frame(y = y.star.pred.gp.unif[idx, ]*sd.y, group = "GP-Unif"))
+  mp_df <- rbind(mp_df, data.frame(y = y.star.pred.gp.gaussian[idx, ]*sd.y, group = "GP-Gaussian"))
+  mp_df <- rbind(mp_df, data.frame(y = y.star.oracle[idx, ], group = "Truth"))
+  mp_df$group <- factor(mp_df$group, levels = c("Truth", "EIV", "GP-Unif", "GP-Gaussian"))
+  ##
+  my_fill_scale <- scale_fill_manual(values = c("Truth" = "#1F78B4", "EIV" = "#33A02C", "GP-Unif" = "#FF7F00", "GP-Gaussian" = "#6A3D9A"))
+  ##
+  xp_df <- data.frame(c = c, X = X, group = 'Train')
+  xp_df <- rbind(xp_df, data.frame(c = c.star[idx], X = X.star[idx], group = 'Test'))
+  ##
+  plot_list <- list()
+  plot_list[[1]] <- ggplot(xp_df, aes(x = c, y = X, shape = group, color = group)) + 
+    geom_point(aes(size = group)) + 
+    labs(title = paste0('Scatterplot for x*=', sprintf('%1.1f', X.star[idx]), ', c*=', c.star[idx])) + 
+    scale_shape_manual(values = c(18, 19)) +
+    scale_color_manual(values = c("brown","black")) + 
+    scale_size_manual(values = c(6, 2)) + 
+    my_theme
+  
+  #plot_list[[2]] <- ggplot(mp_df, aes(x = y, fill = group, y = after_stat(density))) +
+  #  geom_histogram(position = "identity", alpha = 0.5) +
+  #  labs(title = paste0("Histogram of y* for x*=", sprintf('%1.1f', X.star[idx]), ', c*=', c.star[idx]), x = "y*", y = "Density") +
+  #  my_fill_scale + 
+  #  my_theme
+  
+  plot_list[[2]] <- ggplot(mp_df, aes(x = group, y = y, fill = group)) +
+    geom_boxplot() +
+    labs(title = paste0("Boxplot of y* for x*=", sprintf('%1.1f', X.star[idx]), ', c*=', c.star[idx]), x = "Group", y = "y*") +
+    my_fill_scale + 
+    my_theme
+  
+  plot_list[[3]] <- ggplot(mp_df, aes(x = y, y = group, fill = group)) +
+    geom_density_ridges(alpha = 0.7) +
+    scale_y_discrete(limits = rev(levels(mp_df$group))) +
+    labs(title = paste0("Density of y* for x*=", sprintf('%1.1f', X.star[idx]), ', c*=', c.star[idx]), x = "y*", y = "Group") +
+    my_fill_scale +
+    my_theme 
+
+  grid.arrange(grobs = plot_list, nrow = 1)
+  #ggsave(paste0(params$fig.dir, 'prediction-', idx, '.pdf'), plot = grid.arrange(grid.arrange(grobs = plot_list, nrow = 1)), width = 8*3, height = 6)
+}
+```
+
+Prediction metrics (energy distance between the predicted and oracle $y^*$)
+
+```{r}
+metric <- data.frame(X.star = X.star, c.star = c.star, EIV = rep(0, length(c.star)), GP.unif = rep(0, length(c.star)), GP.gaussian = rep(0, length(c.star)))
+for (i in 1:length(c.star)) {
+  metric[i, 'EIV'] <- EnergyDistance(y.star.pred[i, ]*sd.y, y.star.oracle[i, ]) 
+  metric[i, 'GP-unif'] <- EnergyDistance(y.star.pred.gp.unif[i, ]*sd.y, y.star.oracle[i, ])
+  metric[i, 'GP-Gaussian'] <- EnergyDistance(y.star.pred.gp.gaussian[i, ]*sd.y, y.star.oracle[i, ])
+}
+#print(metric)
+
+method.names <- colnames(metric)[-(1:2)]
+metric_df <- data.frame(X.star = rep(X.star, length(method.names)), c.star = rep(c.star, length(method.names)), method = rep(method.names, each = length(c.star)), distance = rep(0, length(c.star)*length(method.names)))
+metric_df$method <- factor(metric_df$method, levels = c("EIV", "GP-Unif", "GP-Gaussian"))
+for (idx in method.names) {
+  metric_df[metric_df$method == idx, 'distance'] <- metric[[idx]]
+}
+```
+
+Visualization
+
+```{r echo = FALSE}
+#ggfig <-
+ggplot(metric_df, aes(x = c.star, y = distance, fill = method)) +
+  geom_col(position = "dodge") +
+  labs(x = "c*", y = "Energy distance to the truth", fill = 'Method') +
+  my_fill_scale +
+  my_theme
+#ggsave(paste0(params$fig.dir, 'prediction-bar-plot.pdf'), plot = ggfig, width = 8, height = 6)
+```

@@ -1,0 +1,70 @@
+# Package setup
+
+The DESCRIPTION file is created using this code.
+
+```{r package-setup, message=FALSE, results='hide'}
+usethis::create_package(
+  path = ".",
+  fields = list(
+    Package = params$package_name,
+    Version = "0.0.0.0001",
+    Title = "eivGP",
+    Description = "Errors-in-variables Gaussian processes for mixed-input tasks.",
+    `Authors@R` = person(
+      given = "Sheng",
+      family = "Jiang",
+      email = "jiangsheng@cuhk.edu.cn",
+      role = c("aut", "cre")
+      )
+  )
+)
+usethis::use_mit_license(copyright_holder = "Fu Penghui")
+```
+
+The following is what will show up when someone types `package?eivGP` in the console.
+
+```{package_doc}
+#' eivGP
+#'
+#' This package implements the `eivGP` method.
+#' 
+#' @docType package
+```
+
+This package will have some dependancies:
+
+```{r dependencies, message = FALSE}
+
+usethis::use_package("tidyverse", type = "imports") 
+usethis::use_package("ggplot2", type = "imports")
+usethis::use_package("pgdraw", type = "imports")
+usethis::use_package("mvtnorm", type = "imports")
+usethis::use_package("LaplacesDemon", type = "imports")
+usethis::use_package("GA", type = "imports")
+usethis::use_package("laGP", type = "imports")
+usethis::use_package("lhs", type = "imports")
+usethis::use_package("scatterplot3d", type = "imports")
+usethis::use_pipe(export=TRUE)
+
+```
+
+
+```{r, send_to = 'R/imports.R'}
+#' @importFrom mvtnorm rmvnorm
+#' @importFrom LaplacesDemon rinvwishart rmatrixnorm as.symmetric.matrix
+#' @importFrom pgdraw pgdraw
+#' @importFrom plot3D persp3D
+#' @importFrom parallel mclapply
+#' @importFrom stats quantile rnorm sd uniroot
+#' @importFrom ggplot2 ggplot geom_point scale_x_continuous scale_color_viridis_c labs
+#' @importFrom ggplot2 theme_minimal theme element_text
+NULL
+```
+
+<!--library("pgdraw") for simulating polya-Gamma-->
+
+<!--library("mvtnorm") for simulating multivariate normal-->
+
+<!--library('LaplacesDemon') for sampling inverse Wishart and  Matrix Normal-->
+
+<!--library('GA') for visualization-->

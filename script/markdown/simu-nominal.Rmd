@@ -1,0 +1,464 @@
+---
+title: "simu-nominal"
+author: "Penghui Fu, Sheng Jiang"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: 
+    toc: true
+    number_sections: true
+header-includes:
+  - \usepackage{pdflscape}
+  - \newcommand{\blandscape}{\begin{landscape}}
+  - \newcommand{\elandscape}{\end{landscape}} 
+fontsize: 12pt
+params:
+  main.dir: 'script/main-code/'
+  fig.dir: 'penghui-local/output/figures/'
+  save.filename: 'penghui-local/output/MCMC/EIV-nominal-branin-gaussian-linear-map-50-100.rds'
+---
+
+```{r setup, include=FALSE}
+library(here)
+knitr::opts_knit$set(root.dir = here())
+knitr::opts_chunk$set(collapse = TRUE, message = FALSE, tidy = TRUE, tidy.opts = list(width.cutoff=60), fig.align = 'center', fig.width = 8, fig.height = 6)
+```
+
+# Load libraries and generate data
+
+This .rmd file runs a simulation for EIV-GP regression with a nominal input. To begin with, load some packages and functions.
+
+```{r}
+library(mvtnorm)
+library(pgdraw)
+library(LaplacesDemon)
+library(laGP)
+library(lhs)
+##
+library(GA)
+library(scatterplot3d)
+library(doParallel)
+library(ggplot2)
+library(gridExtra)
+library(metR)
+##
+source(paste0(params$main.dir, 'basics-common.R'))
+source(paste0(params$main.dir, 'basics-nominal.R'))
+source(paste0(params$main.dir, 'plot-config.R'))
+```
+
+Set basic parameters for simulation.
+
+```{r}
+n <- 200  # sample size
+m <- 5  # number of classes
+d.x <- 1  # dimension of x
+d <- 2
+
+# true parameters for the DGP
+sigma.error2.true <- (60*0.01)^2
+B.tilde.true <- t(matrix(c(0, 0, 1, 0), 2, 2))  #unused if uniform 
+Sigma.u.true <- diag(c(0.1^2, 1^2)) # unused if uniform 
+```
+
+Generate other parameters and data.
+
+```{r}
+# set range ----
+x.ub <- 2
+x.lb <- -2
+
+# generate X, c, and U ----
+set.seed(4)
+
+# U is sampled by Gaussian distribution
+X <- (x.ub - x.lb)*maximinLHS(n, d.x) + x.lb 
+U <- cbind(1, X)%*%B.tilde.true + matrix(rnorm(n*d), n, d)%*%chol(Sigma.u.true)
+# U is sampled by Uniform distribution
+#XU <- maximinLHS(n, d.x+d)
+#X <- matrix(XU[, 1]*(x.ub - x.lb) + x.lb, n, 1)
+#U <- 4*XU[, 2:3]-2
+
+# generate y ----
+response <- Branin(U[,1], U[,2])
+f.true <- response$f
+c <- response$c
+y <- f.true + sqrt(sigma.error2.true)*rnorm(n) 
+sd.y <- sd(y)
+y <- y/sd.y 
+
+# Observed U ----
+n.obs <- floor(50)  # total number
+n.obs.c <- rep(0, m)  # number for each class
+u.obs.idx <- NULL
+for (i in m:1) {
+  if (i > 1) {
+    n.obs.c[i] <- min(floor(sum(c == i)/n*n.obs), sum(c == i))
+  } else {
+    n.obs.c[i] <- min(n.obs - sum(n.obs.c[-1]), sum(c == 1))
+  }
+  u.obs.idx <- c(u.obs.idx, sample(c(1:n)[c == i], n.obs.c[i], FALSE))
+}
+u.mis.idx <- c(1:n)[-u.obs.idx]
+U.obs <- U[u.obs.idx, ]
+n.obs <- sum(n.obs.c)
+```
+
+# Visualization 
+
+The true response surface and classification boundary.
+
+```{r}
+nn <- 300
+#u1 <- seq(-2, 2, length.out = nn)
+#u2 <- seq(-2, 2, length.out = nn)
+u1 <- seq(min(U[,1]), max(U[,1]), length.out = nn)
+u2 <- seq(min(U[,2]), max(U[,2]), length.out = nn)
+U.grid <- expand.grid(u1, u2)
+z_df <- data.frame(u1 = U.grid$Var1, u2 = U.grid$Var2)
+f.grid <- Branin(z_df$u1, z_df$u2)
+z_df['f'] <- f.grid$f
+z_df['class'] <- as.character(f.grid$c)
+```
+
+```{r fig.cap = 'Heatmap and contours of the regression function', echo=FALSE} 
+#pdf(paste0(params$fig.dir, 'branin-3d.pdf'), width = 8, height = 6)
+persp3D(u1, u2, matrix(z_df$f, ncol = nn), xlab = 'u_1', ylab = 'u_2', zlab = 'f')
+#dev.off()
+
+ggfig <- ggplot(z_df, aes(x = u1, y = u2, z = f)) +
+  geom_tile(aes(fill = f)) +        
+  geom_contour(color = "black", breaks = round(seq(min(z_df$f), max(z_df$f), length.out = 30))) + 
+  geom_text_contour(color = "black", breaks = round(seq(min(z_df$f), max(z_df$f), length.out = 30)), skip = 1) +
+  scale_fill_distiller(palette = "Spectral") +
+  #scale_fill_viridis_c() +
+  scale_x_continuous(name = expression(u[1])) +  
+  scale_y_continuous(name = expression(u[2])) +
+  labs(fill = expression(f(u[1], u[2]))) +
+  my_theme
+ggsave(paste0(params$fig.dir, 'branin-heatmap.pdf'), plot = ggfig, width = 8, height = 6)
+
+ggfig <- ggplot(z_df, aes(x = u1, y = u2, z = f)) +
+  geom_tile(aes(fill = f)) +        
+  scale_fill_distiller(palette = "Spectral") +
+  #scale_fill_viridis_c() +
+  scale_x_continuous(name = expression(u[1])) +  
+  scale_y_continuous(name = expression(u[2])) +
+  geom_abline(slope = -0.636, intercept = 1.406, linewidth = 1, color = "black") +
+  geom_segment(aes(x = -3.475, y = 3.617, xend = 1.144, yend = -5.622), linewidth = 1, color = "black", show.legend = FALSE) + 
+  geom_segment(aes(x = 0.828, y = 0.879, xend = -1.405, yend = -0.524), linewidth = 1, color = "black", show.legend = FALSE) +
+  geom_segment(aes(x = 0.940, y = 0.808, xend = 1.144, yend = -5.622), linewidth = 1, color = "black", show.legend = FALSE) +
+  coord_cartesian(xlim = c(min(U[,1]), max(U[,1])), ylim = c(min(U[,2]), max(U[,2]))) +
+  labs(fill = expression(f(u[1], u[2]))) +
+  my_theme
+ggsave(paste0(params$fig.dir, 'branin-region.png'), plot = ggfig, width = 8, height = 6)
+
+ggfig <- ggplot(z_df, aes(x = u1, y = u2, color = class)) + 
+    geom_point(size = 3.5, alpha = 0.8) +
+    scale_color_viridis_d(name = "Class") + 
+    scale_x_continuous(name = expression(u[1])) +  
+    scale_y_continuous(name = expression(u[2])) +
+    #labs(title = "True classification boundary") +
+    my_theme
+ggsave(paste0(params$fig.dir, 'branin-region-2.png'), plot = ggfig, width = 8, height = 6)
+```
+
+```{r}
+u_df <- data.frame(x = X, u1 = U[,1], u2 = U[,2], y = y, class = as.character(c), observed = rep("FALSE", n))
+u_df$observed[u.obs.idx] <- "TRUE"
+```
+
+```{r fig.cap = 'Scatterplot of u versus x', echo=FALSE}
+for (j in 1:d) {
+  ggfig <- ggplot(u_df, aes(x = X, y = .data[[paste0("u",j)]], color = class)) +
+  geom_point(size = 3) +
+  scale_color_viridis_d(name = "Class") + 
+  geom_abline(slope = B.tilde.true[2,j], intercept = B.tilde.true[1,j], linewidth = 1, color = 'brown') +
+  labs(color = "Class", shape = 'Observation') + 
+  scale_y_continuous(name = bquote(u[.(j)])) +
+  my_theme
+  
+  ggsave(paste0(params$fig.dir, sprintf('Scatter-u-%d-vs-x.pdf', j)), plot = ggfig, width = 8, height = 6)
+}
+```
+
+```{r fig.cap = 'Scatterplot of u', fig.width = 8*2, echo=FALSE}
+ggfig <- ggplot(u_df, aes(x = u1, y = u2, color = class, shape = observed)) +
+  geom_point(size = 3) +
+  scale_color_viridis_d(name = "Class") + 
+  scale_shape_manual(values = c("TRUE" = 17, "FALSE" = 16)) +
+  coord_cartesian(xlim = c(min(U[,1]), max(U[,1])), ylim = c(min(U[,2]), max(U[,2]))) +
+  labs(color = "Class", shape = 'Observation') +
+  scale_x_continuous(name = expression(u[1])) +  
+  scale_y_continuous(name = expression(u[2])) +
+  my_theme
+ggsave(paste0(params$fig.dir, 'Scatter-u.pdf'), plot = ggfig, width = 8, height = 6)
+
+ggfig <- ggplot(u_df[u_df$observed=="TRUE",], aes(x = u1, y = u2, color = class, shape = observed)) +
+  geom_point(size = 3) +
+  scale_color_viridis_d(name = "Class") + 
+  scale_shape_manual(values = c("TRUE" = 17, "FALSE" = 16)) +
+  coord_cartesian(xlim = c(min(U[,1]), max(U[,1])), ylim = c(min(U[,2]), max(U[,2]))) +
+  labs(color = "Class", shape = 'Observation') + 
+  scale_x_continuous(name = expression(u[1])) +  
+  scale_y_continuous(name = expression(u[2])) +
+  my_theme
+ggsave(paste0(params$fig.dir, 'Scatter-u-observed.pdf'), plot = ggfig, width = 8, height = 6)
+
+#plot_list[[3]] <- ggplot(u_df[u_df$observed=="FALSE",], aes(x = u1, y = u2, color = class, shape = observed)) +
+#  geom_point(size = 3) +
+#  scale_color_viridis_d(name = "Class") + 
+#  scale_shape_manual(values = c("TRUE" = 17, "FALSE" = 16)) +
+#  coord_cartesian(xlim = c(min(U[,1]), max(U[,1])), ylim = c(min(U[,2]), max(U[,2]))) +
+#  labs(color = "Class", shape = 'Observation') +
+#  scale_x_continuous(name = expression(u[1])) +  
+#  scale_y_continuous(name = expression(u[2])) +
+#  my_theme 
+```
+
+```{r fig.cap = 'Barplot of c', echo=FALSE}
+c_df <- data.frame(class = 1:m, value = rep(0,m))
+for (i in 1:m) {
+  c_df$value[i] <- sum(c == i)
+}
+bar_plot <- 
+  ggplot(c_df, aes(x = class, y = value, fill = as.character(class))) +
+  geom_bar(stat = "identity", color = "black", width = 0.7) +
+  scale_fill_viridis_d(name = "Class") +  
+  labs(x = "Class", y = "Count") +
+  my_theme +
+  theme(legend.position = "right")
+#ggsave(paste0(params$fig.dir, 'class-bar-plot.pdf'), plot = bar_plot, width = 8, height = 6)
+```
+
+```{r}
+ggplot(u_df, aes(x = c, y = y, color = class)) +
+  geom_point(size = 3) +
+  scale_color_viridis_d(name = "Class") + 
+  labs(color = "Class", x = 'Class') + 
+  my_theme
+
+ggplot(u_df, aes(x = X, y = y, color = class)) +
+  geom_point(size = 3) +
+  scale_color_viridis_d(name = "Class") + 
+  labs(color = "Class") + 
+  my_theme
+```
+
+# Set model hyperparameters
+
+```{r}
+v0 <- 0  # flat prior on intercept of U
+g <- 0.1
+nu0 <- d  # improper
+Psi0 <- diag(d)
+q0 <- 1
+q.gamma <- 1
+IG.a.error <- 2.5/2
+IG.b.error <- 2.5*0.084/2
+```
+
+# Obtain GP hyperparameters by MLE
+
+Fit MLE for GP hyperparameters using the observed $\mathbf{u}$. We use package 'laGP' (see Gramacy's book).
+
+```{r}
+W <- cbind(X, U)
+gp <- newGPsep(W[u.obs.idx,], y[u.obs.idx], d = 0.1, g = 0.01, dK = TRUE)
+gp.mle <- mleGPsep(gp, param = "both", tmin = c(1e-3, 1e-3), tmax=c(1e3, var(y)))
+theta.mle.obs <- 1/gp.mle$theta[1:(d.x+d)]
+g.mle <- gp.mle$theta[length(gp.mle$theta)] 
+sigma2.mle <- (t(y[u.obs.idx])%*%solve(KernelMatrix(W[u.obs.idx,], c(theta.mle.obs, 1)) + g.mle*diag(n.obs))%*%y[u.obs.idx]/n.obs) |> drop()
+sigma.error2.mle.obs <- sigma2.mle*g.mle
+rho.mle.obs <- sqrt(1/g.mle)
+```
+
+```{r echo = FALSE}
+print(paste0('The MLE (from observed U) of lengthscale for x is ', theta.mle.obs[1:d.x]))
+print(paste0('The MLE (from observed U) of lengthscale for u is '))
+print(theta.mle.obs[(d.x+1):(d.x+d)])
+print(paste0('The MLE (from observed U) of nugget (variance) is ', sigma.error2.mle.obs))
+print(paste0('The MLE (from observed U) of SN ratio is ', rho.mle.obs))
+```
+
+```{r}
+# call the destructor function otherwise memory will leak.
+deleteGPsep(gp)
+```
+
+For comparison, we obtain the MLE of GP hyperparameters using the true $\mathbf{u}$. 
+
+```{r, eval = FALSE}
+W <- cbind(X, U)
+gp <- newGPsep(W, y, d = 0.1, g = 0.01, dK = TRUE)
+gp.mle <- mleGPsep(gp, param = "both", tmin = c(1e-3, 1e-3), tmax=c(1e3, var(y)))
+theta.mle <- 1/gp.mle$theta[1:(d.x+d)]
+g.mle <- gp.mle$theta[length(gp.mle$theta)] 
+sigma2.mle <- (t(y)%*%solve(KernelMatrix(W, c(theta.mle, 1)) + g.mle*diag(n))%*%(y)/n) |> drop()
+sigma.error2.mle <- sigma2.mle*g.mle
+rho.mle <- sqrt(1/g.mle)
+rm(list=c('W','gp','gp.mle','g.mle','sigma2.mle'))
+```
+
+```{r echo = FALSE, eval = FALSE}
+print(paste0('The MLE of lengthscale for x is ', theta.mle[1:d.x]))
+print(paste0('The MLE of lengthscale for u is '))
+print(theta.mle[(d.x+1):(d.x+d)])
+print(paste0('The MLE of nugget (variance) is ', sigma.error2.mle))
+print(paste0('The MLE of SN ratio is ', rho.mle))
+```
+
+# (Optional) Obtain GP hyperparameters by Empirical Bayes
+
+Warning: must slower than MLE.
+
+Create candidates for Theta.
+
+```{r, eval = FALSE}
+hyper.mat <- c() # each column of hyper.mat is a candidate of hyperparameter (theta,rho)
+for (i in exp(log(2)*c(-6:1))) { # length scale for x
+  for (j in exp(log(2)*c(-6:1))) { # lengthscale for u
+    for(l in exp(log(2)*c(2:5))) { # signal-to-noise rho
+      hyper.mat <- cbind(hyper.mat, c(rep(i, d.x), c(rep(j, d)), l))
+    }
+  }
+}
+rm(list=c('i','j','l'))
+```
+
+Generate Monte Carlo samples of $\mathbf{U}$ given $\{\mathbf{X},\mathbf{c},\mathbf{u}^\text{obs}\}$.
+
+```{r, eval = FALSE}
+n.mc.eb <- 10000
+set.seed(999)
+Sigma.u0 <- rinvwishart(nu0, Psi0)
+B.tilde0 <- matrix(0, d.x+1, d)
+gamma.mat0 <- matrix(0, m-1, d+1)
+#U0 <- matrix(0, n, d)
+U0 <- GetInitialU(n, m, c, u.obs.idx, U.obs)
+samples.eb <- Gibbs.EB(345, n.mc.eb,
+                     B.tilde0, Sigma.u0, gamma.mat0, U0,
+                     X, c, m, u.obs.idx, U.obs,
+                     v0, g, nu0, Psi0, q0, q.gamma)
+```
+
+Estimate the marginal likelihood.
+
+```{r, eval = FALSE}
+cl <- parallel::makeCluster(8)
+doParallel::registerDoParallel(cl)
+eb.evidence <- foreach(i = 1:ncol(hyper.mat), .combine = 'cbind') %dopar% {
+  EstimateEvidence(theta = hyper.mat[1:(d.x+d), i], rho = hyper.mat[d.x+d+1, i],
+                   U.hist = samples.eb$U.hist,
+                   IG.a.error = IG.a.error, IG.b.error = IG.b.error,
+                   X = X, y = y, d = d)
+}
+parallel::stopCluster(cl)
+rm(cl)
+```
+
+Select the optimal one.
+
+```{r, eval = FALSE}
+burnin <- 2000
+skip <- 5
+eb.evidence.mean <- apply(eb.evidence[seq(burnin, nrow(eb.evidence), by = skip), ], 2, mean)
+eb.evidence.sd <- apply(eb.evidence[seq(burnin, nrow(eb.evidence), by = skip), ], 2, sd)
+theta.eb <- hyper.mat[1:(d.x+d), which.max(eb.evidence.mean)]
+rho.eb <- hyper.mat[d.x+d+1, which.max(eb.evidence.mean)]
+```
+
+Plot the Monte Carlo estimates of the marginal likelihood for each candidate. 
+
+```{r echo = FALSE, eval = FALSE}
+plot(log(eb.evidence.mean), 
+     ylab = 'Log Evidence', 
+     xlab = 'Hyper-parameter index')
+     #ylim = c(min(eb.evidence.mean - 2*eb.evidence.sd/sqrt(params$n.mc)), 
+     #         max(eb.evidence.mean + 2*eb.evidence.sd/sqrt(params$n.mc))))
+points(which.max(eb.evidence.mean), log(max(eb.evidence.mean)), col = 'blue', pch = 16)
+#segments(1:ncol(hyper.mat), eb.evidence.mean - 2*eb.evidence.sd/sqrt(params$n.mc),
+#         1:ncol(hyper.mat), eb.evidence.mean + 2*eb.evidence.sd/sqrt(params$n.mc))
+```
+
+# Bayesian Inference by Gibbs
+Initialize.
+
+```{r}
+set.seed(999)
+B.tilde.hist <- matrix(0, d.x+1, d)
+Sigma.u.hist <- rinvwishart(nu0, Psi0)
+gamma.mat.hist <- matrix(0, m-1, d+1)
+#U.hist <- matrix(0, n, d)
+U.hist <- GetInitialU(n, m, c, u.obs.idx, U.obs)
+sigma.error2.hist <- 1/rgamma(1, shape = IG.a.error, rate = IG.b.error)
+accep.hist <- NULL
+f.hist <- NULL
+
+K = 1000  # number of iteration for a grand cycle
+lmd <- 0.01  # step size, adjusted after each cycle 
+stepsize.hist <- data.frame(stepsize = lmd, k = 1)
+time0 <- proc.time()
+time.hist <- data.frame(user = double(), system = double(), elapsed = double())
+```
+
+Run the Gibbs sampler.
+
+```{r}
+for (cycles in 1:120) {
+  # Initialize the current cycle
+  B.tilde0 <- B.tilde.hist[, (ncol(B.tilde.hist)-d+1):ncol(B.tilde.hist)]
+  Sigma.u0 <- Sigma.u.hist[, (ncol(Sigma.u.hist)-d+1):ncol(Sigma.u.hist)]
+  sigma.error20 <- sigma.error2.hist[length(sigma.error2.hist)]
+  gamma.mat0 <- gamma.mat.hist[, (ncol(gamma.mat.hist)-(d+1)+1):ncol(gamma.mat.hist)]
+  U0 <- U.hist[, (ncol(U.hist)-d+1):ncol(U.hist)]
+  
+  # Run Gibbs for the current cycle 
+  Gibbs1 <- Gibbs(NULL, K, lmd,
+                  B.tilde0, Sigma.u0, sigma.error20, gamma.mat0, U0, 
+                  m, c, X, y, u.obs.idx, U.obs,
+                  v0, g, nu0, Psi0, q0, q.gamma, IG.a.error, IG.b.error,
+                  theta.mle.obs, rho.mle.obs, simu.f = FALSE, design.map = TRUE) # or use the EB estimate: theta.eb, rho.eb
+  
+  # save results
+  B.tilde.hist <- cbind(B.tilde.hist, Gibbs1$B.tilde.hist)
+  Sigma.u.hist <- cbind(Sigma.u.hist, Gibbs1$Sigma.u.hist)
+  sigma.error2.hist <- c(sigma.error2.hist, Gibbs1$sigma.error2.hist)
+  gamma.mat.hist <- cbind(gamma.mat.hist, Gibbs1$gamma.mat.hist)
+  U.hist <- cbind(U.hist, Gibbs1$U.hist)
+  accep.hist <- c(accep.hist, Gibbs1$accep)
+  f.hist <- cbind(f.hist, Gibbs1$f.hist)
+  
+  # adjust stepsize and record time
+  if (mean(Gibbs1$accep) <= 0.2) {
+    lmd <- lmd / 1.5
+    stepsize.hist[nrow(stepsize.hist) + 1, ] <- c(lmd, K*cycles+1)
+  }else if (mean(Gibbs1$accep) > 0.5){
+    lmd <- lmd * 1.5
+    stepsize.hist[nrow(stepsize.hist) + 1, ] <- c(lmd, K*cycles+1)
+  }
+  time.hist[cycles, ] <- c(proc.time() - time0)[1:3]
+}
+```
+
+# Save results 
+
+```{r}
+saveRDS(list(X = X, y = y, sd.y = sd.y, c = c, x.ub = x.ub, x.lb = x.lb, 
+             v0 = v0, g = g, nu0 = nu0, Psi0 = Psi0, q0 = q0, q.gamma = q.gamma, IG.a.error = IG.a.error, IG.b.error = IG.b.error,
+             theta.mle.obs = theta.mle.obs, rho.mle.obs = rho.mle.obs,
+             #theta.eb = theta.eb, rho.eb = rho.eb, 
+             B.tilde.hist = B.tilde.hist, B.tilde.true = B.tilde.true,
+             Sigma.u.hist = Sigma.u.hist, Sigma.u.true = Sigma.u.true,
+             sigma.error2.hist = sigma.error2.hist, sigma.error2.true = sigma.error2.true,
+             gamma.mat.hist = gamma.mat.hist,
+             U.hist = U.hist, U.true = U, u.obs.idx = u.obs.idx, U.obs = U.obs,
+             f.hist = f.hist, f.true = f.true,
+             accep.hist = accep.hist, stepsize.hist = stepsize.hist, time.hist = time.hist), 
+        file = params$save.filename) 
+```
+
+Shutdown the system 
+
+```{r echo = FALSE}
+# system('shutdown -s')
+```

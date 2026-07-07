@@ -37,6 +37,7 @@ This package will have some dependancies:
 
 usethis::use_package("tidyverse", type = "imports") 
 usethis::use_package("ggplot2", type = "imports")
+usethis::use_package("plot3D",type = "imports")
 usethis::use_package("pgdraw", type = "imports")
 usethis::use_package("mvtnorm", type = "imports")
 usethis::use_package("LaplacesDemon", type = "imports")

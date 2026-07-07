@@ -12,7 +12,7 @@
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="2 Package setup | Creating the eivGP R package">
 <meta name="author" content="Penghui Fu, Yi Xu, Sheng Jiang">
-<meta name="date" content="2026-07-06">
+<meta name="date" content="2026-07-07">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
@@ -187,14 +187,15 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="package-setup.html#cb4-1" tabindex="-1"></a></span>
 <span id="cb4-2"><a href="package-setup.html#cb4-2" tabindex="-1"></a>usethis<span class="sc">::</span><span class="fu">use_package</span>(<span class="st">"tidyverse"</span>, <span class="at">type =</span> <span class="st">"imports"</span>) </span>
 <span id="cb4-3"><a href="package-setup.html#cb4-3" tabindex="-1"></a>usethis<span class="sc">::</span><span class="fu">use_package</span>(<span class="st">"ggplot2"</span>, <span class="at">type =</span> <span class="st">"imports"</span>)</span>
-<span id="cb4-4"><a href="package-setup.html#cb4-4" tabindex="-1"></a>usethis<span class="sc">::</span><span class="fu">use_package</span>(<span class="st">"pgdraw"</span>, <span class="at">type =</span> <span class="st">"imports"</span>)</span>
-<span id="cb4-5"><a href="package-setup.html#cb4-5" tabindex="-1"></a>usethis<span class="sc">::</span><span class="fu">use_package</span>(<span class="st">"mvtnorm"</span>, <span class="at">type =</span> <span class="st">"imports"</span>)</span>
-<span id="cb4-6"><a href="package-setup.html#cb4-6" tabindex="-1"></a>usethis<span class="sc">::</span><span class="fu">use_package</span>(<span class="st">"LaplacesDemon"</span>, <span class="at">type =</span> <span class="st">"imports"</span>)</span>
-<span id="cb4-7"><a href="package-setup.html#cb4-7" tabindex="-1"></a>usethis<span class="sc">::</span><span class="fu">use_package</span>(<span class="st">"GA"</span>, <span class="at">type =</span> <span class="st">"imports"</span>)</span>
-<span id="cb4-8"><a href="package-setup.html#cb4-8" tabindex="-1"></a>usethis<span class="sc">::</span><span class="fu">use_package</span>(<span class="st">"laGP"</span>, <span class="at">type =</span> <span class="st">"imports"</span>)</span>
-<span id="cb4-9"><a href="package-setup.html#cb4-9" tabindex="-1"></a>usethis<span class="sc">::</span><span class="fu">use_package</span>(<span class="st">"lhs"</span>, <span class="at">type =</span> <span class="st">"imports"</span>)</span>
-<span id="cb4-10"><a href="package-setup.html#cb4-10" tabindex="-1"></a>usethis<span class="sc">::</span><span class="fu">use_package</span>(<span class="st">"scatterplot3d"</span>, <span class="at">type =</span> <span class="st">"imports"</span>)</span>
-<span id="cb4-11"><a href="package-setup.html#cb4-11" tabindex="-1"></a>usethis<span class="sc">::</span><span class="fu">use_pipe</span>(<span class="at">export=</span><span class="cn">TRUE</span>)</span></code></pre></div>
+<span id="cb4-4"><a href="package-setup.html#cb4-4" tabindex="-1"></a>usethis<span class="sc">::</span><span class="fu">use_package</span>(<span class="st">"plot3D"</span>,<span class="at">type =</span> <span class="st">"imports"</span>)</span>
+<span id="cb4-5"><a href="package-setup.html#cb4-5" tabindex="-1"></a>usethis<span class="sc">::</span><span class="fu">use_package</span>(<span class="st">"pgdraw"</span>, <span class="at">type =</span> <span class="st">"imports"</span>)</span>
+<span id="cb4-6"><a href="package-setup.html#cb4-6" tabindex="-1"></a>usethis<span class="sc">::</span><span class="fu">use_package</span>(<span class="st">"mvtnorm"</span>, <span class="at">type =</span> <span class="st">"imports"</span>)</span>
+<span id="cb4-7"><a href="package-setup.html#cb4-7" tabindex="-1"></a>usethis<span class="sc">::</span><span class="fu">use_package</span>(<span class="st">"LaplacesDemon"</span>, <span class="at">type =</span> <span class="st">"imports"</span>)</span>
+<span id="cb4-8"><a href="package-setup.html#cb4-8" tabindex="-1"></a>usethis<span class="sc">::</span><span class="fu">use_package</span>(<span class="st">"GA"</span>, <span class="at">type =</span> <span class="st">"imports"</span>)</span>
+<span id="cb4-9"><a href="package-setup.html#cb4-9" tabindex="-1"></a>usethis<span class="sc">::</span><span class="fu">use_package</span>(<span class="st">"laGP"</span>, <span class="at">type =</span> <span class="st">"imports"</span>)</span>
+<span id="cb4-10"><a href="package-setup.html#cb4-10" tabindex="-1"></a>usethis<span class="sc">::</span><span class="fu">use_package</span>(<span class="st">"lhs"</span>, <span class="at">type =</span> <span class="st">"imports"</span>)</span>
+<span id="cb4-11"><a href="package-setup.html#cb4-11" tabindex="-1"></a>usethis<span class="sc">::</span><span class="fu">use_package</span>(<span class="st">"scatterplot3d"</span>, <span class="at">type =</span> <span class="st">"imports"</span>)</span>
+<span id="cb4-12"><a href="package-setup.html#cb4-12" tabindex="-1"></a>usethis<span class="sc">::</span><span class="fu">use_pipe</span>(<span class="at">export=</span><span class="cn">TRUE</span>)</span></code></pre></div>
 <div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="package-setup.html#cb5-1" tabindex="-1"></a><span class="co">#' @importFrom mvtnorm rmvnorm</span></span>
 <span id="cb5-2"><a href="package-setup.html#cb5-2" tabindex="-1"></a><span class="co">#' @importFrom LaplacesDemon rinvwishart rmatrixnorm as.symmetric.matrix</span></span>
 <span id="cb5-3"><a href="package-setup.html#cb5-3" tabindex="-1"></a><span class="co">#' @importFrom pgdraw pgdraw</span></span>

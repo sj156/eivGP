@@ -236,6 +236,7 @@ predict.oracle <- function(input.type, Gibbs.data, Gibbs.param, Gibbs.other) {
 #' @param Gibbs.param List containing the true underlying parameters (e.g., beta, B.tilde, Tau,f).
 #' @param Gibbs.other List containing other settings (e.g., uniform, n.mc, seed).
 #' @return A list containing the oracle histories (U.star.hist, y.predict.hist, etc.).
+#' @export
 predict.oracle.ordinal <- function(Gibbs.data, Gibbs.param, Gibbs.other) {
   
   # 1. Unpack Inputs
@@ -297,6 +298,7 @@ predict.oracle.ordinal <- function(Gibbs.data, Gibbs.param, Gibbs.other) {
 #' @param Gibbs.other List containing other settings (e.g., uniform, n.mc, seed).
 #' 
 #' @return A list containing the oracle histories (U.star.hist, y.predict.hist, etc.).
+#' @export
 predict.oracle.nominal <- function(Gibbs.data, Gibbs.param, Gibbs.other) {
   
   # 1. Unpack Inputs
@@ -502,6 +504,8 @@ Classify.stickbreak <- function (gamma.mat, U) {
 
 #'
 #' @param x1,x2 basic input
+#' @return
+#' @export
 xexp <- function (x1, x2) {
   x <- cbind(x1, x2)
   

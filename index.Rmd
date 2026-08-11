@@ -1,0 +1,36 @@
+---
+title: "Creating the ``r params$package_name`` R package"
+author: "Sheng Jiang"
+date: "`r Sys.Date()`"
+site: bookdown::bookdown_site
+knit: litr::render
+output: litr::litr_gitbook
+params:
+  package_name: "eivGP" # <-- change this to your package name
+  package_parent_dir: "." # <-- relative to this file's location
+documentclass: book
+---
+
+# Introduction
+```{r, eval = FALSE}
+# Complete development workflow
+my_load <- function(){
+  litr::render("index.Rmd",  
+               output_format = litr::litr_gitbook(minimal_eval = TRUE))
+  devtools::document("./eivGP")  # Update documentation
+  devtools::load_all("./eivGP")
+}
+
+my_load()
+
+# Step 2: Check the package (optional but recommended)
+devtools::check("./eivGP", document = FALSE)
+
+# Step 3: Install the package locally for full installation
+devtools::install("./eivGP")
+
+# Step 4: Load the installed package (optional, if you want to test installation)
+library(eivGP)
+
+
+```

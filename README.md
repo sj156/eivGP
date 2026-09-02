@@ -239,6 +239,50 @@ optional controls are:
 - `EIVGP_ARTIFACT_ROOT` is optional; without it, reproducibility files go to
   `reproduction/` under the repository checkout.
 
+### Numerical linear algebra and macOS performance
+
+The EIV-GP sampler repeatedly factors GP covariance matrices, so an optimized
+BLAS/LAPACK library can improve runtime. Its benefit must be benchmarked on the
+target design: the numerical studies parallelize independent replications, and
+their relatively small per-fit matrices may benefit less than a large dense
+matrix workload.
+
+Check the numerical library used by the current R installation:
+
+```sh
+Rscript --vanilla -e 'cat("BLAS:  ", La_library(), "\n", sep = "")'
+R_HOME="$(R RHOME)"
+otool -L "$R_HOME/lib/libRblas.dylib"
+```
+
+On macOS, output that names `libRblas.dylib` without `Accelerate` or
+`openblas` normally indicates R's bundled reference BLAS. Environment variables
+such as `OPENBLAS_NUM_THREADS` select the number of threads only; they do not
+switch R to an OpenBLAS backend.
+
+For a safe comparison, install a **separate** R build linked to one backend,
+then reinstall `eivGP` and its dependencies in that R library. R's official
+administration manual documents the relevant configure options:
+
+- Apple Accelerate: `--with-newAccelerate=lapack` on supported macOS/SDK
+  combinations.
+- OpenBLAS: install a compatible OpenBLAS library and configure R with an
+  explicit `--with-blas` value, for example
+  `--with-blas="-L/path/to/openblas/lib -lopenblas"`.
+
+Do not replace `libRblas.dylib` inside a working R installation in place: it
+can invalidate compiled packages and makes a reproducibility environment hard
+to audit. Benchmark a separate R installation first, and keep the selected R
+version and `La_library()` output with the run metadata.
+
+The publication runners deliberately set `OMP_NUM_THREADS`,
+`OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, and `VECLIB_MAXIMUM_THREADS` to
+`1` while multiple replication workers are active. This prevents, for example,
+eight R workers each starting eight BLAS threads. For these parallel numerical
+studies, start by setting `EIVGP_WORKERS` to the desired number of independent
+workers and leave BLAS single-threaded; evaluate a different allocation only
+by benchmark.
+
 No personal filesystem path is embedded in these commands. The standalone
 documents—[`experiments/study1_numerical_experiment.Rmd`](experiments/study1_numerical_experiment.Rmd)
 and [`experiments/study2_numerical_experiment.Rmd`](experiments/study2_numerical_experiment.Rmd)—may also be rendered from RStudio after setting their `run_mode` parameter to `publication`.

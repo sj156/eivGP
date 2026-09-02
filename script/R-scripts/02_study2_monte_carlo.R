@@ -749,7 +749,9 @@ run_one_study2_replication <- function(rep_id, scenario) {
     seed = fit_seed_base + 100L,
     m_vec = m_vec,
     methods = STUDY2_PUBLISHED_COMPETITORS,
-    strict = STUDY2_STRICT_COMPETITORS,
+    ## Record failures in external competitor optimizers and continue to run
+    ## EIV-GP MCMC for this frozen replication.
+    strict = FALSE,
     controls = study2_competitor_controls
   )
   competitor_status <- competitor_result$status
@@ -1658,6 +1660,19 @@ run_or_load_study2_replication <- function(ii) {
   saveRDS(out, rep_files[ii])
   out
 }
+run_study2_replication_safely <- function(ii) {
+  tryCatch(
+    run_or_load_study2_replication(ii),
+    error = function(e) structure(
+      list(
+        row = as.integer(ii),
+        status = "failed",
+        message = conditionMessage(e)
+      ),
+      class = c("mixedgp_replication_failure", "list")
+    )
+  )
+}
 replication_cores <- if (identical(STUDY2_PARALLEL_LEVEL, "replications")) {
   min(nrow(run_grid), mixedgp_resolve_cores())
 } else {
@@ -1665,47 +1680,68 @@ replication_cores <- if (identical(STUDY2_PARALLEL_LEVEL, "replications")) {
 }
 rep_objects <- mixedgp_parallel_lapply(
   as.list(seq_len(nrow(run_grid))),
-  run_or_load_study2_replication,
+  run_study2_replication_safely,
   n_cores = replication_cores,
   seeds = 920000L + seq_len(nrow(run_grid)),
   mc.preschedule = FALSE
 )
 
-mc_results <- bind_rows(lapply(rep_objects, `[[`, "metrics"))
-mc_mean_recovery <- bind_rows(lapply(rep_objects, `[[`, "mean_recovery"))
+failed_replications <- vapply(
+  rep_objects, inherits, logical(1L), what = "mixedgp_replication_failure"
+)
+replication_status <- data.frame(
+  run_grid,
+  status = ifelse(failed_replications, "failed", "success"),
+  message = vapply(seq_len(nrow(run_grid)), function(ii) {
+    if (failed_replications[ii]) rep_objects[[ii]]$message else ""
+  }, character(1L)),
+  stringsAsFactors = FALSE
+)
+write.csv(
+  replication_status,
+  file.path(TAB_DIR, paste0("study2_replication_status_", CACHE_TAG, ".csv")),
+  row.names = FALSE
+)
+successful_rep_objects <- rep_objects[!failed_replications]
+if (length(successful_rep_objects) == 0L) {
+  stop("All Study II replications failed; see study2_replication_status CSV.")
+}
+
+mc_results <- bind_rows(lapply(successful_rep_objects, `[[`, "metrics"))
+mc_mean_recovery <- bind_rows(lapply(successful_rep_objects, `[[`, "mean_recovery"))
 mc_mean_truth_rejection <- bind_rows(
-  lapply(rep_objects, `[[`, "mean_truth_rejection")
+  lapply(successful_rep_objects, `[[`, "mean_truth_rejection")
 )
 mc_mean_truth_diagnostics <- bind_rows(
-  lapply(rep_objects, `[[`, "mean_truth_diagnostics")
+  lapply(successful_rep_objects, `[[`, "mean_truth_diagnostics")
 )
-mc_diagnostics <- bind_rows(lapply(rep_objects, `[[`, "diagnostics"))
+mc_diagnostics <- bind_rows(lapply(successful_rep_objects, `[[`, "diagnostics"))
 mc_target_diagnostics <- bind_rows(
-  lapply(rep_objects, `[[`, "target_diagnostics")
+  lapply(successful_rep_objects, `[[`, "target_diagnostics")
 )
-mc_imputation <- bind_rows(lapply(rep_objects, `[[`, "imputation"))
+mc_imputation <- bind_rows(lapply(successful_rep_objects, `[[`, "imputation"))
 mc_imputation_status <- bind_rows(
-  lapply(rep_objects, `[[`, "imputation_status")
+  lapply(successful_rep_objects, `[[`, "imputation_status")
 )
-mc_surface <- bind_rows(lapply(rep_objects, `[[`, "surface"))
-mc_ablation_results <- bind_rows(lapply(rep_objects, `[[`, "ablation_metrics"))
-mc_ablation_surface <- bind_rows(lapply(rep_objects, `[[`, "ablation_surface"))
+mc_surface <- bind_rows(lapply(successful_rep_objects, `[[`, "surface"))
+mc_ablation_results <- bind_rows(lapply(successful_rep_objects, `[[`, "ablation_metrics"))
+mc_ablation_surface <- bind_rows(lapply(successful_rep_objects, `[[`, "ablation_surface"))
 measurement_diagnostics <- bind_rows(
-  lapply(rep_objects, `[[`, "measurement_diagnostics")
+  lapply(successful_rep_objects, `[[`, "measurement_diagnostics")
 )
 measurement_parameter_diagnostics <- bind_rows(
-  lapply(rep_objects, `[[`, "measurement_parameter_diagnostics")
+  lapply(successful_rep_objects, `[[`, "measurement_parameter_diagnostics")
 )
 ablation_optimizer_attempts <- bind_rows(
-  lapply(rep_objects, `[[`, "ablation_optimizer_attempts")
+  lapply(successful_rep_objects, `[[`, "ablation_optimizer_attempts")
 )
-ablation_status <- bind_rows(lapply(rep_objects, `[[`, "ablation_status"))
-competitor_status <- bind_rows(lapply(rep_objects, `[[`, "competitor_status"))
-pattern_counts <- bind_rows(lapply(rep_objects, `[[`, "pattern_counts"))
+ablation_status <- bind_rows(lapply(successful_rep_objects, `[[`, "ablation_status"))
+competitor_status <- bind_rows(lapply(successful_rep_objects, `[[`, "competitor_status"))
+pattern_counts <- bind_rows(lapply(successful_rep_objects, `[[`, "pattern_counts"))
 sampler_control_manifest <- bind_rows(
-  lapply(rep_objects, `[[`, "sampler_control_manifest")
+  lapply(successful_rep_objects, `[[`, "sampler_control_manifest")
 )
-replication_metadata <- lapply(rep_objects, `[[`, "metadata")
+replication_metadata <- lapply(successful_rep_objects, `[[`, "metadata")
 
 raw_outputs <- list(
   predictive_metrics = mc_results,

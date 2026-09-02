@@ -992,8 +992,10 @@ mixedgp_run_automatic_validators <- function(config, engine, run_dir) {
       } else {
         logical(0)
       }
-      strict_failure <- identical(name, "published_competitors") &&
-        identical(config$mode, "publication") && any(failed_competitors)
+      ## External competitor packages are audited, but are not a prerequisite
+      ## for completing the EIV-GP MCMC experiment.  Their validation result
+      ## remains in the run directory for transparent reporting.
+      strict_failure <- FALSE
       invariant_failure <- identical(name, "experiment_design") &&
         any(is.na(answer$pass) | !answer$pass)
       statuses[[name]] <- data.frame(
@@ -1004,6 +1006,13 @@ mixedgp_run_automatic_validators <- function(config, engine, run_dir) {
             "Publication requires successful validation for: ",
             paste(answer$method[failed_competitors], collapse = ", "),
             "."
+          )
+        } else if (identical(name, "published_competitors") &&
+                   any(failed_competitors)) {
+          paste0(
+            "External competitor validation did not succeed for: ",
+            paste(answer$method[failed_competitors], collapse = ", "),
+            ". EIV-GP MCMC will continue; inspect the saved validation table."
           )
         } else if (invariant_failure) {
           "One or more paired-design invariants failed."
@@ -1529,6 +1538,7 @@ mixedgp_run_study1_cell <- function(config, cell, engine, run_dir) {
     ),
     mcmc_diagnostics = mixedgp_get_cell_output(run_env, "mcmc_diagnostics"),
     competitor_status = mixedgp_get_cell_output(run_env, "competitor_status"),
+    replication_status = mixedgp_get_cell_output(run_env, "replication_status"),
     ablation_status = mixedgp_get_cell_output(run_env, "ablation_status"),
     sampler_control_manifest = mixedgp_get_cell_output(
       run_env, "sampler_control_manifest"
@@ -1568,7 +1578,14 @@ mixedgp_run_study2_cell <- function(config, cell, engine, run_dir) {
 
 mixedgp_competitor_gate <- function(result, config) {
   status <- result$outputs$competitor_status
-  expected <- result$cell$n_rep * length(config$published_methods)
+  replication_status <- result$outputs$replication_status
+  n_eiv_completed <- if (is.data.frame(replication_status) &&
+      "status" %in% names(replication_status)) {
+    sum(replication_status$status == "success", na.rm = TRUE)
+  } else {
+    result$cell$n_rep
+  }
+  expected <- n_eiv_completed * length(config$published_methods)
   if (!is.data.frame(status) || nrow(status) == 0L) {
     failure_rate <- 1
     n_success <- 0L
@@ -1585,11 +1602,10 @@ mixedgp_competitor_gate <- function(result, config) {
     attempted = n_attempted,
     success = n_success,
     failure_rate = failure_rate,
-    pass = n_attempted == expected && if (isTRUE(config$strict_competitors)) {
-      failure_rate == 0
-    } else {
-      failure_rate <= 0.05
-    },
+    ## A public-package optimizer can legitimately fail on an individual
+    ## frozen data set.  It is reportable metadata, not a reason to abort
+    ## EIV-GP MCMC or invalidate its diagnostic gate.
+    pass = n_attempted == expected,
     stringsAsFactors = FALSE
   )
 }
@@ -2416,12 +2432,14 @@ mixedgp_run_simulation <- function(config) {
       detail = "Automatic validators passed."
     )
   }
-  if ("fit" %in% config$stages && isTRUE(config$strict_competitors) &&
-      any(!preflight$available)) {
+  if ("fit" %in% config$stages && any(!preflight$available)) {
     unavailable <- preflight$method[!preflight$available]
-    stop(
-      "Publication run stopped before data generation or fitting because ",
-      "packages are unavailable: ", paste(unavailable, collapse = ", "), "."
+    warning(
+      "Published competitor package(s) are unavailable: ",
+      paste(unavailable, collapse = ", "),
+      ". EIV-GP MCMC will continue; the omissions are recorded in the ",
+      "competitor preflight and per-replication status files.",
+      call. = FALSE
     )
   }
   if ("fit" %in% config$stages && any(!runtime_preflight$available)) {

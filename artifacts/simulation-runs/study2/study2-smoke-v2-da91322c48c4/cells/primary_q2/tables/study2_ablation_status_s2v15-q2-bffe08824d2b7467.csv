@@ -1,0 +1,4 @@
+"method","n_calib","status","message","elapsed_seconds","rep","scenario"
+"Response-free measurement model",6,"success","",0.346000000000004,1,"primary"
+"PI-GP",6,"success","",0.68100000000004,1,"primary"
+"CC-GP",6,"success","",0.324999999999989,1,"primary"

@@ -4,7 +4,7 @@ _main.Rmd
 eivGP-literate-source.Rmd
 *.Rcheck/
 *.tar.gz
-artifacts/
+reproduction/
 experiments/*_cache/
 experiments/*_files/
 experiments/*.html

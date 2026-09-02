@@ -1,0 +1,83 @@
+---
+title: "Study II frozen synthetic data"
+output:
+  html_document:
+    toc: true
+params:
+  run_mode: "dry_run"
+  workers: 8
+  data_root: ""
+---
+
+# Purpose
+
+This document generates the exact deterministic synthetic datasets used by the
+frozen Study II publication design. Run it in `publication` mode once before
+`study2_numerical_experiment.Rmd`. Existing files are not overwritten and are
+checksum-verified before any fit. `smoke` mode creates distinct non-reportable
+test data; the committed default is read-only.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = TRUE,
+                      error = FALSE, cache = FALSE)
+if (!requireNamespace("eivGP", quietly = TRUE)) {
+  stop("Install eivGP before rendering this document; see README.md.")
+}
+library(eivGP)
+```
+
+# Configuration
+
+```{r configure}
+DOCUMENT_PARAMS <- list(run_mode = "dry_run", workers = 8L, data_root = "")
+if (exists("params", inherits = FALSE) && is.list(params)) {
+  DOCUMENT_PARAMS <- utils::modifyList(DOCUMENT_PARAMS, params)
+}
+RUN_MODE <- match.arg(as.character(DOCUMENT_PARAMS$run_mode),
+                      c("dry_run", "smoke", "publication"))
+WORKERS <- as.integer(DOCUMENT_PARAMS$workers)
+if (length(WORKERS) != 1L || is.na(WORKERS) || WORKERS < 1L) {
+  stop("workers must be one positive integer.")
+}
+ARTIFACT_ROOT <- Sys.getenv("EIVGP_ARTIFACT_ROOT", unset = "")
+if (!nzchar(ARTIFACT_ROOT)) ARTIFACT_ROOT <- file.path(getwd(), "reproduction")
+DATA_ROOT <- if (nzchar(DOCUMENT_PARAMS$data_root)) {
+  normalizePath(DOCUMENT_PARAMS$data_root, winslash = "/", mustWork = FALSE)
+} else {
+  file.path(
+    ARTIFACT_ROOT, "data",
+    if (identical(RUN_MODE, "publication")) "synthetic" else "smoke",
+    "study2"
+  )
+}
+
+generate_study2_publication_data <- function(mode, workers, data_root,
+                                             output_root) {
+  config <- eivGP::study2_simulation_config(
+    mode = mode,
+    workers = workers,
+    data_root = data_root,
+    output_root = output_root,
+    stages = if (mode %in% c("smoke", "publication")) "data" else NULL
+  )
+  eivGP::run_study2_simulation(config)
+}
+```
+
+# Generate and verify data
+
+```{r generate-data}
+STUDY2_DATA_RUN <- generate_study2_publication_data(
+  mode = RUN_MODE,
+  workers = WORKERS,
+  data_root = DATA_ROOT,
+  output_root = file.path(ARTIFACT_ROOT, "results", "study2")
+)
+print(STUDY2_DATA_RUN$data_manifest)
+```
+
+# Session information
+
+```{r session-information}
+sessionInfo()
+```

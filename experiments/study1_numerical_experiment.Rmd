@@ -7,81 +7,98 @@ output:
 params:
   run_mode: "dry_run"
   workers: 8
-  stages: ""
   data_root: ""
   output_root: ""
 ---
 
 # Purpose
 
-This is the sole top-to-bottom reproduction document for the frozen Study I
-publication design. Its computational implementation lives in `eivGP`; this
-file contains configuration, one package call, and presentation only.
+This is the sole top-to-bottom fitting and reporting document for the frozen
+Study I publication design. Generate the frozen datasets first with
+`study1_synthetic_data.Rmd`. The model implementations, including MCMC, live
+in `eivGP`; the wrapper below makes the executed stages explicit.
 
 The committed default is a read-only dry run. To reproduce the paper, change
 `run_mode` above to `publication` and render this document in a clean R
-session. A resumable fit may set `stages` to `fit,aggregate`; the existing
-frozen data are checksum-verified before fitting. Smoke and publication fits
-automatically run the exact published-competitor and paired-design validators;
-publication mode requires every competitor validation to succeed.
+session. Publication execution always verifies frozen data, fits the required
+methods, then aggregates the results. Smoke and publication fits automatically
+run the exact published-competitor and paired-design validators; publication
+mode requires every competitor validation to succeed.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
   echo = TRUE, message = TRUE, warning = TRUE,
   error = FALSE, cache = FALSE
 )
-document_file <- knitr::current_input(dir = TRUE)
-repository_dir <- normalizePath(
-  file.path(dirname(document_file), ".."), winslash = "/", mustWork = TRUE
-)
-package_dir <- file.path(repository_dir, "eivGP")
-if (!requireNamespace("pkgload", quietly = TRUE)) {
-  stop("Install pkgload to run the development version of eivGP.")
+if (!requireNamespace("eivGP", quietly = TRUE)) {
+  stop("Install eivGP before rendering this document; see README.md.")
 }
-pkgload::load_all(package_dir, quiet = TRUE)
+library(eivGP)
 ```
 
 # Configuration
 
-Only run mode, worker count, resume stages, and artifact locations are exposed.
-The design cells, seeds, sample sizes, MCMC controls, estimands, method
-eligibility, and diagnostic gates are frozen inside the package constructor.
+Only run mode, worker count, and artifact locations are exposed. The design
+cells, seeds, sample sizes, MCMC controls, estimands, method eligibility, and
+diagnostic gates are frozen inside the package constructor.
 
 ```{r configure}
-RUN_MODE <- as.character(params$run_mode)
-WORKERS <- as.integer(params$workers)
-STAGES <- if (nzchar(params$stages)) {
-  trimws(strsplit(params$stages, ",", fixed = TRUE)[[1L]])
-} else {
-  NULL
-}
-DATA_ROOT <- if (nzchar(params$data_root)) {
-  normalizePath(params$data_root, winslash = "/", mustWork = FALSE)
-} else {
-  file.path(repository_dir, "artifacts", "data-synthetic", "publication-v2", "study1")
-}
-OUTPUT_ROOT <- if (nzchar(params$output_root)) {
-  normalizePath(params$output_root, winslash = "/", mustWork = FALSE)
-} else {
-  file.path(repository_dir, "artifacts", "simulation-runs", "study1")
-}
-CODE_DIR <- file.path(repository_dir, "script", "R-scripts")
-
-STUDY1_CONFIG <- eivGP::study1_simulation_config(
-  mode = RUN_MODE,
-  code_dir = CODE_DIR,
-  workers = WORKERS,
-  data_root = DATA_ROOT,
-  output_root = OUTPUT_ROOT,
-  stages = STAGES
+DOCUMENT_PARAMS <- list(
+  run_mode = "dry_run", workers = 8L,
+  data_root = "", output_root = ""
 )
-STUDY1_CONFIG
+if (exists("params", inherits = FALSE) && is.list(params)) {
+  DOCUMENT_PARAMS <- utils::modifyList(DOCUMENT_PARAMS, params)
+}
+RUN_MODE <- as.character(DOCUMENT_PARAMS$run_mode)
+WORKERS <- as.integer(DOCUMENT_PARAMS$workers)
+ARTIFACT_ROOT <- Sys.getenv("EIVGP_ARTIFACT_ROOT", unset = "")
+if (!nzchar(ARTIFACT_ROOT)) {
+  ARTIFACT_ROOT <- normalizePath(file.path(getwd(), "reproduction"),
+                                 winslash = "/", mustWork = FALSE)
+}
+ARTIFACT_ROOT <- normalizePath(
+  ARTIFACT_ROOT, winslash = "/", mustWork = FALSE
+)
+DATA_ROOT <- if (nzchar(DOCUMENT_PARAMS$data_root)) {
+  normalizePath(DOCUMENT_PARAMS$data_root, winslash = "/", mustWork = FALSE)
+} else {
+  file.path(
+    ARTIFACT_ROOT, "data",
+    if (identical(RUN_MODE, "publication")) "synthetic" else "smoke",
+    "study1"
+  )
+}
+OUTPUT_ROOT <- if (nzchar(DOCUMENT_PARAMS$output_root)) {
+  normalizePath(DOCUMENT_PARAMS$output_root, winslash = "/", mustWork = FALSE)
+} else {
+  file.path(ARTIFACT_ROOT, "results", "study1")
+}
+run_study1_publication <- function(mode, workers, data_root, output_root) {
+  mode <- match.arg(mode, c("dry_run", "smoke", "publication"))
+  config <- eivGP::study1_simulation_config(
+    mode = mode,
+    workers = workers,
+    data_root = data_root,
+    output_root = output_root,
+    # Data are created and frozen by study1_synthetic_data.Rmd.  This
+    # document only verifies them, fits all prespecified methods, and
+    # aggregates the resulting tables and figures.
+    stages = if (identical(mode, "dry_run")) NULL else c("fit", "aggregate")
+  )
+  eivGP::run_study1_simulation(config)
+}
 ```
 
 # Run
 
 ```{r run-study1}
-STUDY1_RUN <- eivGP::run_study1_simulation(STUDY1_CONFIG)
+STUDY1_RUN <- run_study1_publication(
+  mode = RUN_MODE,
+  workers = WORKERS,
+  data_root = DATA_ROOT,
+  output_root = OUTPUT_ROOT
+)
 ```
 
 # Auditable outputs
@@ -93,7 +110,7 @@ results, paired comparisons, result checksums, and automatic validation records
 under `config/`.
 
 ```{r summarize-study1}
-if (identical(STUDY1_CONFIG$mode, "dry_run")) {
+if (identical(RUN_MODE, "dry_run")) {
   print(STUDY1_RUN$preflight)
   print(STUDY1_RUN$runtime_preflight)
   print(STUDY1_RUN$task_plan)

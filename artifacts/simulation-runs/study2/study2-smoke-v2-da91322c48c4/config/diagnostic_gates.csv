@@ -1,0 +1,15 @@
+"cell_id","gate","expected","attempted","success","failure_rate","pass"
+"primary_q2","published_competitors",3,3,3,0,TRUE
+"primary_q2","eiv_mcmc",1,1,0,1,FALSE
+"primary_q2","scientific_ablations",3,3,3,0,TRUE
+"primary_q2","prediction_output_completeness",5,5,5,0,TRUE
+"primary_q2","observable_mean_output_completeness",4,4,4,0,TRUE
+"primary_q2","ablation_prediction_output_completeness",2,2,2,0,TRUE
+"primary_q2","latent_u_task_status_completeness",4,4,4,0,TRUE
+"primary_q3","published_competitors",3,3,2,0.333333333333333,FALSE
+"primary_q3","eiv_mcmc",1,1,0,1,FALSE
+"primary_q3","scientific_ablations",3,3,3,0,TRUE
+"primary_q3","prediction_output_completeness",5,4,4,0.2,FALSE
+"primary_q3","observable_mean_output_completeness",4,3,3,0.25,FALSE
+"primary_q3","ablation_prediction_output_completeness",2,2,2,0,TRUE
+"primary_q3","latent_u_task_status_completeness",4,4,4,0,TRUE

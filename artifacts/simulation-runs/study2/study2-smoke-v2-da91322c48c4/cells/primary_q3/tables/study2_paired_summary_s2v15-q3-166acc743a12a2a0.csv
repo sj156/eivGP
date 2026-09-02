@@ -1,0 +1,3 @@
+"scenario","n_calib","competitor","CRPS_difference","CRPS_difference_se","IntervalScore95_difference","IntervalScore95_difference_se"
+"primary",6,"EzGP",-0.10008717320423,NA,-1.13356749962383,NA
+"primary",6,"UC-GP",-0.00631824173322534,NA,-0.805840765331724,NA

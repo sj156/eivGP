@@ -1,0 +1,8 @@
+"cell_id","role","scenario","eta","q","n","n_test","n_rep","calibration_grid","evaluate_f","evaluate_u","run_ablations"
+"primary_q2","primary_proxy_dimension","primary",,2,120,60,1,"6",FALSE,TRUE,TRUE
+"primary_q3","primary_proxy_dimension","primary",,3,120,60,1,"6",FALSE,TRUE,TRUE
+"primary_q4_calibration","primary_calibration_curve","primary",,4,120,60,1,"0;6",TRUE,TRUE,TRUE
+"additive_q4","negative_control","latent_additive_control",,4,120,60,1,"6",FALSE,FALSE,TRUE
+"high_uncertainty_q4","uncertainty_control","high_uncertainty",,4,120,60,1,"6",FALSE,FALSE,TRUE
+"logistic_q4","appendix_misspecification","logistic_misspec",,4,120,60,1,"6",FALSE,FALSE,FALSE
+"primary_q6","appendix_sparse_pattern_stress","primary",,6,120,80,1,"6",FALSE,TRUE,TRUE

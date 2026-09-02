@@ -1,0 +1,2 @@
+"schema_version","study","scenario","rep","n","n_test","q","d","m","data_seed","calibration_seed","file","bytes","md5","generator_tag","design_fingerprint"
+"1.1.0","study2","primary",1,120,60,4,2,4,1010001,1010002,"study2_primary_q4_n120_ntest60_m4_rep001.rds",8988,"3b4e5af6693b90843379a9f530d721ae","study2-synthetic-shared-state-v2","a5a016871dad41d2a0d7907226dfb72b"

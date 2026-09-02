@@ -1,0 +1,4 @@
+"method","status","optimization_status","optimization_attempts","message","warnings","elapsed_seconds","implementation","fitted_noise_variance","rep","scenario"
+"UC-GP","success","converged","","","No termination criterion specified, using default(relative x-tolerance = 1e-04) | optimisation did not converge",3.22199999999998,"kergp 0.5.8::q1Symm; best of 2 converged fits among 2 likelihood starts",0.0767491092153624,1,"primary"
+"LVGP","unavailable_or_failed","timeout","retry=1,seed=1010102,limits=30/8,elapsed=60,status=timeout,flag=NA,objective=NA","LVGP did not return a converged finite-likelihood fit after the prespecified default and extended-limit attempts. reached elapsed time limit","",60.001,"",NA,1,"primary"
+"EzGP","success","converged","","","",232.573,"EzGP 0.1.0::EzGP_fit; nugget selected by 3-fold training-only NLPD CV over prespecified variance fractions",0.0770778689238957,1,"primary"

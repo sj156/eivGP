@@ -1,0 +1,5 @@
+"rep","scenario","n_calib","method","target","status","task_eligible","reason","n_units","latent_scale","calibration_affine_rank","calibration_required_rank"
+1,"primary",6,"EIV-GP","training_missing_U","eligible",TRUE,"",114,"physical",3,3
+1,"primary",6,"EIV-GP","prospective_U_given_C","eligible",TRUE,"",8,"physical",3,3
+1,"primary",6,"Ordinal model (no Y)","training_missing_U","eligible",TRUE,"",114,"physical",3,3
+1,"primary",6,"Ordinal model (no Y)","prospective_U_given_C","eligible",TRUE,"",8,"physical",3,3

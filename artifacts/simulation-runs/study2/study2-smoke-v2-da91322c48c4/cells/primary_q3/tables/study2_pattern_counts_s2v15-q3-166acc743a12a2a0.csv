@@ -1,0 +1,4 @@
+"evaluation_stratum","n_test","rep","scenario"
+"common",19,1,"primary"
+"rare",30,1,"primary"
+"unobserved",11,1,"primary"

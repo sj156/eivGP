@@ -1,0 +1,41 @@
+"scenario","target","n_calib","method","coordinate","metric","mean","se","n_rep_eff"
+"primary","prospective_U_given_C",6,"EIV-GP","u1","Bias",-0.108273549111932,NA,1
+"primary","prospective_U_given_C",6,"EIV-GP","u1","Coverage95",0.875,NA,1
+"primary","prospective_U_given_C",6,"EIV-GP","u1","MAE",0.252596802245271,NA,1
+"primary","prospective_U_given_C",6,"EIV-GP","u1","RMSE",0.333382985865078,NA,1
+"primary","prospective_U_given_C",6,"EIV-GP","u1","Width95",1.17607130470503,NA,1
+"primary","prospective_U_given_C",6,"EIV-GP","u2","Bias",-0.0723186938068302,NA,1
+"primary","prospective_U_given_C",6,"EIV-GP","u2","Coverage95",0.875,NA,1
+"primary","prospective_U_given_C",6,"EIV-GP","u2","MAE",0.306288990339457,NA,1
+"primary","prospective_U_given_C",6,"EIV-GP","u2","RMSE",0.35514592811336,NA,1
+"primary","prospective_U_given_C",6,"EIV-GP","u2","Width95",1.41466782422433,NA,1
+"primary","prospective_U_given_C",6,"Ordinal model (no Y)","u1","Bias",-0.181737331156839,NA,1
+"primary","prospective_U_given_C",6,"Ordinal model (no Y)","u1","Coverage95",1,NA,1
+"primary","prospective_U_given_C",6,"Ordinal model (no Y)","u1","MAE",0.304761846846541,NA,1
+"primary","prospective_U_given_C",6,"Ordinal model (no Y)","u1","RMSE",0.338487630391594,NA,1
+"primary","prospective_U_given_C",6,"Ordinal model (no Y)","u1","Width95",1.40816785035164,NA,1
+"primary","prospective_U_given_C",6,"Ordinal model (no Y)","u2","Bias",-0.164938715747048,NA,1
+"primary","prospective_U_given_C",6,"Ordinal model (no Y)","u2","Coverage95",1,NA,1
+"primary","prospective_U_given_C",6,"Ordinal model (no Y)","u2","MAE",0.387592273834218,NA,1
+"primary","prospective_U_given_C",6,"Ordinal model (no Y)","u2","RMSE",0.478322661279646,NA,1
+"primary","prospective_U_given_C",6,"Ordinal model (no Y)","u2","Width95",2.34432505231456,NA,1
+"primary","training_missing_U",6,"EIV-GP","u1","Bias",0.0984152105012645,NA,1
+"primary","training_missing_U",6,"EIV-GP","u1","Coverage95",0.385964912280702,NA,1
+"primary","training_missing_U",6,"EIV-GP","u1","MAE",0.498465430118141,NA,1
+"primary","training_missing_U",6,"EIV-GP","u1","RMSE",0.653936485182307,NA,1
+"primary","training_missing_U",6,"EIV-GP","u1","Width95",0.519702609915511,NA,1
+"primary","training_missing_U",6,"EIV-GP","u2","Bias",0.0332961026107176,NA,1
+"primary","training_missing_U",6,"EIV-GP","u2","Coverage95",0.394736842105263,NA,1
+"primary","training_missing_U",6,"EIV-GP","u2","MAE",0.527013747639994,NA,1
+"primary","training_missing_U",6,"EIV-GP","u2","RMSE",0.659967992489489,NA,1
+"primary","training_missing_U",6,"EIV-GP","u2","Width95",0.646846755102524,NA,1
+"primary","training_missing_U",6,"Ordinal model (no Y)","u1","Bias",0.0315278558767537,NA,1
+"primary","training_missing_U",6,"Ordinal model (no Y)","u1","Coverage95",0.903508771929825,NA,1
+"primary","training_missing_U",6,"Ordinal model (no Y)","u1","MAE",0.458742665388625,NA,1
+"primary","training_missing_U",6,"Ordinal model (no Y)","u1","RMSE",0.587356743444381,NA,1
+"primary","training_missing_U",6,"Ordinal model (no Y)","u1","Width95",2.07310469268147,NA,1
+"primary","training_missing_U",6,"Ordinal model (no Y)","u2","Bias",-0.135358208758148,NA,1
+"primary","training_missing_U",6,"Ordinal model (no Y)","u2","Coverage95",0.973684210526316,NA,1
+"primary","training_missing_U",6,"Ordinal model (no Y)","u2","MAE",0.494060553527856,NA,1
+"primary","training_missing_U",6,"Ordinal model (no Y)","u2","RMSE",0.626437004863329,NA,1
+"primary","training_missing_U",6,"Ordinal model (no Y)","u2","Width95",2.73199071129687,NA,1

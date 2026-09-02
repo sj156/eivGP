@@ -1,0 +1,66 @@
+"study","cell_id","design_role","task_type","method","n_calib","rep","planned_units"
+"study2","primary_q2","primary_proxy_dimension","frozen_data","DGM",,1,1
+"study2","primary_q2","primary_proxy_dimension","prediction_truth","DGM oracle",,1,1
+"study2","primary_q2","primary_proxy_dimension","published_fit","UC-GP",,1,1
+"study2","primary_q2","primary_proxy_dimension","published_fit","LVGP",,1,1
+"study2","primary_q2","primary_proxy_dimension","published_fit","EzGP",,1,1
+"study2","primary_q2","primary_proxy_dimension","eiv_fit","EIV-GP",6,1,1
+"study2","primary_q2","primary_proxy_dimension","ablation_fit","RF-OM",6,1,1
+"study2","primary_q2","primary_proxy_dimension","ablation_fit","PI-GP",6,1,1
+"study2","primary_q2","primary_proxy_dimension","ablation_fit","CC-GP",6,1,1
+"study2","primary_q3","primary_proxy_dimension","frozen_data","DGM",,1,1
+"study2","primary_q3","primary_proxy_dimension","prediction_truth","DGM oracle",,1,1
+"study2","primary_q3","primary_proxy_dimension","published_fit","UC-GP",,1,1
+"study2","primary_q3","primary_proxy_dimension","published_fit","LVGP",,1,1
+"study2","primary_q3","primary_proxy_dimension","published_fit","EzGP",,1,1
+"study2","primary_q3","primary_proxy_dimension","eiv_fit","EIV-GP",6,1,1
+"study2","primary_q3","primary_proxy_dimension","ablation_fit","RF-OM",6,1,1
+"study2","primary_q3","primary_proxy_dimension","ablation_fit","PI-GP",6,1,1
+"study2","primary_q3","primary_proxy_dimension","ablation_fit","CC-GP",6,1,1
+"study2","primary_q4_calibration","primary_calibration_curve","frozen_data","DGM",,1,1
+"study2","primary_q4_calibration","primary_calibration_curve","prediction_truth","DGM oracle",,1,1
+"study2","primary_q4_calibration","primary_calibration_curve","published_fit","UC-GP",,1,1
+"study2","primary_q4_calibration","primary_calibration_curve","published_fit","LVGP",,1,1
+"study2","primary_q4_calibration","primary_calibration_curve","published_fit","EzGP",,1,1
+"study2","primary_q4_calibration","primary_calibration_curve","eiv_fit","EIV-GP",0,1,1
+"study2","primary_q4_calibration","primary_calibration_curve","eiv_fit","EIV-GP",6,1,1
+"study2","primary_q4_calibration","primary_calibration_curve","ablation_fit","RF-OM",0,1,1
+"study2","primary_q4_calibration","primary_calibration_curve","ablation_fit","RF-OM",6,1,1
+"study2","primary_q4_calibration","primary_calibration_curve","ablation_fit","PI-GP",0,1,1
+"study2","primary_q4_calibration","primary_calibration_curve","ablation_fit","PI-GP",6,1,1
+"study2","primary_q4_calibration","primary_calibration_curve","ablation_fit","CC-GP",0,1,1
+"study2","primary_q4_calibration","primary_calibration_curve","ablation_fit","CC-GP",6,1,1
+"study2","primary_q4_calibration","primary_calibration_curve","benchmark_fit","Full-U GP",,1,1
+"study2","additive_q4","negative_control","frozen_data","DGM",,1,1
+"study2","additive_q4","negative_control","prediction_truth","DGM oracle",,1,1
+"study2","additive_q4","negative_control","published_fit","UC-GP",,1,1
+"study2","additive_q4","negative_control","published_fit","LVGP",,1,1
+"study2","additive_q4","negative_control","published_fit","EzGP",,1,1
+"study2","additive_q4","negative_control","eiv_fit","EIV-GP",6,1,1
+"study2","additive_q4","negative_control","ablation_fit","RF-OM",6,1,1
+"study2","additive_q4","negative_control","ablation_fit","PI-GP",6,1,1
+"study2","additive_q4","negative_control","ablation_fit","CC-GP",6,1,1
+"study2","high_uncertainty_q4","uncertainty_control","frozen_data","DGM",,1,1
+"study2","high_uncertainty_q4","uncertainty_control","prediction_truth","DGM oracle",,1,1
+"study2","high_uncertainty_q4","uncertainty_control","published_fit","UC-GP",,1,1
+"study2","high_uncertainty_q4","uncertainty_control","published_fit","LVGP",,1,1
+"study2","high_uncertainty_q4","uncertainty_control","published_fit","EzGP",,1,1
+"study2","high_uncertainty_q4","uncertainty_control","eiv_fit","EIV-GP",6,1,1
+"study2","high_uncertainty_q4","uncertainty_control","ablation_fit","RF-OM",6,1,1
+"study2","high_uncertainty_q4","uncertainty_control","ablation_fit","PI-GP",6,1,1
+"study2","high_uncertainty_q4","uncertainty_control","ablation_fit","CC-GP",6,1,1
+"study2","logistic_q4","appendix_misspecification","frozen_data","DGM",,1,1
+"study2","logistic_q4","appendix_misspecification","prediction_truth","DGM oracle",,1,1
+"study2","logistic_q4","appendix_misspecification","published_fit","UC-GP",,1,1
+"study2","logistic_q4","appendix_misspecification","published_fit","LVGP",,1,1
+"study2","logistic_q4","appendix_misspecification","published_fit","EzGP",,1,1
+"study2","logistic_q4","appendix_misspecification","eiv_fit","EIV-GP",6,1,1
+"study2","primary_q6","appendix_sparse_pattern_stress","frozen_data","DGM",,1,1
+"study2","primary_q6","appendix_sparse_pattern_stress","prediction_truth","DGM oracle",,1,1
+"study2","primary_q6","appendix_sparse_pattern_stress","published_fit","UC-GP",,1,1
+"study2","primary_q6","appendix_sparse_pattern_stress","published_fit","LVGP",,1,1
+"study2","primary_q6","appendix_sparse_pattern_stress","published_fit","EzGP",,1,1
+"study2","primary_q6","appendix_sparse_pattern_stress","eiv_fit","EIV-GP",6,1,1
+"study2","primary_q6","appendix_sparse_pattern_stress","ablation_fit","RF-OM",6,1,1
+"study2","primary_q6","appendix_sparse_pattern_stress","ablation_fit","PI-GP",6,1,1
+"study2","primary_q6","appendix_sparse_pattern_stress","ablation_fit","CC-GP",6,1,1

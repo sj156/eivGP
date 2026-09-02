@@ -1,0 +1,2 @@
+"schema_version","study","scenario","rep","n","n_test","q","d","m","data_seed","calibration_seed","file","bytes","md5","generator_tag","design_fingerprint"
+"1.1.0","study2","logistic_misspec",1,120,60,4,2,4,1010001,1010002,"study2_logistic_misspec_q4_n120_ntest60_m4_rep001.rds",9000,"a8cfc7ade18836e54478b79ec33044a8","study2-synthetic-shared-state-v2","f5132bee83ed179deea2ef643d4106d3"

@@ -1,0 +1,15 @@
+"scenario","n_calib","method","metric","mean","se","n_rep_eff"
+"primary",6,"CC-GP","CRPS",0.255991442870896,NA,1
+"primary",6,"CC-GP","Coverage95",0.883333333333333,NA,1
+"primary",6,"CC-GP","IntervalScore95",2.33805159768047,NA,1
+"primary",6,"CC-GP","MAE",0.353893987728969,NA,1
+"primary",6,"CC-GP","NLPD",0.608040566591797,NA,1
+"primary",6,"CC-GP","RMSE",0.465181987680679,NA,1
+"primary",6,"CC-GP","Width95",1.47105177207244,NA,1
+"primary",6,"PI-GP","CRPS",0.181450546276728,NA,1
+"primary",6,"PI-GP","Coverage95",0.9,NA,1
+"primary",6,"PI-GP","IntervalScore95",1.72826514689636,NA,1
+"primary",6,"PI-GP","MAE",0.246366549717217,NA,1
+"primary",6,"PI-GP","NLPD",0.269090874429417,NA,1
+"primary",6,"PI-GP","RMSE",0.312656539503061,NA,1
+"primary",6,"PI-GP","Width95",1.10920373599032,NA,1

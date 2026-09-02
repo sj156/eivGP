@@ -1,0 +1,4 @@
+"rep","scenario","n_calib","method","n_eval","RMSE","MAE","Bias","Coverage95","Width95","uncertainty_target"
+1,"primary",NA,"UC-GP",8,0.116212434988263,0.101299976331843,-0.0682066213474019,NA,NA,"none"
+1,"primary",NA,"EzGP",8,0.27736205662659,0.245752877405128,-0.01796207572118,NA,NA,"none"
+1,"primary",6,"EIV-GP",8,0.135046538498502,0.115855308817173,-0.0565612711722242,0.75,0.362291093669325,"m(x,c)"

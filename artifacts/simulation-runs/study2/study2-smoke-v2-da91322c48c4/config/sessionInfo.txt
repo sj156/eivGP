@@ -1,0 +1,46 @@
+R version 4.6.0 (2026-04-24)
+Platform: aarch64-apple-darwin23
+Running under: macOS Tahoe 26.5.2
+
+Matrix products: default
+BLAS:   /Library/Frameworks/R.framework/Versions/4.6/Resources/lib/libRblas.0.dylib 
+LAPACK: /Library/Frameworks/R.framework/Versions/4.6/Resources/lib/libRlapack.dylib;  LAPACK version 3.12.1
+
+locale:
+[1] C.UTF-8/C.UTF-8/C.UTF-8/C/C.UTF-8/C.UTF-8
+
+time zone: Asia/Shanghai
+tzcode source: internal
+
+attached base packages:
+[1] stats     graphics  grDevices utils     datasets  methods   base     
+
+other attached packages:
+[1] eivGP_0.1.0
+
+loaded via a namespace (and not attached):
+ [1] gtable_0.3.6         tensorA_0.36.2.1     xfun_0.57           
+ [4] bslib_0.11.0         ggplot2_4.0.3        lattice_0.22-9      
+ [7] numDeriv_2016.8-1.1  vctrs_0.7.3          tools_4.6.0         
+[10] generics_0.1.4       stats4_4.6.0         parallel_4.6.0      
+[13] tibble_3.3.1         pkgconfig_2.0.3      checkmate_2.3.4     
+[16] RColorBrewer_1.1-3   S7_0.2.2             lhs_1.3.0           
+[19] distributional_0.8.1 alabama_2025.1.0     lifecycle_1.0.5     
+[22] doFuture_1.3.0       compiler_4.6.0       farver_2.1.2        
+[25] brio_1.1.5           codetools_0.2-20     kergp_0.5.8         
+[28] TruncatedNormal_2.3  htmltools_0.5.9      sass_0.4.10         
+[31] yaml_2.3.12          pillar_1.11.1        nloptr_2.2.1        
+[34] jquerylib_0.1.4      tidyr_1.3.2          MASS_7.3-65         
+[37] randtoolbox_2.0.5    cachem_1.1.0         iterators_1.0.14    
+[40] abind_1.4-8          foreach_1.5.2        parallelly_1.48.0   
+[43] posterior_1.7.0      tidyselect_1.2.1     digest_0.6.39       
+[46] future_1.75.0        dplyr_1.2.1          purrr_1.2.2         
+[49] listenv_1.0.0        fastmap_1.2.0        grid_4.6.0          
+[52] cli_3.6.6            magrittr_2.0.5       qrng_0.0-11         
+[55] future.apply_1.20.2  scales_1.4.0         backports_1.5.1     
+[58] LVGP_2.1.6           EzGP_0.1.0           spacefillr_0.4.0    
+[61] rmarkdown_2.31       globals_0.19.1       otel_0.2.0          
+[64] rngWELL_0.10-10      evaluate_1.0.5       knitr_1.51          
+[67] testthat_3.3.2       doParallel_1.0.17    nleqslv_3.3.7       
+[70] rlang_1.2.0          Rcpp_1.1.1-1.1       glue_1.8.1          
+[73] jsonlite_2.0.0       R6_2.6.1            

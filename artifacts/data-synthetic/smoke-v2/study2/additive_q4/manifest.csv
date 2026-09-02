@@ -1,0 +1,2 @@
+"schema_version","study","scenario","rep","n","n_test","q","d","m","data_seed","calibration_seed","file","bytes","md5","generator_tag","design_fingerprint"
+"1.1.0","study2","latent_additive_control",1,120,60,4,2,4,1010001,1010002,"study2_latent_additive_control_q4_n120_ntest60_m4_rep001.rds",8992,"491f3e18915bb48408eb887e9ee24d75","study2-synthetic-shared-state-v2","bcc32fd9d3fae866b419f627b8714cf9"

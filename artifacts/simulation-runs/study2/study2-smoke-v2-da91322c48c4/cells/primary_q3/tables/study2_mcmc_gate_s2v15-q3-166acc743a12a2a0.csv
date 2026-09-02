@@ -1,0 +1,2 @@
+"mcmc_gate_rule","n_fits","n_pass","pass_rate","rhat_limit","raw_ess_limit","target_bulk_ess_limit","target_tail_ess_limit"
+"full_raw_coordinates_with_calibration",1,0,0,1.05,20,10,10

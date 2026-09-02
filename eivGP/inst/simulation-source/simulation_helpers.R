@@ -377,11 +377,11 @@ study1_simulation_config <- function(
   code_dir <- mixedgp_simulation_code_dir(code_dir)
   artifact_root <- mixedgp_simulation_artifact_root(code_dir)
   if (is.null(output_root)) {
-    output_root <- file.path(artifact_root, "simulation-runs", "study1")
+    output_root <- file.path(artifact_root, "results", "study1")
   }
   if (is.null(data_root)) {
     data_root <- file.path(
-      artifact_root, "data-synthetic", "publication-v2", "study1"
+      artifact_root, "data", "synthetic", "study1"
     )
   }
   smoke <- identical(mode, "smoke")
@@ -468,11 +468,11 @@ study2_simulation_config <- function(
   code_dir <- mixedgp_simulation_code_dir(code_dir)
   artifact_root <- mixedgp_simulation_artifact_root(code_dir)
   if (is.null(output_root)) {
-    output_root <- file.path(artifact_root, "simulation-runs", "study2")
+    output_root <- file.path(artifact_root, "results", "study2")
   }
   if (is.null(data_root)) {
     data_root <- file.path(
-      artifact_root, "data-synthetic", "publication-v2", "study2"
+      artifact_root, "data", "synthetic", "study2"
     )
   }
   smoke <- identical(mode, "smoke")
@@ -846,6 +846,44 @@ mixedgp_atomic_write_csv <- function(object, path) {
   }
   if (!file.rename(temporary, path)) stop("Could not install file: ", path)
   invisible(path)
+}
+
+mixedgp_write_progress <- function(run_dir,
+                                   status,
+                                   phase,
+                                   cells_completed = 0L,
+                                   cells_total = 0L,
+                                   current_cell = "",
+                                   detail = "") {
+  cells_completed <- as.integer(cells_completed)
+  cells_total <- as.integer(cells_total)
+  progress <- data.frame(
+    updated_at_utc = format(Sys.time(), tz = "UTC", usetz = TRUE),
+    status = as.character(status),
+    phase = as.character(phase),
+    current_cell = as.character(current_cell),
+    cells_completed = cells_completed,
+    cells_total = cells_total,
+    percent_cells_complete = if (cells_total > 0L) {
+      round(100 * cells_completed / cells_total, 1L)
+    } else {
+      NA_real_
+    },
+    detail = as.character(detail),
+    stringsAsFactors = FALSE
+  )
+  mixedgp_atomic_write_csv(progress, file.path(run_dir, "config", "progress.csv"))
+  message(
+    "[", progress$updated_at_utc, "] ",
+    progress$status, " | ", progress$phase,
+    if (nzchar(progress$current_cell)) paste0(" | ", progress$current_cell) else "",
+    if (cells_total > 0L) paste0(
+      " | ", cells_completed, "/", cells_total,
+      " cells (", progress$percent_cells_complete, "%)"
+    ) else "",
+    if (nzchar(progress$detail)) paste0(" | ", progress$detail) else ""
+  )
+  invisible(progress)
 }
 
 mixedgp_write_run_metadata <- function(config,
@@ -2357,12 +2395,25 @@ mixedgp_run_simulation <- function(config) {
   mixedgp_write_run_metadata(
     config, run_dir, preflight, runtime_preflight, task_plan
   )
+  n_cells <- length(config$cells)
+  mixedgp_write_progress(
+    run_dir, "running", "preflight", cells_total = n_cells,
+    detail = "Run directory initialized."
+  )
   automatic_validation <- list()
   if ("fit" %in% config$stages &&
       config$mode %in% c("smoke", "publication")) {
     message("Running automatic pre-fit publication validators.")
+    mixedgp_write_progress(
+      run_dir, "running", "automatic_validation", cells_total = n_cells,
+      detail = "Checking published competitors and experiment design."
+    )
     automatic_validation <- mixedgp_run_automatic_validators(
       config, engine, run_dir
+    )
+    mixedgp_write_progress(
+      run_dir, "running", "automatic_validation", cells_total = n_cells,
+      detail = "Automatic validators passed."
     )
   }
   if ("fit" %in% config$stages && isTRUE(config$strict_competitors) &&
@@ -2400,16 +2451,29 @@ mixedgp_run_simulation <- function(config) {
 
   generation_manifests <- list()
   if ("data" %in% config$stages) {
-    for (cell in config$cells) {
+    for (ii in seq_along(config$cells)) {
+      cell <- config$cells[[ii]]
+      mixedgp_write_progress(
+        run_dir, "running", "data_generation", ii - 1L, n_cells, cell$id,
+        "Generating deterministic frozen datasets."
+      )
       message("Freezing synthetic data: ", cell$id)
       generation_manifests[[cell$id]] <- mixedgp_generate_cell_data(
         config, cell, engine
+      )
+      mixedgp_write_progress(
+        run_dir, "running", "data_generation", ii, n_cells, cell$id,
+        "Frozen datasets and manifest written."
       )
     }
   }
   paired_validation <- data.frame()
   selected_manifests <- list()
   if (any(c("data", "fit") %in% config$stages)) {
+    mixedgp_write_progress(
+      run_dir, "running", "data_verification", cells_total = n_cells,
+      detail = "Verifying manifests, checksums, and paired design."
+    )
     for (cell in config$cells) {
       selected <- mixedgp_verify_cell_data(config, cell, engine)
       selected$cell_id <- cell$id
@@ -2431,6 +2495,10 @@ mixedgp_run_simulation <- function(config) {
   }
 
   if (!"fit" %in% config$stages) {
+    mixedgp_write_progress(
+      run_dir, "completed", "data_generation", n_cells, n_cells,
+      detail = "Data-only run completed successfully."
+    )
     return(invisible(list(
       config = config, run_dir = run_dir, data_manifest = data_manifest,
       preflight = preflight, runtime_preflight = runtime_preflight,
@@ -2444,6 +2512,10 @@ mixedgp_run_simulation <- function(config) {
   status_rows <- list()
   for (ii in seq_along(config$cells)) {
     cell <- config$cells[[ii]]
+    mixedgp_write_progress(
+      run_dir, "running", "fitting", ii - 1L, n_cells, cell$id,
+      "Fitting EIV-GP, competitors, and prespecified ablations."
+    )
     message(
       "Running ", config$study, " cell ", ii, "/", length(config$cells),
       ": ", cell$id
@@ -2467,6 +2539,10 @@ mixedgp_run_simulation <- function(config) {
       status <- mixedgp_bind_rows_base(status_rows)
       mixedgp_atomic_write_csv(
         status, file.path(run_dir, "config", "cell_status.csv")
+      )
+      mixedgp_write_progress(
+        run_dir, "failed", "fitting", ii - 1L, n_cells, cell$id,
+        conditionMessage(answer)
       )
       stop("Simulation cell ", cell$id, " failed: ", conditionMessage(answer))
     }
@@ -2495,7 +2571,15 @@ mixedgp_run_simulation <- function(config) {
       mixedgp_bind_rows_base(gate_rows),
       file.path(run_dir, "config", "diagnostic_gates.csv")
     )
+    mixedgp_write_progress(
+      run_dir, cell_status, "fitting", ii, n_cells, cell$id,
+      paste0("Cell finished in ", round(elapsed, 1L), " seconds.")
+    )
     if (isTRUE(config$fail_closed) && gate_failed) {
+      mixedgp_write_progress(
+        run_dir, "failed", "diagnostic_gates", ii, n_cells, cell$id,
+        paste(failed_gates, collapse = "; ")
+      )
       stop(
         "Publication gates failed for ", cell$id, ": ",
         paste(failed_gates, collapse = ", "), "."
@@ -2504,6 +2588,10 @@ mixedgp_run_simulation <- function(config) {
   }
 
   combined <- if ("aggregate" %in% config$stages) {
+    mixedgp_write_progress(
+      run_dir, "running", "aggregation", n_cells, n_cells,
+      detail = "Writing combined results, comparisons, tables, and figures."
+    )
     mixedgp_aggregate_results(results, config, run_dir)
   } else {
     list()
@@ -2529,6 +2617,10 @@ mixedgp_run_simulation <- function(config) {
       "automatic_validation", "paired_validation", "gates"
     )],
     file.path(run_dir, "run_summary.rds")
+  )
+  mixedgp_write_progress(
+    run_dir, "completed", "completed", n_cells, n_cells,
+    detail = "Run completed successfully."
   )
   message("Completed simulation run: ", normalizePath(run_dir))
   invisible(out)

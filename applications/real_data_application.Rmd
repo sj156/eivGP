@@ -30,15 +30,56 @@ knitr::opts_chunk$set(
   error = FALSE, cache = FALSE
 )
 document_file <- knitr::current_input(dir = TRUE)
-repository_dir <- normalizePath(
-  file.path(dirname(document_file), ".."), winslash = "/", mustWork = TRUE
+if (is.null(document_file) || !length(document_file) ||
+    !is.character(document_file) || !nzchar(document_file)) {
+  document_file <- if (interactive() &&
+      requireNamespace("rstudioapi", quietly = TRUE)) {
+    tryCatch(rstudioapi::getSourceEditorContext()$path, error = function(e) "")
+  } else {
+    ""
+  }
+}
+find_repository_dir <- function(start_dir) {
+  cursor <- normalizePath(start_dir, winslash = "/", mustWork = FALSE)
+  for (ii in seq_len(20L)) {
+    if (file.exists(file.path(cursor, "eivGP", "DESCRIPTION")) &&
+        dir.exists(file.path(cursor, "script", "R-scripts"))) {
+      return(cursor)
+    }
+    parent <- dirname(cursor)
+    if (identical(parent, cursor)) break
+    cursor <- parent
+  }
+  NULL
+}
+repository_candidates <- c(
+  if (is.character(document_file) && length(document_file) == 1L &&
+      nzchar(document_file)) dirname(document_file) else character(0),
+  getwd()
 )
+repository_matches <- Filter(
+  Negate(is.null), lapply(unique(repository_candidates), find_repository_dir)
+)
+if (length(repository_matches) == 0L) {
+  stop(
+    "Cannot locate the eivGP repository. Knit this document or open it in ",
+    "RStudio from the repository checkout."
+  )
+}
+repository_dir <- repository_matches[[1L]]
 package_dir <- file.path(repository_dir, "eivGP")
 if (!requireNamespace("pkgload", quietly = TRUE)) {
   stop("Install pkgload to run the development version of eivGP.")
 }
 pkgload::load_all(package_dir, quiet = TRUE)
-EXECUTE <- isTRUE(params$execute)
+DOCUMENT_PARAMS <- list(
+  execute = FALSE, data_file = "", engine = "multivariate",
+  kernel = "matern", seed = 20260902L
+)
+if (exists("params", inherits = FALSE) && is.list(params)) {
+  DOCUMENT_PARAMS <- utils::modifyList(DOCUMENT_PARAMS, params)
+}
+EXECUTE <- isTRUE(DOCUMENT_PARAMS$execute)
 ```
 
 # Load and validate
@@ -48,10 +89,12 @@ APPLICATION_DATA <- NULL
 if (!EXECUTE) {
   message("Dry application render: no real-data fit was requested.")
 } else {
-  if (!nzchar(params$data_file)) {
+  if (!nzchar(DOCUMENT_PARAMS$data_file)) {
     stop("Set data_file when execute is true.")
   }
-  data_path <- normalizePath(params$data_file, winslash = "/", mustWork = TRUE)
+  data_path <- normalizePath(
+    DOCUMENT_PARAMS$data_file, winslash = "/", mustWork = TRUE
+  )
   APPLICATION_DATA <- readRDS(data_path)
   required <- c("X", "y", "C")
   missing <- setdiff(required, names(APPLICATION_DATA))
@@ -82,9 +125,9 @@ if (EXECUTE) {
     U_obs = APPLICATION_DATA$U_obs,
     latent_dim = APPLICATION_DATA$latent_dim,
     ordinal_levels = APPLICATION_DATA$ordinal_levels,
-    engine = as.character(params$engine),
-    kernel = as.character(params$kernel),
-    seed = as.integer(params$seed)
+    engine = as.character(DOCUMENT_PARAMS$engine),
+    kernel = as.character(DOCUMENT_PARAMS$kernel),
+    seed = as.integer(DOCUMENT_PARAMS$seed)
   )
   common <- common[!vapply(common, is.null, logical(1L))]
   duplicate <- intersect(names(common), names(fit_args))
@@ -107,14 +150,14 @@ if (EXECUTE && !is.null(APPLICATION_DATA$new_X) &&
     new_X = APPLICATION_DATA$new_X,
     new_C = APPLICATION_DATA$new_C,
     target = "mean",
-    seed = as.integer(params$seed) + 1L
+    seed = as.integer(DOCUMENT_PARAMS$seed) + 1L
   )
   APPLICATION_PREDICTIONS$response <- eivGP::predict_eivgp(
     APPLICATION_FIT,
     new_X = APPLICATION_DATA$new_X,
     new_C = APPLICATION_DATA$new_C,
     target = "response",
-    seed = as.integer(params$seed) + 2L
+    seed = as.integer(DOCUMENT_PARAMS$seed) + 2L
   )
 }
 if (EXECUTE && !is.null(APPLICATION_DATA$new_X) &&
@@ -124,7 +167,7 @@ if (EXECUTE && !is.null(APPLICATION_DATA$new_X) &&
     new_X = APPLICATION_DATA$new_X,
     new_U = APPLICATION_DATA$new_U,
     target = "surface",
-    seed = as.integer(params$seed) + 3L
+    seed = as.integer(DOCUMENT_PARAMS$seed) + 3L
   )
 }
 lapply(APPLICATION_PREDICTIONS, dim)

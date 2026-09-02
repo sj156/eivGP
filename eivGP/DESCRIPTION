@@ -1,24 +1,42 @@
 Package: eivGP
-Title: eivGP
-Version: 0.0.0.0001
-Authors@R: 
+Title: Errors-in-Variables Gaussian Processes for Ordinal Mixed Inputs
+Version: 0.1.0
+Authors@R: c(
+    person("Penghui", "Fu", role = "aut"),
+    person("Xinye", "Chen", role = "aut"),
+    person("Jianhua Z.", "Huang", role = "aut"),
     person("Sheng", "Jiang", , "jiangsheng@cuhk.edu.cn", role = c("aut", "cre"))
-Description: Errors-in-variables Gaussian processes for mixed-input tasks.
+  )
+Description: Fits errors-in-variables Gaussian process regressions with
+    numeric predictors, ordinal proxies for latent continuous inputs, and
+    sparse calibration measurements. Includes reproducible Study I and
+    Study II simulation workflows and audited mixed-input GP competitors.
 License: MIT + file LICENSE
+Depends: 
+    R (>= 4.1.0)
+Imports: 
+    methods,
+    parallel,
+    posterior,
+    stats,
+    tools,
+    TruncatedNormal,
+    utils
+Suggests: 
+    dplyr,
+    EzGP,
+    ggplot2,
+    kergp,
+    knitr,
+    LVGP,
+    patchwork,
+    pkgload,
+    rmarkdown,
+    testthat,
+    tidyr
+Config/testthat/edition: 3
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 8.0.0
-Imports: 
-    GA,
-    ggplot2,
-    laGP,
-    LaplacesDemon,
-    lhs,
-    magrittr,
-    mvtnorm,
-    pgdraw,
-    plot3D,
-    scatterplot3d,
-    tidyverse
 LitrVersionUsed: 0.9.3
-LitrId: 378bf3f3af65cede7d03997893bfe45b
+LitrId: e8bc80fdf623e757d1fcf0ee0c9a3fd8

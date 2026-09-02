@@ -1,0 +1,26 @@
+# Package tests
+
+The canonical test file exercises public validation, fitted-object contracts,
+prediction targets, deterministic parallel behavior, frozen-data integrity,
+and installed experiment resource discovery.
+
+```{r install-package-tests, include=FALSE}
+repository_dir <- dirname(knitr::current_input(dir = TRUE))
+test_source <- file.path(repository_dir, "script", "package-tests", "tests.R")
+test_dir <- file.path(usethis::proj_get(), "tests", "testthat")
+dir.create(test_dir, recursive = TRUE, showWarnings = FALSE)
+test_target <- file.path(test_dir, "test-package.R")
+stopifnot(file.copy(test_source, test_target, overwrite = TRUE))
+stopifnot(identical(
+  unname(tools::md5sum(test_source)), unname(tools::md5sum(test_target))
+))
+writeLines(
+  c(
+    "library(testthat)",
+    "library(eivGP)",
+    "",
+    "test_check('eivGP')"
+  ),
+  file.path(usethis::proj_get(), "tests", "testthat.R")
+)
+```

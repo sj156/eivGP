@@ -26,6 +26,9 @@ if (length(missing_pkgs) > 0L) {
 suppressPackageStartupMessages({
   library(ggplot2)
   library(patchwork)
+  library(dplyr)
+  library(tidyr)
+  library(knitr)
 })
 
 if (!exists("STUDY1_QUICK")) STUDY1_QUICK <- FALSE
@@ -77,6 +80,9 @@ rep_burn <- if (STUDY1_QUICK) 300L else 2000L
 rep_n_chains <- if (STUDY1_QUICK) 2L else 12L
 rep_preset <- if (STUDY1_QUICK) "fast" else "thorough"
 
+## EXPLORATORY SUPPLEMENT ONLY. The GP-Gaussian, GP-CondMean, and
+## GP-LearnedEmb curves below are internal encoding sensitivities, not
+## published competitors and not inputs to the main numerical tables.
 n_pred_draw <- if (STUDY1_QUICK) 150L else 600L
 n_density_draw <- if (STUDY1_QUICK) 300L else 1200L
 
@@ -1367,7 +1373,7 @@ make_cc_function_slice_df <- function(fit,
     return(data.frame())
   }
   
-  fit_cc <- gp_mle_fit(
+  fit_cc <- gp_mle_fit_1d(
     X = cbind(fit$data$x[calib_idx], fit$data$u_true[calib_idx]),
     y = fit$data$y[calib_idx]
   )
@@ -1379,7 +1385,7 @@ make_cc_function_slice_df <- function(fit,
   
   x_star <- as.numeric((grid$x_raw - fit$data$x_center) / fit$data$x_scale)
   
-  pred <- gp_mle_predict(
+  pred <- gp_mle_predict_1d(
     fit_cc,
     Xstar = cbind(x_star, grid$u),
     noisy = FALSE

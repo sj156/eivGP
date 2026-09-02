@@ -1,0 +1,15 @@
+book_filename: "eivGP-literate-source"
+delete_merged_file: true
+rmd_files:
+  - index.Rmd
+  - 1description.Rmd
+  - 2Core_Utilities.Rmd
+  - 3Study1_Engine.Rmd
+  - 4Study2_Engine.Rmd
+  - 5Published_Competitors.Rmd
+  - 6Public_API.Rmd
+  - 7Legacy_Experiment_API.Rmd
+  - 8Publication_API.Rmd
+  - 9Real_Data_Interface.Rmd
+  - 10Package_Tests.Rmd
+  - 11Documentation.Rmd

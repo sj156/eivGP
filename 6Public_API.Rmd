@@ -1,0 +1,34 @@
+# Stable model API
+
+Users fit either scientific engine through `fit_eivgp()`, predict supported
+statistical targets through `predict_eivgp()` or `predict()`, and obtain latent
+input draws through `impute_eivgp()`. Published competitors have matching
+package-facing wrappers.
+
+```{r copy-public-api, include=FALSE}
+repository_dir <- dirname(knitr::current_input(dir = TRUE))
+source_file <- file.path(
+  repository_dir, "script", "R-scripts", "00_public_api.R"
+)
+target_file <- file.path(usethis::proj_get(), "R", basename(source_file))
+stopifnot(file.copy(source_file, target_file, overwrite = TRUE))
+stopifnot(identical(
+  unname(tools::md5sum(source_file)), unname(tools::md5sum(target_file))
+))
+```
+
+```{r public-api-example, eval=FALSE}
+fit <- eivGP::fit_eivgp(
+  X, y, C, U_obs,
+  engine = "multivariate",
+  latent_dim = 2L,
+  kernel = "matern"
+)
+mean_draws <- eivGP::predict_eivgp(
+  fit, new_X = X_new, new_C = C_new, target = "mean"
+)
+response_draws <- predict(
+  fit, new_X = X_new, new_C = C_new, target = "response"
+)
+latent_draws <- eivGP::impute_eivgp(fit, new_C = C_new)
+```

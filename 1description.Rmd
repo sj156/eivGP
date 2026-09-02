@@ -1,71 +1,166 @@
 # Package setup
 
-The DESCRIPTION file is created using this code.
+This chapter owns package metadata and clears only generated package
+directories before the audited modules are recopied. The source scripts under
+`script/` and the standalone analysis documents are never removed.
 
 ```{r package-setup, message=FALSE, results='hide'}
 usethis::create_package(
   path = ".",
   fields = list(
     Package = params$package_name,
-    Version = "0.0.0.0001",
-    Title = "eivGP",
-    Description = "Errors-in-variables Gaussian processes for mixed-input tasks.",
-    `Authors@R` = person(
-      given = "Sheng",
-      family = "Jiang",
-      email = "jiangsheng@cuhk.edu.cn",
-      role = c("aut", "cre")
+    Version = "0.1.0",
+    Title = "Errors-in-Variables Gaussian Processes for Ordinal Mixed Inputs",
+    Description = paste(
+      "Fits errors-in-variables Gaussian process regressions with numeric",
+      "predictors, ordinal proxies for latent continuous inputs, and sparse",
+      "calibration measurements. Includes reproducible Study I and Study II",
+      "simulation workflows and audited mixed-input GP competitors."
+    ),
+    `Authors@R` = c(
+      person(given = "Penghui", family = "Fu", role = "aut"),
+      person(given = "Xinye", family = "Chen", role = "aut"),
+      person(given = "Jianhua Z.", family = "Huang", role = "aut"),
+      person(
+        given = "Sheng", family = "Jiang",
+        email = "jiangsheng@cuhk.edu.cn", role = c("aut", "cre")
       )
+    ),
+    License = "MIT + file LICENSE",
+    Encoding = "UTF-8",
+    Depends = "R (>= 4.1.0)",
+    Imports = paste(
+      "methods, parallel, posterior, stats, tools, TruncatedNormal, utils"
+    ),
+    Suggests = paste(
+      "dplyr, EzGP, ggplot2, kergp, knitr, LVGP, patchwork, pkgload,",
+      "rmarkdown, testthat, tidyr"
+    ),
+    `Config/testthat/edition` = "3"
   )
 )
-usethis::use_mit_license(copyright_holder = "Fu Penghui")
+
+package_dir <- usethis::proj_get()
+writeLines(
+  c("^.*[.]Rproj$", "^[.]Rproj[.]user$"),
+  file.path(package_dir, ".Rbuildignore")
+)
+generated_directories <- c(
+  file.path(package_dir, "R"),
+  file.path(package_dir, "man"),
+  file.path(package_dir, "tests")
+)
+for (directory in generated_directories) {
+  if (dir.exists(directory)) unlink(directory, recursive = TRUE)
+}
+generated_resources <- c(
+  file.path(package_dir, "inst", "experiments"),
+  file.path(package_dir, "inst", "simulation-source")
+)
+for (directory in generated_resources) {
+  if (dir.exists(directory)) unlink(directory, recursive = TRUE)
+}
+dir.create(file.path(package_dir, "R"), recursive = TRUE, showWarnings = FALSE)
+
+writeLines(
+  c(
+    "YEAR: 2026",
+    paste(
+      "COPYRIGHT HOLDER: Penghui Fu, Xinye Chen, Jianhua Z. Huang,",
+      "and Sheng Jiang"
+    )
+  ),
+  file.path(package_dir, "LICENSE")
+)
+repository_dir <- dirname(knitr::current_input(dir = TRUE))
+stopifnot(file.copy(
+  file.path(repository_dir, "LICENSE"),
+  file.path(package_dir, "LICENSE.md"),
+  overwrite = TRUE
+))
+
+writeLines(
+  c(
+    "# eivGP",
+    "",
+    "`eivGP` implements errors-in-variables Gaussian process regression",
+    "with ordinal proxies for latent continuous inputs and sparse calibration.",
+    "",
+    "## Stable model interface",
+    "",
+    "```r",
+    "fit <- fit_eivgp(X, y, C, U_obs, engine = 'multivariate')",
+    "mean_draws <- predict(fit, new_X = X_new, new_C = C_new, target = 'mean')",
+    "response_draws <- predict(fit, new_X = X_new, new_C = C_new, target = 'response')",
+    "latent_draws <- impute_eivgp(fit, new_C = C_new)",
+    "```",
+    "",
+    "## Publication workflows",
+    "",
+    "Both exported runners default to a read-only dry run:",
+    "",
+    "```r",
+    "run_study1_simulation()",
+    "run_study2_simulation()",
+    "```",
+    "",
+    "Use `study1_simulation_config()` or `study2_simulation_config()` to",
+    "select data generation, smoke testing, or the frozen publication design.",
+    "Smoke and publication fits automatically run the exact competitor and",
+    "paired-design validators before computation; publication requires every",
+    "competitor validation to succeed. Results are archived under `config/`.",
+    "See the repository's standalone experiment R Markdown files for the full",
+    "top-to-bottom reproduction workflow."
+  ),
+  file.path(package_dir, "README.md")
+)
+
+writeLines(
+  c(
+    "# eivGP 0.1.0",
+    "",
+    "- Added stable fitting, prediction, imputation, and competitor interfaces.",
+    "- Added installed-package Study I and Study II publication runners.",
+    "- Added frozen-data checksums, source fingerprints, resumable outputs,",
+    "  paired comparisons, and strict publication diagnostic gates.",
+    "- Added automatic, archived competitor and design validation before all",
+    "  smoke and publication fits.",
+    "- Added a package-facing real-data interface and standalone application",
+    "  skeleton."
+  ),
+  file.path(package_dir, "NEWS.md")
+)
+
+dir.create(file.path(package_dir, "inst"), recursive = TRUE, showWarnings = FALSE)
+writeLines(
+  c(
+    "bibentry(",
+    "  bibtype = 'Unpublished',",
+    "  title = 'Ordinal Mixed-Input Gaussian Process Regression',",
+    "  author = c(",
+    "    person('Penghui', 'Fu'), person('Xinye', 'Chen'),",
+    "    person('Jianhua Z.', 'Huang'), person('Sheng', 'Jiang')",
+    "  ),",
+    "  year = '2026',",
+    "  note = 'Manuscript in preparation'",
+    ")"
+  ),
+  file.path(package_dir, "inst", "CITATION")
+)
 ```
 
-The following is what will show up when someone types `package?eivGP` in the console.
-
-```{package_doc}
-#' eivGP
+```{package_doc package-documentation}
+#' eivGP: Errors-in-variables Gaussian processes for ordinal mixed inputs
 #'
-#' This package implements the `eivGP` method.
-#' 
-#' @docType package
+#' @import stats
+#' @importFrom utils flush.console tail
 ```
 
-This package will have some dependancies:
-
-```{r dependencies, message = FALSE}
-
-usethis::use_package("tidyverse", type = "imports") 
-usethis::use_package("ggplot2", type = "imports")
-usethis::use_package("plot3D",type = "imports")
-usethis::use_package("pgdraw", type = "imports")
-usethis::use_package("mvtnorm", type = "imports")
-usethis::use_package("LaplacesDemon", type = "imports")
-usethis::use_package("GA", type = "imports")
-usethis::use_package("laGP", type = "imports")
-usethis::use_package("lhs", type = "imports")
-usethis::use_package("scatterplot3d", type = "imports")
-usethis::use_pipe(export=TRUE)
-
+```{r global-variables, send_to='R/global-variables.R', eval=FALSE}
+utils::globalVariables(c(
+  "block", "chain", "ess", "global_u_accept_total", "global_u_eval_total",
+  "global_u_total", "ref", "rhat", "theta_eval_total",
+  "theta_update_total", "u_ess_accept_total", "u_ess_eval_total",
+  "u_ess_total", "value", "xintercept"
+))
 ```
-
-
-```{r, send_to = 'R/imports.R'}
-#' @importFrom mvtnorm rmvnorm
-#' @importFrom LaplacesDemon rinvwishart rmatrixnorm as.symmetric.matrix
-#' @importFrom pgdraw pgdraw
-#' @importFrom plot3D persp3D
-#' @importFrom parallel mclapply
-#' @importFrom stats quantile rnorm sd uniroot
-#' @importFrom ggplot2 ggplot geom_point scale_x_continuous scale_color_viridis_c labs
-#' @importFrom ggplot2 theme_minimal theme element_text
-NULL
-```
-
-<!--library("pgdraw") for simulating polya-Gamma-->
-
-<!--library("mvtnorm") for simulating multivariate normal-->
-
-<!--library('LaplacesDemon') for sampling inverse Wishart and  Matrix Normal-->
-
-<!--library('GA') for visualization-->

@@ -1,6 +1,6 @@
-# MIT License
+MIT License
 
-Copyright (c) 2026 Fu Penghui
+Copyright (c) 2026 Penghui Fu, Xinye Chen, Jianhua Z. Huang, and Sheng Jiang
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

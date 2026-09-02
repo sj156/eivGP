@@ -1,2 +1,14 @@
 .DS_Store
 script/.DS_Store
+_main.Rmd
+eivGP-literate-source.Rmd
+*.Rcheck/
+*.tar.gz
+artifacts/
+experiments/*_cache/
+experiments/*_files/
+experiments/*.html
+applications/*_cache/
+applications/*_files/
+applications/*.html
+.Rproj.user/

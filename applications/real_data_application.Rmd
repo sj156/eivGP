@@ -1,0 +1,137 @@
+---
+title: "Real-data application"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+params:
+  execute: false
+  data_file: ""
+  engine: "multivariate"
+  kernel: "matern"
+  seed: 20260902
+---
+
+# Status and data contract
+
+This top-to-bottom application document is ready for the final real dataset,
+which is not committed yet. Its default render records the required contract
+without fitting. When the audited data bundle is ready, set `execute: true`
+and provide `data_file` as an RDS file containing at least `X`, `y`, and `C`.
+
+The bundle may also contain `U_obs`, `latent_dim`, `ordinal_levels`,
+`fit_args`, `new_X`, `new_C`, and `new_U`. This keeps the final analysis data
+and its explicit model configuration together without embedding a private
+filesystem path in the package.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, message = TRUE, warning = TRUE,
+  error = FALSE, cache = FALSE
+)
+document_file <- knitr::current_input(dir = TRUE)
+repository_dir <- normalizePath(
+  file.path(dirname(document_file), ".."), winslash = "/", mustWork = TRUE
+)
+package_dir <- file.path(repository_dir, "eivGP")
+if (!requireNamespace("pkgload", quietly = TRUE)) {
+  stop("Install pkgload to run the development version of eivGP.")
+}
+pkgload::load_all(package_dir, quiet = TRUE)
+EXECUTE <- isTRUE(params$execute)
+```
+
+# Load and validate
+
+```{r load-data}
+APPLICATION_DATA <- NULL
+if (!EXECUTE) {
+  message("Dry application render: no real-data fit was requested.")
+} else {
+  if (!nzchar(params$data_file)) {
+    stop("Set data_file when execute is true.")
+  }
+  data_path <- normalizePath(params$data_file, winslash = "/", mustWork = TRUE)
+  APPLICATION_DATA <- readRDS(data_path)
+  required <- c("X", "y", "C")
+  missing <- setdiff(required, names(APPLICATION_DATA))
+  if (length(missing) > 0L) {
+    stop("The data bundle is missing: ", paste(missing, collapse = ", "))
+  }
+}
+```
+
+# Fit
+
+All additional sampler settings must be named in `fit_args` inside the audited
+data bundle. The visible call below is the only model-fitting entry point.
+
+```{r fit-model}
+APPLICATION_FIT <- NULL
+if (EXECUTE) {
+  fit_args <- APPLICATION_DATA$fit_args
+  if (is.null(fit_args)) fit_args <- list()
+  if (!is.list(fit_args) || (length(fit_args) > 0L &&
+      (is.null(names(fit_args)) || any(!nzchar(names(fit_args)))))) {
+    stop("fit_args must be a named list.")
+  }
+  common <- list(
+    X = APPLICATION_DATA$X,
+    y = APPLICATION_DATA$y,
+    C = APPLICATION_DATA$C,
+    U_obs = APPLICATION_DATA$U_obs,
+    latent_dim = APPLICATION_DATA$latent_dim,
+    ordinal_levels = APPLICATION_DATA$ordinal_levels,
+    engine = as.character(params$engine),
+    kernel = as.character(params$kernel),
+    seed = as.integer(params$seed)
+  )
+  common <- common[!vapply(common, is.null, logical(1L))]
+  duplicate <- intersect(names(common), names(fit_args))
+  if (length(duplicate) > 0L) {
+    stop("fit_args duplicates: ", paste(duplicate, collapse = ", "))
+  }
+  APPLICATION_FIT <- do.call(eivGP::fit_eivgp, c(common, fit_args))
+  print(summary(APPLICATION_FIT))
+}
+```
+
+# Prediction targets
+
+```{r predictions}
+APPLICATION_PREDICTIONS <- list()
+if (EXECUTE && !is.null(APPLICATION_DATA$new_X) &&
+    !is.null(APPLICATION_DATA$new_C)) {
+  APPLICATION_PREDICTIONS$mean <- eivGP::predict_eivgp(
+    APPLICATION_FIT,
+    new_X = APPLICATION_DATA$new_X,
+    new_C = APPLICATION_DATA$new_C,
+    target = "mean",
+    seed = as.integer(params$seed) + 1L
+  )
+  APPLICATION_PREDICTIONS$response <- eivGP::predict_eivgp(
+    APPLICATION_FIT,
+    new_X = APPLICATION_DATA$new_X,
+    new_C = APPLICATION_DATA$new_C,
+    target = "response",
+    seed = as.integer(params$seed) + 2L
+  )
+}
+if (EXECUTE && !is.null(APPLICATION_DATA$new_X) &&
+    !is.null(APPLICATION_DATA$new_U)) {
+  APPLICATION_PREDICTIONS$surface <- eivGP::predict_eivgp(
+    APPLICATION_FIT,
+    new_X = APPLICATION_DATA$new_X,
+    new_U = APPLICATION_DATA$new_U,
+    target = "surface",
+    seed = as.integer(params$seed) + 3L
+  )
+}
+lapply(APPLICATION_PREDICTIONS, dim)
+```
+
+# Session information
+
+```{r session-information}
+sessionInfo()
+```

@@ -4,26 +4,26 @@
 
   <meta charset="utf-8" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-  <title>Page not found | 5Study1_helper</title>
-  <meta name="description" content="Page not found | 5Study1_helper" />
+  <title>Page not found | Creating the eivGP R package</title>
+  <meta name="description" content="Page not found | Creating the eivGP R package" />
   <meta name="generator" content="bookdown 0.46 and GitBook 2.6.7" />
 
-  <meta property="og:title" content="Page not found | 5Study1_helper" />
+  <meta property="og:title" content="Page not found | Creating the eivGP R package" />
   <meta property="og:type" content="book" />
   
   
   
 
   <meta name="twitter:card" content="summary" />
-  <meta name="twitter:title" content="Page not found | 5Study1_helper" />
+  <meta name="twitter:title" content="Page not found | Creating the eivGP R package" />
   
   
   
 
-<meta name="author" content="Sheng Jiang" />
+<meta name="author" content="eivGP authors" />
 
 
-<meta name="date" content="2026-08-11" />
+<meta name="date" content="2026-09-02" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -32,7 +32,6 @@
   
 
 
-<script src="libs/header-attrs-2.31/header-attrs.js"></script>
 <script src="libs/jquery-3.6.0/jquery-3.6.0.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/fuse.js@6.4.6/dist/fuse.min.js"></script>
 <link href="libs/gitbook-2.6.7/css/style.css" rel="stylesheet" />
@@ -56,9 +55,8 @@
 
 
 <style type="text/css">
-html { -webkit-text-size-adjust: 100%; }
 pre > code.sourceCode { white-space: pre; position: relative; }
-pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span { line-height: 1.25; }
 pre > code.sourceCode > span:empty { height: 1.2em; }
 .sourceCode { overflow: visible; }
 code.sourceCode > span { color: inherit; text-decoration: inherit; }
@@ -68,7 +66,7 @@ div.sourceCode { overflow: auto; }
 }
 @media print {
 pre > code.sourceCode { white-space: pre-wrap; }
-pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+pre > code.sourceCode > span { display: inline-block; text-indent: -5em; padding-left: 5em; }
 }
 pre.numberSource code
   { counter-reset: source-line 0; }
@@ -138,66 +136,18 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
       <nav role="navigation">
 
 <ul class="summary">
-<li class="chapter" data-level="1" data-path="index.html"><a href="index.html"><i class="fa fa-check"></i><b>1</b> Introduction</a></li>
-<li class="chapter" data-level="2" data-path="package-setup.html"><a href="package-setup.html"><i class="fa fa-check"></i><b>2</b> Package setup</a>
-<ul>
-<li class="chapter" data-level="2.1" data-path="package-setup.html"><a href="package-setup.html#general-utilities"><i class="fa fa-check"></i><b>2.1</b> General Utilities</a></li>
-<li class="chapter" data-level="2.2" data-path="package-setup.html"><a href="package-setup.html#slice-sampler"><i class="fa fa-check"></i><b>2.2</b> Slice Sampler</a></li>
-<li class="chapter" data-level="2.3" data-path="package-setup.html"><a href="package-setup.html#data-generating-process"><i class="fa fa-check"></i><b>2.3</b> Data Generating Process</a></li>
-<li class="chapter" data-level="2.4" data-path="package-setup.html"><a href="package-setup.html#gp-likelihood-and-prediction"><i class="fa fa-check"></i><b>2.4</b> GP likelihood and prediction</a></li>
-<li class="chapter" data-level="2.5" data-path="package-setup.html"><a href="package-setup.html#eiv-gp-sampler"><i class="fa fa-check"></i><b>2.5</b> EIV-GP sampler</a></li>
-<li class="chapter" data-level="2.6" data-path="package-setup.html"><a href="package-setup.html#mcmc-diagnostics"><i class="fa fa-check"></i><b>2.6</b> MCMC diagnostics</a></li>
-<li class="chapter" data-level="2.7" data-path="package-setup.html"><a href="package-setup.html#main-eiv-gp-fitting-function"><i class="fa fa-check"></i><b>2.7</b> Main EIV-GP fitting function</a></li>
-<li class="chapter" data-level="2.8" data-path="package-setup.html"><a href="package-setup.html#baseline-gp-model"><i class="fa fa-check"></i><b>2.8</b> Baseline GP Model</a></li>
-<li class="chapter" data-level="2.9" data-path="package-setup.html"><a href="package-setup.html#predictive-scoring"><i class="fa fa-check"></i><b>2.9</b> Predictive scoring</a></li>
-<li class="chapter" data-level="2.10" data-path="package-setup.html"><a href="package-setup.html#initialization"><i class="fa fa-check"></i><b>2.10</b> Initialization</a></li>
-<li class="chapter" data-level="2.11" data-path="package-setup.html"><a href="package-setup.html#data-generating-process-1"><i class="fa fa-check"></i><b>2.11</b> Data Generating Process</a></li>
-<li class="chapter" data-level="2.12" data-path="package-setup.html"><a href="package-setup.html#fit-eiv-gp-for-representative-calibration-sizes"><i class="fa fa-check"></i><b>2.12</b> Fit EIV-GP for representative calibration sizes</a></li>
-<li class="chapter" data-level="2.13" data-path="package-setup.html"><a href="package-setup.html#figure-1-representative-data"><i class="fa fa-check"></i><b>2.13</b> Figure 1: Representative Data</a></li>
-<li class="chapter" data-level="2.14" data-path="package-setup.html"><a href="package-setup.html#figure-2-latent-imputation-across-calibration-sizes"><i class="fa fa-check"></i><b>2.14</b> Figure 2: latent imputation across calibration sizes</a></li>
-<li class="chapter" data-level="2.15" data-path="package-setup.html"><a href="package-setup.html#figure-3-latent-response-surface-slices"><i class="fa fa-check"></i><b>2.15</b> Figure 3: latent response-surface slices</a></li>
-<li class="chapter" data-level="2.16" data-path="package-setup.html"><a href="package-setup.html#figure-4-selected-mixed-input-predictive-densities"><i class="fa fa-check"></i><b>2.16</b> Figure 4: selected mixed-input predictive densities</a></li>
-<li class="chapter" data-level="2.17" data-path="package-setup.html"><a href="package-setup.html#figure-6-mcmc-trace-plots-for-representative-fit"><i class="fa fa-check"></i><b>2.17</b> Figure 6: MCMC trace plots for representative fit</a></li>
-<li class="chapter" data-level="2.18" data-path="package-setup.html"><a href="package-setup.html#tables-mcmc-summary-and-class-counts"><i class="fa fa-check"></i><b>2.18</b> Tables: MCMC summary and class counts</a></li>
-<li class="chapter" data-level="2.19" data-path="package-setup.html"><a href="package-setup.html#related-functions"><i class="fa fa-check"></i><b>2.19</b> Related Functions</a>
-<ul>
-<li class="chapter" data-level="2.19.1" data-path="package-setup.html"><a href="package-setup.html#helper-functions"><i class="fa fa-check"></i><b>2.19.1</b> Helper Functions</a></li>
-<li class="chapter" data-level="2.19.2" data-path="package-setup.html"><a href="package-setup.html#figure2-related-function"><i class="fa fa-check"></i><b>2.19.2</b> Figure2 related function</a></li>
-<li class="chapter" data-level="2.19.3" data-path="package-setup.html"><a href="package-setup.html#figure3-related-function"><i class="fa fa-check"></i><b>2.19.3</b> Figure3 related function</a></li>
-<li class="chapter" data-level="2.19.4" data-path="package-setup.html"><a href="package-setup.html#figure6-and-rest"><i class="fa fa-check"></i><b>2.19.4</b> Figure6 and Rest</a></li>
-</ul></li>
-<li class="chapter" data-level="2.20" data-path="package-setup.html"><a href="package-setup.html#related-package-and-initialization"><i class="fa fa-check"></i><b>2.20</b> Related Package and Initialization</a></li>
-<li class="chapter" data-level="2.21" data-path="package-setup.html"><a href="package-setup.html#calibration-sizes-to-fit"><i class="fa fa-check"></i><b>2.21</b> Calibration sizes to fit</a></li>
-<li class="chapter" data-level="2.22" data-path="package-setup.html"><a href="package-setup.html#simulate-representative-data"><i class="fa fa-check"></i><b>2.22</b> Simulate representative data</a></li>
-<li class="chapter" data-level="2.23" data-path="package-setup.html"><a href="package-setup.html#fit-eiv-gp-for-representative-calibration-sizes-1"><i class="fa fa-check"></i><b>2.23</b> Fit EIV-GP for representative calibration sizes</a></li>
-<li class="chapter" data-level="2.24" data-path="package-setup.html"><a href="package-setup.html#fit-deterministic-embedding-baselines"><i class="fa fa-check"></i><b>2.24</b> Fit deterministic embedding baselines</a></li>
-<li class="chapter" data-level="2.25" data-path="package-setup.html"><a href="package-setup.html#figure-1-representative-data-1"><i class="fa fa-check"></i><b>2.25</b> Figure 1: representative data</a>
-<ul>
-<li class="chapter" data-level="2.25.1" data-path="package-setup.html"><a href="package-setup.html#extra-data-plots"><i class="fa fa-check"></i><b>2.25.1</b> Extra data plots</a></li>
-</ul></li>
-<li class="chapter" data-level="2.26" data-path="package-setup.html"><a href="package-setup.html#figure-2-latent-imputation-across-calibration-sizes-1"><i class="fa fa-check"></i><b>2.26</b> Figure 2: latent imputation across calibration sizes</a>
-<ul>
-<li class="chapter" data-level="2.26.1" data-path="package-setup.html"><a href="package-setup.html#extra-latent-imputation-plots"><i class="fa fa-check"></i><b>2.26.1</b> Extra latent-imputation plots</a></li>
-<li class="chapter" data-level="2.26.2" data-path="package-setup.html"><a href="package-setup.html#extra-cutpointtau-posterior-plots-if-available-bugs"><i class="fa fa-check"></i><b>2.26.2</b> Extra cutpoint/tau posterior plots, if available (Bugs)</a></li>
-</ul></li>
-<li class="chapter" data-level="2.27" data-path="package-setup.html"><a href="package-setup.html#figure-3-latent-response-surface-slices-1"><i class="fa fa-check"></i><b>2.27</b> Figure 3: latent response-surface slices</a>
-<ul>
-<li class="chapter" data-level="2.27.1" data-path="package-setup.html"><a href="package-setup.html#extra-function-slice-and-surface-plots"><i class="fa fa-check"></i><b>2.27.1</b> Extra function-slice and surface plots</a></li>
-</ul></li>
-<li class="chapter" data-level="2.28" data-path="package-setup.html"><a href="package-setup.html#figure4-selected-mixed-input-predictive-densities"><i class="fa fa-check"></i><b>2.28</b> Figure4: selected mixed-input predictive densities</a>
-<ul>
-<li class="chapter" data-level="2.28.1" data-path="package-setup.html"><a href="package-setup.html#extra-predictive-distribution-plots-over-a-larger-grid"><i class="fa fa-check"></i><b>2.28.1</b> Extra predictive-distribution plots over a larger grid</a></li>
-<li class="chapter" data-level="2.28.2" data-path="package-setup.html"><a href="package-setup.html#extra-test-set-predictive-diagnostics-or-figure-5"><i class="fa fa-check"></i><b>2.28.2</b> Extra test-set predictive diagnostics (or Figure 5)</a></li>
-</ul></li>
-<li class="chapter" data-level="2.29" data-path="package-setup.html"><a href="package-setup.html#figure-6-mcmc-trace-plots-for-representative-fit-1"><i class="fa fa-check"></i><b>2.29</b> Figure 6: MCMC trace plots for representative fit</a></li>
-<li class="chapter" data-level="2.30" data-path="package-setup.html"><a href="package-setup.html#extra-mcmc-diagnostics-bugs"><i class="fa fa-check"></i><b>2.30</b> Extra MCMC diagnostics (BUGS!!)</a></li>
-<li class="chapter" data-level="2.31" data-path="package-setup.html"><a href="package-setup.html#tables-mcmc-summary-and-class-counts-1"><i class="fa fa-check"></i><b>2.31</b> Tables: MCMC summary and class counts</a></li>
-</ul></li>
-<li class="chapter" data-level="3" data-path="simulation-for-multiple-times-with-respect-to-revised-study-1.html"><a href="simulation-for-multiple-times-with-respect-to-revised-study-1.html"><i class="fa fa-check"></i><b>3</b> Simulation for Multiple Times with respect to Revised Study 1</a>
-<ul>
-<li class="chapter" data-level="3.1" data-path="simulation-for-multiple-times-with-respect-to-revised-study-1.html"><a href="simulation-for-multiple-times-with-respect-to-revised-study-1.html#function"><i class="fa fa-check"></i><b>3.1</b> Function</a></li>
-<li class="chapter" data-level="3.2" data-path="simulation-for-multiple-times-with-respect-to-revised-study-1.html"><a href="simulation-for-multiple-times-with-respect-to-revised-study-1.html#implements-monte-carlo"><i class="fa fa-check"></i><b>3.2</b> Implements Monte Carlo</a></li>
-</ul></li>
+<li class="chapter" data-level="1" data-path="index.html"><a href="index.html"><i class="fa fa-check"></i><b>1</b> Literate package source</a></li>
+<li class="chapter" data-level="2" data-path="package-setup.html"><a href="package-setup.html"><i class="fa fa-check"></i><b>2</b> Package setup</a></li>
+<li class="chapter" data-level="3" data-path="core-utilities-and-frozen-data.html"><a href="core-utilities-and-frozen-data.html"><i class="fa fa-check"></i><b>3</b> Core utilities and frozen data</a></li>
+<li class="chapter" data-level="4" data-path="study-i-engine.html"><a href="study-i-engine.html"><i class="fa fa-check"></i><b>4</b> Study I engine</a></li>
+<li class="chapter" data-level="5" data-path="study-ii-engine.html"><a href="study-ii-engine.html"><i class="fa fa-check"></i><b>5</b> Study II engine</a></li>
+<li class="chapter" data-level="6" data-path="published-competitors.html"><a href="published-competitors.html"><i class="fa fa-check"></i><b>6</b> Published competitors</a></li>
+<li class="chapter" data-level="7" data-path="stable-model-api.html"><a href="stable-model-api.html"><i class="fa fa-check"></i><b>7</b> Stable model API</a></li>
+<li class="chapter" data-level="8" data-path="compatibility-experiment-api.html"><a href="compatibility-experiment-api.html"><i class="fa fa-check"></i><b>8</b> Compatibility experiment API</a></li>
+<li class="chapter" data-level="9" data-path="publication-simulation-api.html"><a href="publication-simulation-api.html"><i class="fa fa-check"></i><b>9</b> Publication simulation API</a></li>
+<li class="chapter" data-level="10" data-path="real-data-interface.html"><a href="real-data-interface.html"><i class="fa fa-check"></i><b>10</b> Real-data interface</a></li>
+<li class="chapter" data-level="11" data-path="package-tests.html"><a href="package-tests.html"><i class="fa fa-check"></i><b>11</b> Package tests</a></li>
+<li class="chapter" data-level="12" data-path="documentation.html"><a href="documentation.html"><i class="fa fa-check"></i><b>12</b> Documentation</a></li>
 </ul>
 
       </nav>
@@ -207,7 +157,7 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
       <div class="body-inner">
         <div class="book-header" role="navigation">
           <h1>
-            <i class="fa fa-circle-o-notch fa-spin"></i><a href="./">5Study1_helper</a>
+            <i class="fa fa-circle-o-notch fa-spin"></i><a href="./">Creating the <code>eivGP</code> R package</a>
           </h1>
         </div>
 

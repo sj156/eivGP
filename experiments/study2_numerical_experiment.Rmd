@@ -1,0 +1,115 @@
+---
+title: "Study II numerical experiments"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+params:
+  run_mode: "dry_run"
+  workers: 8
+  stages: ""
+  data_root: ""
+  output_root: ""
+---
+
+# Purpose
+
+This is the sole top-to-bottom reproduction document for the frozen Study II
+publication design. Its computational implementation lives in `eivGP`; this
+file contains configuration, one package call, and presentation only.
+
+The committed default is a read-only dry run. To reproduce the paper, change
+`run_mode` above to `publication` and render this document in a clean R
+session. A resumable fit may set `stages` to `fit,aggregate`; every selected
+manifest entry, design field, generator version, and checksum is verified
+before dispatch. Smoke and publication fits automatically run the exact
+published-competitor and paired-design validators; publication mode requires
+every competitor validation to succeed.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, message = TRUE, warning = TRUE,
+  error = FALSE, cache = FALSE
+)
+document_file <- knitr::current_input(dir = TRUE)
+repository_dir <- normalizePath(
+  file.path(dirname(document_file), ".."), winslash = "/", mustWork = TRUE
+)
+package_dir <- file.path(repository_dir, "eivGP")
+if (!requireNamespace("pkgload", quietly = TRUE)) {
+  stop("Install pkgload to run the development version of eivGP.")
+}
+pkgload::load_all(package_dir, quiet = TRUE)
+```
+
+# Configuration
+
+Only run mode, worker count, resume stages, and artifact locations are exposed.
+The proxy-dimension cells, calibration curve, controls, seeds, MCMC settings,
+estimands, method eligibility, and diagnostic gates are frozen inside the
+package constructor.
+
+```{r configure}
+RUN_MODE <- as.character(params$run_mode)
+WORKERS <- as.integer(params$workers)
+STAGES <- if (nzchar(params$stages)) {
+  trimws(strsplit(params$stages, ",", fixed = TRUE)[[1L]])
+} else {
+  NULL
+}
+DATA_ROOT <- if (nzchar(params$data_root)) {
+  normalizePath(params$data_root, winslash = "/", mustWork = FALSE)
+} else {
+  file.path(repository_dir, "artifacts", "data-synthetic", "publication-v2", "study2")
+}
+OUTPUT_ROOT <- if (nzchar(params$output_root)) {
+  normalizePath(params$output_root, winslash = "/", mustWork = FALSE)
+} else {
+  file.path(repository_dir, "artifacts", "simulation-runs", "study2")
+}
+CODE_DIR <- file.path(repository_dir, "script", "R-scripts")
+
+STUDY2_CONFIG <- eivGP::study2_simulation_config(
+  mode = RUN_MODE,
+  code_dir = CODE_DIR,
+  workers = WORKERS,
+  data_root = DATA_ROOT,
+  output_root = OUTPUT_ROOT,
+  stages = STAGES
+)
+STUDY2_CONFIG
+```
+
+# Run
+
+```{r run-study2}
+STUDY2_RUN <- eivGP::run_study2_simulation(STUDY2_CONFIG)
+```
+
+# Auditable outputs
+
+Dry-run output contains the resolved design, dependency preflight, task plan,
+and status of any existing frozen data. Executed runs additionally expose the
+fingerprinted run directory, verified input manifest, diagnostic gates, raw
+results, paired comparisons, prespecified contrasts, result checksums, and
+automatic validation records under `config/`.
+
+```{r summarize-study2}
+if (identical(STUDY2_CONFIG$mode, "dry_run")) {
+  print(STUDY2_RUN$preflight)
+  print(STUDY2_RUN$runtime_preflight)
+  print(STUDY2_RUN$task_plan)
+  print(STUDY2_RUN$data_status)
+} else {
+  print(STUDY2_RUN$run_dir)
+  print(STUDY2_RUN$gates)
+  combined_dir <- file.path(STUDY2_RUN$run_dir, "combined")
+  print(list.files(combined_dir, full.names = TRUE))
+}
+```
+
+# Session information
+
+```{r session-information}
+sessionInfo()
+```

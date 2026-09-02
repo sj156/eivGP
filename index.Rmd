@@ -1,36 +1,30 @@
 ---
-title: "Creating the ``r params$package_name`` R package"
-author: "Sheng Jiang"
+title: "Creating the `eivGP` R package"
+author: "eivGP authors"
 date: "`r Sys.Date()`"
 site: bookdown::bookdown_site
 knit: litr::render
 output: litr::litr_gitbook
 params:
-  package_name: "eivGP" # <-- change this to your package name
-  package_parent_dir: "." # <-- relative to this file's location
+  package_name: "eivGP"
+  package_parent_dir: "."
 documentclass: book
 ---
 
-# Introduction
-```{r, eval = FALSE}
-# Complete development workflow
-my_load <- function(){
-  litr::render("index.Rmd",  
-               output_format = litr::litr_gitbook(minimal_eval = TRUE))
-  devtools::document("./eivGP")  # Update documentation
-  devtools::load_all("./eivGP")
-}
+# Literate package source
 
-my_load()
+This book is the package-building skeleton for `eivGP`. The audited R modules
+under `script/R-scripts/` are the computational source of truth. Each chapter
+copies one coherent module into the generated package, so package code and the
+paper's numerical implementation cannot drift apart.
 
-# Step 2: Check the package (optional but recommended)
-devtools::check("./eivGP", document = FALSE)
+The package book never launches publication-scale computation. Standalone
+reproduction documents live under `experiments/` and `applications/`; they
+call the same exported package functions used by scripts and downstream users.
 
-# Step 3: Install the package locally for full installation
-devtools::install("./eivGP")
+Render and check the package from the repository root with:
 
-# Step 4: Load the installed package (optional, if you want to test installation)
-library(eivGP)
-
-
+```{r development-workflow, eval=FALSE}
+litr::render("index.Rmd")
+devtools::check("eivGP", document = FALSE)
 ```

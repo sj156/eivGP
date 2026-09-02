@@ -1,0 +1,19 @@
+# Published competitors
+
+The UC-GP, LVGP, and EzGP adapters use the public package implementations and
+record package versions, optimization attempts, and predictive uncertainty.
+They remain optional dependencies and are required only for strict publication
+runs.
+
+```{r copy-published-competitors, include=FALSE}
+repository_dir <- dirname(knitr::current_input(dir = TRUE))
+source_file <- file.path(
+  repository_dir, "script", "R-scripts",
+  "03_study2_published_competitors.R"
+)
+target_file <- file.path(usethis::proj_get(), "R", basename(source_file))
+stopifnot(file.copy(source_file, target_file, overwrite = TRUE))
+stopifnot(identical(
+  unname(tools::md5sum(source_file)), unname(tools::md5sum(target_file))
+))
+```

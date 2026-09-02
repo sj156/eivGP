@@ -1,8 +1,7 @@
-#' eivGP
+#' eivGP: Errors-in-variables Gaussian processes for ordinal mixed inputs
 #'
-#' This package implements the `eivGP` method.
-#' 
-#' @docType package
+#' @import stats
+#' @importFrom utils flush.console tail
 #' @keywords internal
 "_PACKAGE"
 

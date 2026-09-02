@@ -1,0 +1,16 @@
+# Documentation
+
+Documentation and the namespace are generated only after every canonical
+module and test resource has been installed.
+
+```{r document-package, include=FALSE}
+devtools::load_all(usethis::proj_get(), quiet = TRUE)
+litr::document()
+```
+
+Run the full package check separately so the literate render cannot launch or
+mask a check failure:
+
+```{r check-package, eval=FALSE}
+devtools::check("eivGP", document = FALSE)
+```

@@ -1,0 +1,2 @@
+"updated_at_utc","status","phase","current_cell","cells_completed","cells_total","percent_cells_complete","detail"
+"2026-09-03 11:52:04 UTC","running","data_verification","",0,7,0,"Verifying manifests, checksums, and paired design."

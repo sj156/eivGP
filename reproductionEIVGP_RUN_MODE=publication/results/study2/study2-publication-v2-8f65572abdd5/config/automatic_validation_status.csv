@@ -1,0 +1,3 @@
+"validator","pass","message","elapsed_seconds"
+"published_competitors",TRUE,"External competitor validation did not succeed for: UC-GP, LVGP, EzGP. EIV-GP MCMC will continue; inspect the saved validation table.",0.0165810585021973
+"experiment_design",TRUE,"",0.0627291202545166

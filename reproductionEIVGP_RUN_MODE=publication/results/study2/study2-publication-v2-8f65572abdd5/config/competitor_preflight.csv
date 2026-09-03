@@ -1,0 +1,4 @@
+"method","reference","package","implementation","available","version"
+"UC-GP","Qian et al. (2008); Zhou et al. (2011)","kergp","kergp::q1Symm",FALSE,
+"LVGP","Zhang et al. (2020)","LVGP","LVGP::LVGP_fit and LVGP::LVGP_predict",FALSE,
+"EzGP","Xiao et al. (2021)","EzGP","EzGP::EzGP_fit and EzGP::EzGP_predict",FALSE,

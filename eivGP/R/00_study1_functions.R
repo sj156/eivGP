@@ -815,6 +815,8 @@ make_default_control <- function(n, n_mis,
     n_blocks_per_iter <- 1L
     global_ess_every <- 50L
     full_local_every <- 100L
+    theta_joint_every <- 0L
+    tau_noncentered_every <- 0L
   }
   
   if (preset == "balanced") {
@@ -824,15 +826,19 @@ make_default_control <- function(n, n_mis,
     n_blocks_per_iter <- 1L
     global_ess_every <- 25L
     full_local_every <- 50L
+    theta_joint_every <- 0L
+    tau_noncentered_every <- 0L
   }
   
   if (preset == "thorough") {
     local_frac <- 0.10
-    theta_update_every <- 3L
+    theta_update_every <- 6L
     block_ess_every <- 1L
     n_blocks_per_iter <- 2L
-    global_ess_every <- 10L
-    full_local_every <- 25L
+    global_ess_every <- 5L
+    full_local_every <- 20L
+    theta_joint_every <- 2L
+    tau_noncentered_every <- 10L
   }
   
   local_per_iter <- min(
@@ -854,6 +860,8 @@ make_default_control <- function(n, n_mis,
     n_blocks_per_iter = n_blocks_per_iter,
     global_ess_every = global_ess_every,
     theta_update_every = theta_update_every,
+    theta_joint_every = theta_joint_every,
+    tau_noncentered_every = tau_noncentered_every,
     theta_slice_width_init = rep(1.0, p_x + 2L),
     adapt_theta_width = TRUE,
     adapt_every = 100L,
@@ -997,6 +1005,93 @@ update_tau_1d <- function(tau, u, c_ord, m, tau_bound = 8) {
   }
   
   tau_new
+}
+
+update_tau_u_noncentered_1d <- function(y, u, Dx_list, c_ord, tau,
+                                        logtheta, sigma2_eps, theta_spec,
+                                        miss_idx, calib_idx, u_obs,
+                                        tau_bound = 8,
+                                        kernel = "se",
+                                        matern_nu = 2.5) {
+  if (length(miss_idx) == 0L) {
+    return(list(u = u, tau = tau, n_eval = 0L))
+  }
+  eps <- sqrt(.Machine$double.eps)
+  probability_bounds <- function(tau_value) {
+    list(
+      lower = c(0, stats::pnorm(tau_value))[c_ord],
+      upper = c(stats::pnorm(tau_value), 1)[c_ord]
+    )
+  }
+  initial_bounds <- probability_bounds(tau)
+  widths <- initial_bounds$upper[miss_idx] - initial_bounds$lower[miss_idx]
+  if (any(!is.finite(widths) | widths <= 0)) {
+    stop("Invalid ordinal probability interval in noncentered update.")
+  }
+  within_category <- (
+    stats::pnorm(u[miss_idx]) - initial_bounds$lower[miss_idx]
+  ) / widths
+  within_category <- pmin(pmax(within_category, eps), 1 - eps)
+
+  reconstruct_u <- function(tau_value) {
+    bounds <- probability_bounds(tau_value)
+    width <- bounds$upper[miss_idx] - bounds$lower[miss_idx]
+    if (any(!is.finite(width) | width <= 0)) return(NULL)
+    z <- bounds$lower[miss_idx] + within_category * width
+    proposed_u <- u
+    proposed_u[miss_idx] <- stats::qnorm(pmin(pmax(z, eps), 1 - eps))
+    list(u = proposed_u, log_jacobian = sum(log(width)))
+  }
+
+  tau_new <- tau
+  u_new <- u
+  n_eval_total <- 0L
+  for (j in seq_len(length(tau_new))) {
+    lower <- max(c(
+      -tau_bound,
+      if (j > 1L) tau_new[j - 1L] else -Inf,
+      if (length(calib_idx)) u_obs[calib_idx[c_ord[calib_idx] <= j]] else
+        numeric(0)
+    ), na.rm = TRUE)
+    upper <- min(c(
+      tau_bound,
+      if (j < length(tau_new)) tau_new[j + 1L] else Inf,
+      if (length(calib_idx)) u_obs[calib_idx[c_ord[calib_idx] > j]] else
+        numeric(0)
+    ), na.rm = TRUE)
+    if (!is.finite(lower) || !is.finite(upper) || lower >= upper) {
+      stop("Noncentered threshold update has an empty interval.")
+    }
+    log_target <- function(value) {
+      candidate_tau <- tau_new
+      candidate_tau[j] <- value
+      candidate <- reconstruct_u(candidate_tau)
+      if (is.null(candidate)) return(-Inf)
+      likelihood <- gp_state_1d(
+        y, candidate$u, Dx_list, logtheta, sigma2_eps, theta_spec,
+        kernel = kernel, matern_nu = matern_nu
+      )$loglik
+      likelihood + candidate$log_jacobian
+    }
+    answer <- full_interval_slice_update(
+      x0 = tau_new[j], logf = log_target,
+      lower = lower, upper = upper,
+      max_iter = 200L, fail_on_limit = TRUE
+    )
+    tau_new[j] <- answer$x
+    reconstructed <- reconstruct_u(tau_new)
+    if (is.null(reconstructed)) {
+      stop("Noncentered threshold update produced invalid latent values.")
+    }
+    u_new <- reconstructed$u
+    n_eval_total <- n_eval_total + answer$n_eval
+  }
+  assert_threshold_state_1d(
+    u_new, tau_new, c_ord, length(tau_new) + 1L,
+    calib_idx = calib_idx, u_obs = u_obs,
+    logtheta = logtheta, sigma2_eps = sigma2_eps
+  )
+  list(u = u_new, tau = tau_new, n_eval = n_eval_total)
 }
 
 assert_threshold_state_1d <- function(u,
@@ -1223,6 +1318,57 @@ update_logtheta_slice_1d <- function(y, u, Dx_list, logtheta, sigma2_eps,
   }
   
   list(logtheta = logtheta, n_eval = n_eval_total)
+}
+
+update_logtheta_joint_ess_1d <- function(y, u, Dx_list, logtheta,
+                                         sigma2_eps, theta_spec,
+                                         max_try = 300L,
+                                         kernel = "se",
+                                         matern_nu = 2.5) {
+  ## Joint elliptical slice sampling preserves the Gaussian prior on the log
+  ## hyperparameters and evaluates only the GP likelihood. Hard parameter
+  ## bounds remain part of the target through an indicator likelihood.
+  prior_mean <- theta_spec$prior_mean
+  prior_sd <- theta_spec$prior_sd
+  bounds <- theta_spec$bounds
+  standardized_current <- (logtheta - prior_mean) / prior_sd
+  auxiliary <- stats::rnorm(length(logtheta))
+
+  loglik <- function(standardized) {
+    candidate <- prior_mean + prior_sd * standardized
+    if (any(candidate < bounds[, 1L]) || any(candidate > bounds[, 2L])) {
+      return(-Inf)
+    }
+    gp_state_1d(
+      y, u, Dx_list, candidate, sigma2_eps, theta_spec,
+      kernel = kernel, matern_nu = matern_nu
+    )$loglik
+  }
+  current_loglik <- loglik(standardized_current)
+  if (!is.finite(current_loglik)) {
+    stop("Current log-hyperparameter state has invalid likelihood.")
+  }
+  log_slice <- current_loglik + log(stats::runif(1L))
+  angle <- stats::runif(1L, 0, 2 * base::pi)
+  angle_min <- angle - 2 * base::pi
+  angle_max <- angle
+  n_eval <- 1L
+
+  for (attempt in seq_len(max_try)) {
+    proposal <- standardized_current * cos(angle) + auxiliary * sin(angle)
+    proposal_loglik <- loglik(proposal)
+    n_eval <- n_eval + 1L
+    if (is.finite(proposal_loglik) && proposal_loglik >= log_slice) {
+      return(list(
+        logtheta = prior_mean + prior_sd * proposal,
+        n_eval = n_eval,
+        accepted = TRUE
+      ))
+    }
+    if (angle < 0) angle_min <- angle else angle_max <- angle
+    angle <- stats::runif(1L, angle_min, angle_max)
+  }
+  stop("Joint elliptical-slice hyperparameter update exceeded max_try.")
 }
 
 split_rhat_1d <- function(chain_list) {
@@ -1642,6 +1788,10 @@ fit_eivgp_1d <- function(x_raw,
     local_eval_total <- 0L
     theta_eval_total <- 0L
     theta_update_total <- 0L
+    theta_joint_eval_total <- 0L
+    theta_joint_update_total <- 0L
+    tau_noncentered_eval_total <- 0L
+    tau_noncentered_update_total <- 0L
     
     save_id <- 0L
     
@@ -1653,6 +1803,31 @@ fit_eivgp_1d <- function(x_raw,
       )
       
       tau <- update_tau_1d(tau, u_curr, c_ord, m, tau_bound)
+
+      if (control$tau_noncentered_every > 0L &&
+          iter %% control$tau_noncentered_every == 0L) {
+        tau_nc <- update_tau_u_noncentered_1d(
+          y = y,
+          u = u_curr,
+          Dx_list = Dx_list,
+          c_ord = c_ord,
+          tau = tau,
+          logtheta = logtheta,
+          sigma2_eps = sigma2_eps,
+          theta_spec = theta_spec,
+          miss_idx = miss_idx,
+          calib_idx = calib_idx,
+          u_obs = u_obs,
+          tau_bound = tau_bound,
+          kernel = kernel_spec$name,
+          matern_nu = kernel_spec$matern_nu
+        )
+        u_curr <- tau_nc$u
+        tau <- tau_nc$tau
+        tau_noncentered_eval_total <-
+          tau_noncentered_eval_total + tau_nc$n_eval
+        tau_noncentered_update_total <- tau_noncentered_update_total + 1L
+      }
       
       if (length(miss_idx) > 0 &&
           iter %% control$block_ess_every == 0) {
@@ -1754,6 +1929,23 @@ fit_eivgp_1d <- function(x_raw,
         theta_eval_total <- theta_eval_total + th$n_eval
         theta_update_total <- theta_update_total + 1L
       }
+
+      if (control$theta_joint_every > 0L &&
+          iter %% control$theta_joint_every == 0L) {
+        th_joint <- update_logtheta_joint_ess_1d(
+          y = y,
+          u = u_curr,
+          Dx_list = Dx_list,
+          logtheta = logtheta,
+          sigma2_eps = sigma2_eps,
+          theta_spec = theta_spec,
+          kernel = kernel_spec$name,
+          matern_nu = kernel_spec$matern_nu
+        )
+        logtheta <- th_joint$logtheta
+        theta_joint_eval_total <- theta_joint_eval_total + th_joint$n_eval
+        theta_joint_update_total <- theta_joint_update_total + 1L
+      }
       
       logtheta_trace_all[iter, ] <- logtheta
       
@@ -1852,7 +2044,11 @@ fit_eivgp_1d <- function(x_raw,
       global_ess_total = global_ess_total,
       local_eval_total = local_eval_total,
       theta_eval_total = theta_eval_total,
-      theta_update_total = theta_update_total
+      theta_update_total = theta_update_total,
+      theta_joint_eval_total = theta_joint_eval_total,
+      theta_joint_update_total = theta_joint_update_total,
+      tau_noncentered_eval_total = tau_noncentered_eval_total,
+      tau_noncentered_update_total = tau_noncentered_update_total
     )
     
     list(
@@ -1996,6 +2192,15 @@ fit_eivgp_1d <- function(x_raw,
   diagnostics_summary <- data.frame(
     kernel = kernel_spec$name,
     matern_nu = kernel_spec$matern_nu,
+    sampler_strategy = paste0(
+      control$preset,
+      if (control$theta_joint_every > 0L) {
+        "+joint-hyper-ess"
+      } else {
+        "+coordinate-hyper-slice"
+      },
+      if (control$tau_noncentered_every > 0L) "+threshold-asis" else ""
+    ),
     n_chains = n_chains,
     parallel_backend = if (use_mclapply) "fork" else "serial",
     parallel_cores = if (use_mclapply) mc_cores else 1L,

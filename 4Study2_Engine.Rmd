@@ -8,7 +8,8 @@ and design generators.
 ```{r copy-study2-engine, include=FALSE}
 repository_dir <- dirname(knitr::current_input(dir = TRUE))
 source_file <- file.path(
-  repository_dir, "script", "R-scripts", "00_study2_functions.R"
+  repository_dir, "script", "newly-written-and-modified-scripts",
+  "00_study2_functions.R"
 )
 target_file <- file.path(usethis::proj_get(), "R", basename(source_file))
 stopifnot(file.copy(source_file, target_file, overwrite = TRUE))

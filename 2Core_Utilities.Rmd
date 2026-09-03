@@ -5,7 +5,9 @@ datasets are shared by both scientific engines.
 
 ```{r copy-core-utilities, include=FALSE}
 repository_dir <- dirname(knitr::current_input(dir = TRUE))
-source_dir <- file.path(repository_dir, "script", "R-scripts")
+source_dir <- file.path(
+  repository_dir, "script", "newly-written-and-modified-scripts"
+)
 package_r_dir <- file.path(usethis::proj_get(), "R")
 modules <- c("00_parallel_utils.R", "00_synthetic_data.R")
 copied <- file.copy(

@@ -513,6 +513,180 @@ print.eivgp_fit <- function(x, ...) {
   invisible(x)
 }
 
+mixedgp_univariate_diagnostic_draws <- function(object,
+                                                 max_draws = 1000L,
+                                                 max_latent = 2L) {
+  by_chain <- object$mcmc$samples_by_chain
+  required <- c("logtheta", "sigma2", "tau", "u")
+  if (!is.list(by_chain) || any(!required %in% names(by_chain))) {
+    stop("The fitted object does not retain univariate by-chain draws.")
+  }
+  max_draws <- mixedgp_as_integer_strict(
+    max_draws, "max_draws", min_value = 20L, length_expected = 1L
+  )
+  max_latent <- mixedgp_as_integer_strict(
+    max_latent, "max_latent", min_value = 0L, length_expected = 1L
+  )
+  rhat_u <- object$diagnostics$rhat_u
+  latent_index <- integer(0)
+  if (max_latent > 0L && is.data.frame(rhat_u) && nrow(rhat_u) > 0L &&
+      all(c("global_index", "rhat") %in% names(rhat_u))) {
+    ordering <- order(rhat_u$rhat, decreasing = TRUE, na.last = NA)
+    latent_index <- utils::head(
+      as.integer(rhat_u$global_index[ordering]), max_latent
+    )
+  }
+
+  rows <- lapply(seq_along(by_chain$logtheta), function(chain) {
+    logtheta <- as.matrix(by_chain$logtheta[[chain]])
+    sigma2 <- as.numeric(by_chain$sigma2[[chain]])
+    tau <- as.matrix(by_chain$tau[[chain]])
+    n <- min(nrow(logtheta), length(sigma2), nrow(tau))
+    keep <- unique(round(seq(1L, n, length.out = min(n, max_draws))))
+    logtheta <- logtheta[keep, , drop = FALSE]
+    tau <- tau[keep, , drop = FALSE]
+    values <- cbind(
+      sigma_epsilon = sqrt(sigma2[keep]),
+      rho = exp(logtheta[, 1L]),
+      exp(logtheta[, -1L, drop = FALSE]),
+      tau
+    )
+    p_x <- ncol(logtheta) - 2L
+    colnames(values) <- c(
+      "sigma_epsilon", "rho", paste0("theta_x[", seq_len(p_x), "]"),
+      "theta_u", paste0("tau[", seq_len(ncol(tau)), "]")
+    )
+    if (length(latent_index) > 0L) {
+      latent <- as.matrix(by_chain$u[[chain]])[keep, latent_index, drop = FALSE]
+      colnames(latent) <- paste0("u[", latent_index, "]")
+      values <- cbind(values, latent)
+    }
+    data.frame(
+      chain = chain,
+      draw = rep(seq_len(nrow(values)), times = ncol(values)),
+      parameter = rep(colnames(values), each = nrow(values)),
+      value = as.vector(values),
+      stringsAsFactors = FALSE
+    )
+  })
+  do.call(rbind, rows)
+}
+
+#' Plot EIV-GP MCMC mixing diagnostics
+#'
+#' Produces trace, autocorrelation, and rank-histogram plots for GP
+#' hyperparameters, ordinal thresholds, and a small number of the latent
+#' coordinates with the largest R-hat values. The plots use retained
+#' post-warmup draws and never rerun the sampler.
+#'
+#' @param object An object returned by [fit_eivgp()] using the univariate
+#'   engine, or its internal univariate fit representation.
+#' @param parameters Optional character vector selecting parameter panels.
+#' @param max_draws Maximum retained draws per chain used in a plot.
+#' @param max_lag Maximum autocorrelation lag.
+#' @param max_latent Maximum number of worst-R-hat latent coordinates shown.
+#' @return A named list containing `trace`, `autocorrelation`, and `rank`
+#'   `ggplot2` objects plus the plotted `draws` data.
+#' @export
+plot_eivgp_mcmc_diagnostics <- function(object,
+                                        parameters = NULL,
+                                        max_draws = 1000L,
+                                        max_lag = 50L,
+                                        max_latent = 2L) {
+  if (!requireNamespace("ggplot2", quietly = TRUE)) {
+    stop("Install the suggested package 'ggplot2' to create diagnostic plots.")
+  }
+  engine <- if (inherits(object, "eivgp_fit")) {
+    mixedgp_fit_engine(object)
+  } else if (!is.null(object$mcmc$samples_by_chain)) {
+    "univariate"
+  } else {
+    "unknown"
+  }
+  if (!identical(engine, "univariate")) {
+    stop("Mixing plots currently support the univariate engine.")
+  }
+  max_lag <- mixedgp_as_integer_strict(
+    max_lag, "max_lag", min_value = 1L, length_expected = 1L
+  )
+  draws <- mixedgp_univariate_diagnostic_draws(
+    object, max_draws = max_draws, max_latent = max_latent
+  )
+  if (!is.null(parameters)) {
+    unknown <- setdiff(parameters, unique(draws$parameter))
+    if (length(unknown) > 0L) {
+      stop("Unknown diagnostic parameter(s): ", paste(unknown, collapse = ", "))
+    }
+    draws <- draws[draws$parameter %in% parameters, , drop = FALSE]
+  }
+  draws$chain_label <- factor(draws$chain)
+
+  trace_plot <- ggplot2::ggplot(
+    draws, ggplot2::aes(x = draw, y = value, colour = chain_label)
+  ) +
+    ggplot2::geom_line(linewidth = 0.25, alpha = 0.8) +
+    ggplot2::facet_wrap(~parameter, scales = "free_y") +
+    ggplot2::labs(x = "Post-warmup draw", y = NULL, colour = "Chain") +
+    ggplot2::theme_bw()
+
+  split_draws <- split(draws, interaction(
+    draws$parameter, draws$chain, drop = TRUE, lex.order = TRUE
+  ))
+  acf_rows <- lapply(split_draws, function(x) {
+    acf_value <- stats::acf(
+      x$value, lag.max = min(max_lag, nrow(x) - 1L),
+      plot = FALSE, demean = TRUE
+    )
+    data.frame(
+      parameter = x$parameter[1L], chain = x$chain[1L],
+      lag = as.numeric(acf_value$lag), acf = as.numeric(acf_value$acf),
+      stringsAsFactors = FALSE
+    )
+  })
+  acf_data <- do.call(rbind, acf_rows)
+  acf_data$chain_label <- factor(acf_data$chain)
+  acf_plot <- ggplot2::ggplot(
+    acf_data, ggplot2::aes(x = lag, y = acf, colour = chain_label)
+  ) +
+    ggplot2::geom_hline(yintercept = 0, colour = "grey70") +
+    ggplot2::geom_line(linewidth = 0.45) +
+    ggplot2::facet_wrap(~parameter, scales = "free_y") +
+    ggplot2::labs(x = "Lag", y = "Autocorrelation", colour = "Chain") +
+    ggplot2::theme_bw()
+
+  rank_rows <- lapply(split(draws, draws$parameter), function(x) {
+    pooled_rank <- rank(x$value, ties.method = "average")
+    breaks <- seq(0.5, nrow(x) + 0.5, length.out = 21L)
+    rank_bin <- cut(pooled_rank, breaks = breaks, include.lowest = TRUE,
+                    labels = FALSE)
+    count <- as.data.frame(table(
+      chain = factor(x$chain), rank_bin = factor(rank_bin, levels = 1:20)
+    ), stringsAsFactors = FALSE)
+    count$parameter <- x$parameter[1L]
+    count$count <- as.numeric(count$Freq)
+    count$rank_bin <- as.integer(as.character(count$rank_bin))
+    count
+  })
+  rank_data <- do.call(rbind, rank_rows)
+  rank_plot <- ggplot2::ggplot(
+    rank_data,
+    ggplot2::aes(x = rank_bin, y = count, fill = chain)
+  ) +
+    ggplot2::geom_col(position = "dodge") +
+    ggplot2::facet_wrap(~parameter, scales = "free_y") +
+    ggplot2::labs(x = "Pooled-rank bin", y = "Count", fill = "Chain") +
+    ggplot2::theme_bw()
+
+  list(
+    trace = trace_plot,
+    autocorrelation = acf_plot,
+    rank = rank_plot,
+    draws = draws,
+    autocorrelation_data = acf_data,
+    rank_data = rank_data
+  )
+}
+
 #' @rdname summary.eivgp_fit
 #' @param x A fitted-model summary returned by `summary()`.
 #' @return `x`, invisibly, for the print method.

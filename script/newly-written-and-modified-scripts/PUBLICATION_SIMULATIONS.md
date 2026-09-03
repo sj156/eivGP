@@ -7,20 +7,28 @@ The publication workflow has three entry files:
 - `run_study2_simulation.R`: the Study II master.
 
 The posterior engines remain in `00_study1_functions.R` and
-`00_study2_functions.R` because they are also the package source of truth.
+`00_study2_functions.R` as the maintained payload selected by the
+authoritative root `.Rmd` package chapters.
 Master scripts do not source the historical representative, pilot, or unified
 runner entry points.
 
 Before every smoke or publication fit, the masters automatically execute the
 exact checks in `08_published_competitor_validation.R` and
-`09_experiment_design_validation.R`. Publication mode requires all three
-published competitors to complete the small real-fit validation successfully.
-The detailed validator tables and a pass/fail status table are archived under
-the fingerprinted run's `config/` directory before data generation or fitting.
+`09_experiment_design_validation.R`. Published-competitor failures are
+recorded but do not prevent EIV-GP MCMC from completing. The detailed validator
+tables and status table are archived under the fingerprinted run's `config/`
+directory before data generation or fitting.
+
+Before the full Study I grid, publication mode runs two fixed frozen
+replications through the exact EIV-GP publication sampler at every anchored
+calibration size. A failed R-hat or ESS gate stops the run before competitors,
+ablations, and the remaining replications. The pilot writes a CSV summary and
+trace, autocorrelation, and pooled-rank plots for selected calibration sizes.
 
 ## Safe use
 
-In a source checkout, run these commands from `script/R-scripts/`. Both
+In a source checkout, run these commands from
+`script/newly-written-and-modified-scripts/`. Both
 masters default to a read-only dry run. Installed-package users can instead
 call `eivGP::run_study1_simulation()` or `eivGP::run_study2_simulation()` from
 any working directory:

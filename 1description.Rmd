@@ -26,6 +26,11 @@ usethis::create_package(
         email = "jiangsheng@cuhk.edu.cn", role = c("aut", "cre")
       )
     ),
+    Author = paste(
+      "Penghui Fu [aut], Xinye Chen [aut], Jianhua Z. Huang [aut],",
+      "Sheng Jiang [aut, cre]"
+    ),
+    Maintainer = "Sheng Jiang <jiangsheng@cuhk.edu.cn>",
     License = "MIT + file LICENSE",
     Encoding = "UTF-8",
     Depends = "R (>= 4.1.0)",
@@ -158,9 +163,10 @@ writeLines(
 
 ```{r global-variables, send_to='R/global-variables.R', eval=FALSE}
 utils::globalVariables(c(
-  "block", "chain", "ess", "global_u_accept_total", "global_u_eval_total",
+  "block", "chain", "chain_label", "count", "draw", "ess",
+  "global_u_accept_total", "global_u_eval_total",
   "global_u_total", "ref", "rhat", "theta_eval_total",
   "theta_update_total", "u_ess_accept_total", "u_ess_eval_total",
-  "u_ess_total", "value", "xintercept"
+  "rank_bin", "u_ess_total", "value", "xintercept"
 ))
 ```

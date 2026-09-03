@@ -13,10 +13,11 @@ documentclass: book
 
 # Literate package source
 
-This book is the package-building skeleton for `eivGP`. The audited R modules
-under `script/R-scripts/` are the computational source of truth. Each chapter
-copies one coherent module into the generated package, so package code and the
-paper's numerical implementation cannot drift apart.
+The explicitly ordered `.Rmd` chapters are the authoritative package-building
+source for `eivGP`. Their maintained computational payload is kept under
+`script/newly-written-and-modified-scripts/`; every chapter identifies and
+copies one coherent module into the generated package. Historical R scripts
+are clearly separated under `script/legacy-code-scripts/`.
 
 The package book never launches publication-scale computation. Standalone
 reproduction documents live under `experiments/` and `applications/`; they

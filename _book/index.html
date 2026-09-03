@@ -140,10 +140,11 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <h1>
 <span class="header-section-number">1</span> Literate package source<a href="index.html#literate-package-source" class="anchor-section" aria-label="Anchor link to header"></a>
 </h1>
-<p>This book is the package-building skeleton for <code>eivGP</code>. The audited R modules
-under <code>script/R-scripts/</code> are the computational source of truth. Each chapter
-copies one coherent module into the generated package, so package code and the
-paper’s numerical implementation cannot drift apart.</p>
+<p>The explicitly ordered <code>.Rmd</code> chapters are the authoritative package-building
+source for <code>eivGP</code>. Their maintained computational payload is kept under
+<code>script/newly-written-and-modified-scripts/</code>; every chapter identifies and
+copies one coherent module into the generated package. Historical R scripts
+are clearly separated under <code>script/legacy-code-scripts/</code>.</p>
 <p>The package book never launches publication-scale computation. Standalone
 reproduction documents live under <code>experiments/</code> and <code>applications/</code>; they
 call the same exported package functions used by scripts and downstream users.</p>

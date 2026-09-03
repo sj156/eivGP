@@ -407,11 +407,13 @@ study1_simulation_config <- function(
     parallel = list(level = "replications", workers = as.integer(workers)),
     mcmc = if (smoke) {
       list(n_iter = 120L, burn = 40L, thin = 1L, n_chains = 1L,
-           rhat_limit = 1.05, ess_limit = 20L, require_gate = FALSE)
+           rhat_limit = 1.05, ess_limit = 20L, require_gate = FALSE,
+           pilot_reps = 0L)
     } else {
-      list(n_iter = 5000L, burn = 1000L, thin = 1L, n_chains = 4L,
+      list(n_iter = 8000L, burn = 1000L, thin = 1L, n_chains = 4L,
            rhat_limit = 1.05, ess_limit = 200L,
-           require_gate = identical(mode, "publication"))
+           require_gate = identical(mode, "publication"),
+           pilot_reps = if (identical(mode, "publication")) 2L else 0L)
     },
     measurement_mcmc = if (smoke) {
       list(n_iter = 120L, burn = 40L)
@@ -501,12 +503,12 @@ study2_simulation_config <- function(
       list(n_iter = 120L, burn = 40L, thin = 2L, n_chains = 1L,
            rhat_limit = 1.05, raw_ess_limit = 20L,
            target_bulk_ess_limit = 10L, target_tail_ess_limit = 10L,
-           require_gate = FALSE)
+           require_gate = FALSE, pilot_reps = 0L)
     } else {
       list(n_iter = 4000L, burn = 1000L, thin = 2L, n_chains = 4L,
            rhat_limit = 1.05, raw_ess_limit = 200L,
            target_bulk_ess_limit = 100L, target_tail_ess_limit = 100L,
-           require_gate = identical(mode, "publication"))
+           require_gate = identical(mode, "publication"), pilot_reps = 0L)
     },
     measurement_mcmc = if (smoke) {
       list(n_iter = 120L, burn = 40L, thin = 2L, n_chains = 2L)
@@ -672,6 +674,9 @@ validate_simulation_config <- function(config) {
       config$evaluation[[field]], paste0("evaluation$", field), 1L
     )
   }
+  mixedgp_validate_scalar_integer(
+    config$mcmc$pilot_reps, "mcmc$pilot_reps", 0L
+  )
   if (config$study == "study1") {
     mixedgp_validate_scalar_integer(config$mcmc$ess_limit, "mcmc$ess_limit", 1L)
   } else {
@@ -1430,6 +1435,7 @@ mixedgp_cell_controls_study1 <- function(config, cell, cell_output) {
     STUDY1_REQUIRE_MCMC_GATE = config$mcmc$require_gate,
     STUDY1_MAX_RHAT = config$mcmc$rhat_limit,
     STUDY1_MIN_ESS = config$mcmc$ess_limit,
+    STUDY1_MCMC_PILOT_REPS = config$mcmc$pilot_reps,
     STUDY1_MECHANISM_CALIB = mechanism_calib,
     STUDY1_LVGP_MAX_ELAPSED = if (config$mode == "smoke") 60 else 1800
   )
@@ -1613,9 +1619,21 @@ mixedgp_competitor_gate <- function(result, config) {
 mixedgp_mcmc_gate <- function(result, config) {
   diagnostics <- result$outputs$mcmc_diagnostics
   pass_column <- if (config$study == "study1") "gate_pass" else "mcmc_pass"
-  expected <- result$cell$n_rep * length(result$cell$calibration_grid)
+  expected_per_rep <- if (config$study == "study1") {
+    ## Study I's zero-calibration condition is intentionally unanchored and
+    ## has no raw-parameter convergence gate.
+    sum(result$cell$calibration_grid > 0L)
+  } else {
+    length(result$cell$calibration_grid)
+  }
+  expected <- result$cell$n_rep * expected_per_rep
   values <- if (is.data.frame(diagnostics) && pass_column %in% names(diagnostics)) {
-    as.logical(diagnostics[[pass_column]])
+    applicable <- if ("gate_applicable" %in% names(diagnostics)) {
+      isTRUE(diagnostics$gate_applicable) | diagnostics$gate_applicable %in% TRUE
+    } else {
+      rep(TRUE, nrow(diagnostics))
+    }
+    as.logical(diagnostics[[pass_column]][applicable])
   } else {
     logical(0)
   }

@@ -7,4 +7,5 @@ the chapters in the active build would regenerate stale and duplicated package
 functions.
 
 The active package sources are the explicitly ordered root `.Rmd` modules and
-the audited scripts under `script/R-scripts/`.
+their payload under `script/newly-written-and-modified-scripts/`. Historical R
+code is kept separately under `script/legacy-code-scripts/`.

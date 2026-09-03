@@ -7,7 +7,8 @@ runners in the next chapter.
 ```{r copy-legacy-experiment-api, include=FALSE}
 repository_dir <- dirname(knitr::current_input(dir = TRUE))
 source_file <- file.path(
-  repository_dir, "script", "R-scripts", "00_experiment_runner.R"
+  repository_dir, "script", "newly-written-and-modified-scripts",
+  "00_experiment_runner.R"
 )
 target_file <- file.path(usethis::proj_get(), "R", basename(source_file))
 stopifnot(file.copy(source_file, target_file, overwrite = TRUE))
@@ -18,7 +19,9 @@ stopifnot(identical(
 
 ```{r install-legacy-experiment-resources, include=FALSE}
 repository_dir <- dirname(knitr::current_input(dir = TRUE))
-source_dir <- file.path(repository_dir, "script", "R-scripts")
+source_dir <- file.path(
+  repository_dir, "script", "newly-written-and-modified-scripts"
+)
 legacy_resources <- c(
   "01_study1_representative_figures.R",
   "02_study1_monte_carlo.R",

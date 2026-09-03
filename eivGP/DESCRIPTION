@@ -7,6 +7,9 @@ Authors@R: c(
     person("Jianhua Z.", "Huang", role = "aut"),
     person("Sheng", "Jiang", , "jiangsheng@cuhk.edu.cn", role = c("aut", "cre"))
   )
+Author: Penghui Fu [aut], Xinye Chen [aut], Jianhua Z. Huang [aut], Sheng
+    Jiang [aut, cre]
+Maintainer: Sheng Jiang <jiangsheng@cuhk.edu.cn>
 Description: Fits errors-in-variables Gaussian process regressions with
     numeric predictors, ordinal proxies for latent continuous inputs, and
     sparse calibration measurements. Includes reproducible Study I and
@@ -39,4 +42,4 @@ Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 8.0.0
 LitrVersionUsed: 0.9.3
-LitrId: ea9ad58a0f83aac09d08ea6e2bcdf381
+LitrId: fb51ad912c8f2adc4c196445c7508ed3

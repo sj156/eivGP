@@ -12,7 +12,7 @@ header-includes:
   - \newcommand{\elandscape}{\end{landscape}} 
 fontsize: 12pt
 params:
-  main.dir: 'script/main-code/'
+  main.dir: 'script/legacy-code-scripts/'
   fig.dir: 'penghui-local/output/figures/'
   save.filename: 'penghui-local/output/MCMC/EIV-ordinal-cos-10.rds'
 ---

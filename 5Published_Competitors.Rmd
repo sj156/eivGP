@@ -8,7 +8,7 @@ runs.
 ```{r copy-published-competitors, include=FALSE}
 repository_dir <- dirname(knitr::current_input(dir = TRUE))
 source_file <- file.path(
-  repository_dir, "script", "R-scripts",
+  repository_dir, "script", "newly-written-and-modified-scripts",
   "03_study2_published_competitors.R"
 )
 target_file <- file.path(usethis::proj_get(), "R", basename(source_file))

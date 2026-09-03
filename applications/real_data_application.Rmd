@@ -43,7 +43,9 @@ find_repository_dir <- function(start_dir) {
   cursor <- normalizePath(start_dir, winslash = "/", mustWork = FALSE)
   for (ii in seq_len(20L)) {
     if (file.exists(file.path(cursor, "eivGP", "DESCRIPTION")) &&
-        dir.exists(file.path(cursor, "script", "R-scripts"))) {
+        dir.exists(file.path(
+          cursor, "script", "newly-written-and-modified-scripts"
+        ))) {
       return(cursor)
     }
     parent <- dirname(cursor)

@@ -8,7 +8,8 @@ under `applications/` and will remain separate from the simulation studies.
 ```{r copy-real-data-interface, include=FALSE}
 repository_dir <- dirname(knitr::current_input(dir = TRUE))
 source_file <- file.path(
-  repository_dir, "script", "R-scripts", "real-data.R"
+  repository_dir, "script", "newly-written-and-modified-scripts",
+  "real-data.R"
 )
 target_file <- file.path(usethis::proj_get(), "R", basename(source_file))
 stopifnot(file.copy(source_file, target_file, overwrite = TRUE))

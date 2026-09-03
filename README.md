@@ -166,6 +166,38 @@ while true; do clear; date; cat "$RUN_DIR/config/progress.csv"; sleep 30; done
 `config/diagnostic_gates.csv` records their quality gates. Stop the monitor
 with `Ctrl-C`; this does not stop the experiment.
 
+### Study I MCMC pilot and mixing diagnostics
+
+Before starting the full Study I grid, publication mode runs two fixed frozen
+replications through EIV-GP at the anchored calibration sizes. This pilot uses
+the exact publication sampler settings and stops early if R-hat exceeds 1.05
+or key effective sample size is below 200. Its summary is written to
+`cells/<design-cell>/tables/study1_mcmc_pilot.csv`; the full replication grid
+is not started when the pilot fails.
+
+The Study I publication sampler uses four chains, 8,000 iterations with 1,000
+warmup iterations, a thorough latent-update schedule, joint elliptical-slice
+updates for correlated GP hyperparameters, and centered/noncentered
+interweaving for ordinal thresholds and latent inputs. The transition kernels
+preserve the specified posterior; the convergence thresholds are not relaxed.
+
+For the first pilot replication at the smallest and largest anchored
+calibration sizes, the runner writes three mixing plots under
+`cells/<design-cell>/figures/`:
+
+- `*_trace.pdf` overlays post-warmup traces from all chains;
+- `*_acf.pdf` compares within-chain autocorrelation;
+- `*_rank.pdf` compares pooled-rank histograms across chains.
+
+The same plots can be created for an independently fitted univariate model:
+
+```r
+diagnostics <- eivGP::plot_eivgp_mcmc_diagnostics(fit)
+diagnostics$trace
+diagnostics$autocorrelation
+diagnostics$rank
+```
+
 ### 4. Run another numerical study
 
 Use the portable launcher from the repository root. Substitute any writable
@@ -296,8 +328,8 @@ is not part of the current paper-reproduction instructions.
 
 ## Source organization
 
-The cleaned R scripts under `script/R-scripts/` are the computational source
-of truth. The explicitly ordered `.Rmd` chapters form the `litr` package
-skeleton and copy those scripts into the generated `eivGP/` package. Historical
-chapters are retained under `legacy/` for provenance and are excluded from the
-active package build.
+The explicitly ordered root `.Rmd` chapters are the authoritative `litr`
+package source. Their newly written and maintained R payload is under
+`script/newly-written-and-modified-scripts/`; historical R code is isolated
+under `script/legacy-code-scripts/`. Historical literate chapters are retained
+under `legacy/` for provenance and excluded from the active package build.

@@ -23,7 +23,8 @@ mixedgp_find_code_dir <- function(code_dir = NULL) {
   }
 
   candidates <- c(
-    getwd(), file.path(getwd(), "script", "R-scripts"),
+    getwd(),
+    file.path(getwd(), "script", "newly-written-and-modified-scripts"),
     file.path(getwd(), "codes"),
     file.path(getwd(), "revision", "codes"), installed_dir
   )

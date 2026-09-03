@@ -175,11 +175,13 @@ or key effective sample size is below 200. Its summary is written to
 `cells/<design-cell>/tables/study1_mcmc_pilot.csv`; the full replication grid
 is not started when the pilot fails.
 
-The Study I publication sampler uses four chains, 8,000 iterations with 1,000
+The Study I publication sampler uses four chains, 14,000 iterations with 1,000
 warmup iterations, a thorough latent-update schedule, joint elliptical-slice
 updates for correlated GP hyperparameters, and centered/noncentered
 interweaving for ordinal thresholds and latent inputs. The transition kernels
-preserve the specified posterior; the convergence thresholds are not relaxed.
+preserve the specified posterior. Fits below the predeclared 200-draw ESS
+threshold are not used; they must be rerun with longer chains before
+publication results are accepted.
 
 For the first pilot replication at the smallest and largest anchored
 calibration sizes, the runner writes three mixing plots under

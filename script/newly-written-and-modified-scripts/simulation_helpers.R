@@ -410,7 +410,9 @@ study1_simulation_config <- function(
            rhat_limit = 1.05, ess_limit = 20L, require_gate = FALSE,
            pilot_reps = 0L)
     } else {
-      list(n_iter = 8000L, burn = 1000L, thin = 1L, n_chains = 4L,
+      list(n_iter = 14000L, burn = 1000L, thin = 1L, n_chains = 4L,
+           # Formal publication runs use the stricter 200-draw
+           # key-parameter ESS gate. Fits below it are not accepted.
            rhat_limit = 1.05, ess_limit = 200L,
            require_gate = identical(mode, "publication"),
            pilot_reps = if (identical(mode, "publication")) 2L else 0L)

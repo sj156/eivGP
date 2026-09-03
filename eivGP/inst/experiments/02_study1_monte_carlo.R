@@ -153,7 +153,8 @@ FIG_DIR <- file.path(STUDY1_OUT_PREFIX, "figures")
 TAB_DIR <- file.path(STUDY1_OUT_PREFIX, "tables")
 RES_DIR <- file.path(STUDY1_OUT_PREFIX, "results", "study1_publication")
 REP_DIR <- file.path(RES_DIR, "competitor_replications")
-for (dd in c(FIG_DIR, TAB_DIR, RES_DIR, REP_DIR)) {
+MCMC_PROGRESS_DIR <- file.path(RES_DIR, "mcmc_progress")
+for (dd in c(FIG_DIR, TAB_DIR, RES_DIR, REP_DIR, MCMC_PROGRESS_DIR)) {
   dir.create(dd, showWarnings = FALSE, recursive = TRUE)
 }
 
@@ -657,7 +658,13 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
         preset = settings$preset,
         seed = 300000L + 1000L * rep_id + n_calib,
         parallel_chains = parallel_chains,
-        verbose = FALSE
+        verbose = FALSE,
+        progress_every = 1000L,
+        progress_label = sprintf("Study I rep %03d |O|=%d", rep_id, n_calib),
+        progress_file = file.path(
+          MCMC_PROGRESS_DIR,
+          sprintf("rep%03d_calib%03d.log", rep_id, n_calib)
+        )
       )
       control_key <- as.character(n_calib)
       sampler_controls[[control_key]] <- list(
@@ -832,7 +839,15 @@ run_study1_mcmc_pilot <- function(rep_id) {
         n_iter = settings$n_iter, burn = settings$burn, thin = 1L,
         n_chains = settings$n_chains, preset = settings$preset,
         seed = 300000L + 1000L * rep_id + n_calib,
-        parallel_chains = parallel_chains, verbose = FALSE
+        parallel_chains = parallel_chains, verbose = FALSE,
+        progress_every = 1000L,
+        progress_label = sprintf(
+          "Study I pilot rep %03d |O|=%d", rep_id, n_calib
+        ),
+        progress_file = file.path(
+          MCMC_PROGRESS_DIR,
+          sprintf("pilot_rep%03d_calib%03d.log", rep_id, n_calib)
+        )
       )
       summary <- fit$diagnostics$summary
       rhat_values <- unlist(

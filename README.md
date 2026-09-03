@@ -50,29 +50,22 @@ figures in the paper. Real-data analyses are intentionally not included yet.
 
 ### 1. Obtain the reproducibility companion and install its dependencies
 
-Clone this repository, then start R from the repository root. The numerical
-studies require `rmarkdown`, `pkgload`, and the competitor packages identified
-by the publication preflight. Install the package dependencies with:
-
-```r
-pak::pak(c(
-  "rmarkdown", "pkgload",
-  "sj156/eivGP/eivGP"
-))
-```
-
-Then install the package from that same checkout (repeat this after pulling
-changes):
+Clone this repository, then run the following from the repository root:
 
 ```sh
+Rscript --vanilla experiments/install_eivgp_dependencies.R
 R CMD INSTALL eivGP
 ```
 
+This installs eivGP's imported packages (`posterior`, `TruncatedNormal`) and
+the packages needed to render the numerical-study reports. The second command
+installs the local `eivGP` package. Repeat `R CMD INSTALL eivGP` after pulling
+changes.
+
 The documents use `library(eivGP)`, as an external user would. The package
-installs the frozen simulation source used by its public functions. If a
-required competitor is unavailable, the preflight reports the exact missing
-package; a publication run stops rather than silently changing the paper's
-comparison set.
+installs the frozen simulation source used by its public functions. Optional
+published-competitor packages are reported separately by the preflight and do
+not block EIV-GP.
 
 ### 2. Generate frozen synthetic data once
 
@@ -82,16 +75,16 @@ or [`experiments/study2_synthetic_data.Rmd`](experiments/study2_synthetic_data.R
 set `run_mode: "publication"`, and render it. Each creates the revised frozen
 design below the chosen reproduction root and refuses to overwrite existing files.
 
-The same data-only operation is available from the command line:
+From the repository root, the safest data-only command uses the built-in
+publication and `reproduction/` defaults:
 
 ```sh
-EIVGP_ARTIFACT_ROOT=/path/to/output-directory \
-EIVGP_RUN_MODE=publication \
-Rscript experiments/run_publication_study.R study1-data
+Rscript --vanilla experiments/run_publication_study.R study1-data
 ```
 
 Use `study2-data` for Study II. The generated manifests and checksums are the
-fixed inputs for every later fitting run.
+fixed inputs for every later fitting run. Set `EIVGP_ARTIFACT_ROOT` only when
+you intentionally want outputs outside `reproduction/`.
 
 ### 3. Common manual publication procedure
 
@@ -126,18 +119,17 @@ Run the read-only preflight. It must show every design cell with
 Rscript --vanilla -e 'library(eivGP); study <- Sys.getenv("STUDY"); data_root <- Sys.getenv("DATA_ROOT"); result_root <- Sys.getenv("RESULT_ROOT"); config <- if (identical(study, "study1")) study1_simulation_config(mode = "dry_run", workers = 8L, data_root = data_root, output_root = result_root) else study2_simulation_config(mode = "dry_run", workers = 8L, data_root = data_root, output_root = result_root); if (identical(study, "study1")) run_study1_simulation(config) else run_study2_simulation(config)'
 ```
 
-Start the formal fit and aggregation:
+Start the formal fit and aggregation. With the default repository-local output
+location, this avoids shell line-continuation mistakes:
 
 ```sh
-EIVGP_ARTIFACT_ROOT="$PWD/reproduction" \
-EIVGP_RUN_MODE=publication \
-EIVGP_WORKERS=8 \
 Rscript --vanilla experiments/run_publication_study.R "$STUDY"
 ```
 
 Keep the terminal open until the command exits successfully. If the machine
-does not have enough memory for eight workers, restart the final command with
-`EIVGP_WORKERS=4`. Do not treat smoke-mode output as publication output.
+does not have enough memory for eight workers, restart the final command as
+`EIVGP_WORKERS=4 Rscript --vanilla experiments/run_publication_study.R "$STUDY"`.
+Do not treat smoke-mode output as publication output.
 
 The real-data application will follow this same pattern—freeze an audited data
 bundle, run a preflight, fit through `eivGP`, then write results and a report.
@@ -165,6 +157,35 @@ while true; do clear; date; cat "$RUN_DIR/config/progress.csv"; sleep 30; done
 `config/cell_status.csv` records completed cells and elapsed times;
 `config/diagnostic_gates.csv` records their quality gates. Stop the monitor
 with `Ctrl-C`; this does not stop the experiment.
+
+After the first design cell finishes, `progress.csv` also contains elapsed
+wall-clock time, an estimated remaining time, and an estimated finish time.
+This estimate is a completed-cell average, so it is informative rather than a
+guarantee: cells and optional competitor fits can have different costs.
+
+For Study I, each EIV-GP fit also writes sampler-level ETA updates every 1,000
+iterations under `cells/<design-cell>/results/study1_publication/mcmc_progress/`.
+For example, monitor the first pilot fit with:
+
+```sh
+tail -f "$RUN_DIR/cells/eta0_balanced/results/study1_publication/mcmc_progress/pilot_rep001_calib005.log"
+```
+
+### Fast code-path demonstration (not paper reproduction)
+
+Readers who want to inspect the complete workflow quickly should use smoke
+mode. It uses separate frozen smoke data, one replication per design cell, and
+short chains; it exercises the data, fitting, aggregation, table, and figure
+code but must not be compared with or cited as the paper's results.
+
+```sh
+EIVGP_RUN_MODE=smoke Rscript --vanilla experiments/run_publication_study.R study1-data
+EIVGP_RUN_MODE=smoke Rscript --vanilla experiments/run_publication_study.R study1
+```
+
+Substitute `study2-data` and `study2` for the Study II demonstration. Formal
+publication mode retains the full frozen replication grid and strict MCMC
+diagnostic gates, and can require substantially longer runtimes.
 
 ### Study I MCMC pilot and mixing diagnostics
 

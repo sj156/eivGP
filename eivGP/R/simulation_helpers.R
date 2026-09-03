@@ -861,11 +861,28 @@ mixedgp_write_progress <- function(run_dir,
                                    cells_completed = 0L,
                                    cells_total = 0L,
                                    current_cell = "",
-                                   detail = "") {
+                                   detail = "",
+                                   run_started_at = NULL) {
   cells_completed <- as.integer(cells_completed)
   cells_total <- as.integer(cells_total)
+  now <- Sys.time()
+  elapsed_seconds <- if (is.null(run_started_at)) {
+    NA_real_
+  } else {
+    as.numeric(difftime(now, run_started_at, units = "secs"))
+  }
+  estimated_remaining_seconds <- if (
+    is.finite(elapsed_seconds) && cells_completed > 0L &&
+      cells_total > cells_completed
+  ) {
+    elapsed_seconds / cells_completed * (cells_total - cells_completed)
+  } else if (cells_completed >= cells_total && cells_total > 0L) {
+    0
+  } else {
+    NA_real_
+  }
   progress <- data.frame(
-    updated_at_utc = format(Sys.time(), tz = "UTC", usetz = TRUE),
+    updated_at_utc = format(now, tz = "UTC", usetz = TRUE),
     status = as.character(status),
     phase = as.character(phase),
     current_cell = as.character(current_cell),
@@ -875,6 +892,19 @@ mixedgp_write_progress <- function(run_dir,
       round(100 * cells_completed / cells_total, 1L)
     } else {
       NA_real_
+    },
+    elapsed_seconds = elapsed_seconds,
+    estimated_remaining_seconds = estimated_remaining_seconds,
+    estimated_finish_utc = if (is.finite(estimated_remaining_seconds)) {
+      format(now + estimated_remaining_seconds, tz = "UTC", usetz = TRUE)
+    } else {
+      NA_character_
+    },
+    estimate_basis = if (is.finite(estimated_remaining_seconds) &&
+                         cells_completed > 0L) {
+      "completed_cell_average"
+    } else {
+      "not_available"
     },
     detail = as.character(detail),
     stringsAsFactors = FALSE
@@ -887,6 +917,10 @@ mixedgp_write_progress <- function(run_dir,
     if (cells_total > 0L) paste0(
       " | ", cells_completed, "/", cells_total,
       " cells (", progress$percent_cells_complete, "%)"
+    ) else "",
+    if (is.finite(estimated_remaining_seconds)) paste0(
+      " | estimated remaining ", round(estimated_remaining_seconds / 60, 1L),
+      " min"
     ) else "",
     if (nzchar(progress$detail)) paste0(" | ", progress$detail) else ""
   )
@@ -2412,6 +2446,7 @@ mixedgp_aggregate_results <- function(results, config, run_dir) {
 
 mixedgp_run_simulation <- function(config) {
   config <- validate_simulation_config(config)
+  run_started_at <- Sys.time()
   engine <- mixedgp_simulation_engine(config$code_dir)
   preflight_fun <- get("mixedgp_competitor_preflight", envir = engine)
   preflight <- preflight_fun(config$published_methods, strict = FALSE)
@@ -2552,7 +2587,8 @@ mixedgp_run_simulation <- function(config) {
     cell <- config$cells[[ii]]
     mixedgp_write_progress(
       run_dir, "running", "fitting", ii - 1L, n_cells, cell$id,
-      "Fitting EIV-GP, competitors, and prespecified ablations."
+      "Fitting EIV-GP, competitors, and prespecified ablations.",
+      run_started_at = run_started_at
     )
     message(
       "Running ", config$study, " cell ", ii, "/", length(config$cells),
@@ -2580,7 +2616,7 @@ mixedgp_run_simulation <- function(config) {
       )
       mixedgp_write_progress(
         run_dir, "failed", "fitting", ii - 1L, n_cells, cell$id,
-        conditionMessage(answer)
+        conditionMessage(answer), run_started_at = run_started_at
       )
       stop("Simulation cell ", cell$id, " failed: ", conditionMessage(answer))
     }
@@ -2611,12 +2647,13 @@ mixedgp_run_simulation <- function(config) {
     )
     mixedgp_write_progress(
       run_dir, cell_status, "fitting", ii, n_cells, cell$id,
-      paste0("Cell finished in ", round(elapsed, 1L), " seconds.")
+      paste0("Cell finished in ", round(elapsed, 1L), " seconds."),
+      run_started_at = run_started_at
     )
     if (isTRUE(config$fail_closed) && gate_failed) {
       mixedgp_write_progress(
         run_dir, "failed", "diagnostic_gates", ii, n_cells, cell$id,
-        paste(failed_gates, collapse = "; ")
+        paste(failed_gates, collapse = "; "), run_started_at = run_started_at
       )
       stop(
         "Publication gates failed for ", cell$id, ": ",
@@ -2628,7 +2665,8 @@ mixedgp_run_simulation <- function(config) {
   combined <- if ("aggregate" %in% config$stages) {
     mixedgp_write_progress(
       run_dir, "running", "aggregation", n_cells, n_cells,
-      detail = "Writing combined results, comparisons, tables, and figures."
+      detail = "Writing combined results, comparisons, tables, and figures.",
+      run_started_at = run_started_at
     )
     mixedgp_aggregate_results(results, config, run_dir)
   } else {

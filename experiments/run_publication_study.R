@@ -57,6 +57,26 @@ artifact_root <- Sys.getenv(
 artifact_root <- normalizePath(
   artifact_root, winslash = "/", mustWork = FALSE
 )
+
+## R CMD INSTALL validates Imports but intentionally does not download them.
+## Check all package-load and report-rendering requirements before opening the
+## numerical document, so users get one actionable setup message.
+required_runtime <- c(
+  "posterior", "TruncatedNormal", "rmarkdown", "knitr",
+  "ggplot2", "dplyr", "tidyr", "patchwork"
+)
+missing_runtime <- required_runtime[
+  !vapply(required_runtime, requireNamespace, logical(1L), quietly = TRUE)
+]
+if (length(missing_runtime)) {
+  stop(
+    "Required eivGP reproduction package(s) are missing: ",
+    paste(missing_runtime, collapse = ", "), ". Run:\n  Rscript --vanilla ",
+    file.path(repository_dir, "experiments", "install_eivgp_dependencies.R"),
+    "\nthen reinstall eivGP with:\n  R CMD INSTALL eivGP",
+    call. = FALSE
+  )
+}
 study_document <- file.path(repository_dir, "experiments", if (data_only) {
   paste0(study, "_synthetic_data.Rmd")
 } else {

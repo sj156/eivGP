@@ -1,0 +1,38 @@
+R version 4.6.0 (2026-04-24)
+Platform: aarch64-apple-darwin23
+Running under: macOS Tahoe 26.5.1
+
+Matrix products: default
+BLAS:   /Library/Frameworks/R.framework/Versions/4.6/Resources/lib/libRblas.0.dylib 
+LAPACK: /Library/Frameworks/R.framework/Versions/4.6/Resources/lib/libRlapack.dylib;  LAPACK version 3.12.1
+
+locale:
+[1] en_US.UTF-8/en_US.UTF-8/en_US.UTF-8/C/en_US.UTF-8/en_US.UTF-8
+
+time zone: Asia/Shanghai
+tzcode source: internal
+
+attached base packages:
+[1] stats     graphics  grDevices utils     datasets  methods   base     
+
+other attached packages:
+[1] eivGP_0.1.0
+
+loaded via a namespace (and not attached):
+ [1] gtable_0.3.6         jsonlite_2.0.0       dplyr_1.2.1         
+ [4] compiler_4.6.0       Rcpp_1.1.1-1.1       tidyselect_1.2.1    
+ [7] nleqslv_3.3.7        tidyr_1.3.2          jquerylib_0.1.4     
+[10] scales_1.4.0         yaml_2.3.12          fastmap_1.2.0       
+[13] alabama_2025.1.0     ggplot2_4.0.3        R6_2.6.1            
+[16] generics_0.1.4       distributional_0.8.1 knitr_1.51          
+[19] backports_1.5.1      checkmate_2.3.4      tibble_3.3.1        
+[22] bslib_0.11.0         pillar_1.11.1        RColorBrewer_1.1-3  
+[25] posterior_1.7.0      rlang_1.2.0          cachem_1.1.0        
+[28] xfun_0.57            sass_0.4.10          S7_0.2.2            
+[31] TruncatedNormal_2.3  otel_0.2.0           cli_3.6.6           
+[34] magrittr_2.0.5       digest_0.6.39        grid_4.6.0          
+[37] lifecycle_1.0.5      vctrs_0.7.3          tensorA_0.36.2.1    
+[40] evaluate_1.0.5       glue_1.8.1           numDeriv_2016.8-1.1 
+[43] farver_2.1.2         abind_1.4-8          spacefillr_0.4.0    
+[46] rmarkdown_2.31       purrr_1.2.2          qrng_0.0-11         
+[49] tools_4.6.0          pkgconfig_2.0.3      htmltools_0.5.9     

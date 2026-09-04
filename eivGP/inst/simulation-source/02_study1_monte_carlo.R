@@ -8,10 +8,10 @@
 ## the explicit archival switch STUDY1_REUSE_LOCKED_EIV=TRUE.
 ############################################################
 
-if (!exists("fit_eivgp_1d")) source("00_study1_functions.R")
-if (!exists("load_mixedgp_synthetic_dataset")) source("00_synthetic_data.R")
+if (!exists("fit_eivgp_1d")) source("model_univariate.R")
+if (!exists("load_mixedgp_synthetic_dataset")) source("reproduction_data.R")
 if (!exists("run_study1_published_competitors")) {
-  source("03_study2_published_competitors.R")
+  source("competitors.R")
 }
 if (!exists("STUDY1_RUN_ABLATIONS")) STUDY1_RUN_ABLATIONS <- TRUE
 if (!exists("STUDY1_EVALUATE_F")) STUDY1_EVALUATE_F <- TRUE
@@ -56,6 +56,7 @@ if (!exists("STUDY1_REQUIRE_MCMC_GATE")) {
 }
 if (!exists("STUDY1_MAX_RHAT")) STUDY1_MAX_RHAT <- 1.05
 if (!exists("STUDY1_MIN_ESS")) STUDY1_MIN_ESS <- 100
+if (!exists("STUDY1_ADAPTIVE_MCMC")) STUDY1_ADAPTIVE_MCMC <- NULL
 if (!exists("STUDY1_MCMC_PILOT_REPS")) STUDY1_MCMC_PILOT_REPS <- 0L
 if (!exists("STUDY1_STRICT_COMPETITORS")) {
   STUDY1_STRICT_COMPETITORS <- identical(STUDY1_CONFIG, "thorough")
@@ -328,7 +329,8 @@ STUDY1_CACHE_SPEC <- list(
   mcmc = list(
     n_iter = settings$n_iter, burn = settings$burn,
     n_chains = settings$n_chains, preset = settings$preset,
-    rhat_limit = STUDY1_MAX_RHAT, ess_limit = STUDY1_MIN_ESS
+    rhat_limit = STUDY1_MAX_RHAT, ess_limit = STUDY1_MIN_ESS,
+    adaptive = STUDY1_ADAPTIVE_MCMC
   ),
   prediction = list(n_draw = n_pred_draw),
   mean_recovery = list(
@@ -431,6 +433,7 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
   ablation_status <- list()
   measurement_fits <- list()
   mcmc_diagnostics <- list()
+  mcmc_schedules <- list()
   sampler_controls <- list()
   sampler_control_manifest <- list()
 
@@ -664,7 +667,8 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
         progress_file = file.path(
           MCMC_PROGRESS_DIR,
           sprintf("rep%03d_calib%03d.log", rep_id, n_calib)
-        )
+        ),
+        adaptive_control = STUDY1_ADAPTIVE_MCMC
       )
       control_key <- as.character(n_calib)
       sampler_controls[[control_key]] <- list(
@@ -706,6 +710,40 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
       diag_row$gate_applicable <- gate_applicable
       diag_row$gate_pass <- gate_pass
       mcmc_diagnostics[[as.character(n_calib)]] <- diag_row
+      schedule_row <- fit_eiv$mcmc$adaptive_schedule
+      if (is.data.frame(schedule_row) && nrow(schedule_row) > 0L) {
+        schedule_row$rep <- rep_id
+        schedule_row$n_calib <- n_calib
+        schedule_row$scenario <- STUDY1_SCENARIO
+        mcmc_schedules[[as.character(n_calib)]] <- schedule_row
+      }
+      anchored_grid <- calib_grid[calib_grid > 0L]
+      diagnostic_calibrations <- if (length(anchored_grid) > 0L) {
+        unique(c(min(anchored_grid), max(anchored_grid)))
+      } else {
+        integer(0)
+      }
+      if (rep_id == 1L && n_calib %in% diagnostic_calibrations &&
+          exists("plot_eivgp_mcmc_diagnostics", mode = "function")) {
+        diagnostic_plots <- plot_eivgp_mcmc_diagnostics(
+          fit_eiv, max_draws = 1000L, max_lag = 60L, max_latent = 2L
+        )
+        diagnostic_stub <- sprintf(
+          "study1_mcmc_rep%03d_calib%03d", rep_id, n_calib
+        )
+        ggplot2::ggsave(
+          file.path(FIG_DIR, paste0(diagnostic_stub, "_trace.pdf")),
+          diagnostic_plots$trace, width = 12, height = 9
+        )
+        ggplot2::ggsave(
+          file.path(FIG_DIR, paste0(diagnostic_stub, "_acf.pdf")),
+          diagnostic_plots$autocorrelation, width = 12, height = 9
+        )
+        ggplot2::ggsave(
+          file.path(FIG_DIR, paste0(diagnostic_stub, "_rank.pdf")),
+          diagnostic_plots$rank, width = 12, height = 9
+        )
+      }
       draw_ids <- seq_len(nrow(fit_eiv$mcmc$samples_u))
       if (length(draw_ids) > n_pred_draw) {
         set.seed(350000L + 1000L * rep_id + n_calib)
@@ -792,6 +830,7 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
     ablation_metrics = bind_rows(ablation_metrics),
     ablation_status = ablation_status_df,
     mcmc_diagnostics = bind_rows(mcmc_diagnostics),
+    mcmc_schedule = bind_rows(mcmc_schedules),
     sampler_control_manifest = bind_rows(sampler_control_manifest),
     mean_recovery = bind_rows(mean_metrics),
     latent_imputation = bind_rows(latent_imputation_metrics),
@@ -847,7 +886,8 @@ run_study1_mcmc_pilot <- function(rep_id) {
         progress_file = file.path(
           MCMC_PROGRESS_DIR,
           sprintf("pilot_rep%03d_calib%03d.log", rep_id, n_calib)
-        )
+        ),
+        adaptive_control = STUDY1_ADAPTIVE_MCMC
       )
       summary <- fit$diagnostics$summary
       rhat_values <- unlist(
@@ -1038,6 +1078,7 @@ competitor_status <- bind_rows(
 ablation_results <- bind_rows(lapply(successful_rep_objects, `[[`, "ablation_metrics"))
 ablation_status <- bind_rows(lapply(successful_rep_objects, `[[`, "ablation_status"))
 mcmc_diagnostics <- bind_rows(lapply(successful_rep_objects, `[[`, "mcmc_diagnostics"))
+mcmc_schedule <- bind_rows(lapply(successful_rep_objects, `[[`, "mcmc_schedule"))
 sampler_control_manifest <- bind_rows(
   lapply(successful_rep_objects, `[[`, "sampler_control_manifest")
 )
@@ -1051,6 +1092,13 @@ if (nrow(mcmc_diagnostics) > 0L) {
   write.csv(
     mcmc_diagnostics,
     file.path(TAB_DIR, "study1_mcmc_diagnostics.csv"),
+    row.names = FALSE
+  )
+}
+if (nrow(mcmc_schedule) > 0L) {
+  write.csv(
+    mcmc_schedule,
+    file.path(TAB_DIR, "study1_mcmc_schedule.csv"),
     row.names = FALSE
   )
 }

@@ -6,14 +6,14 @@
 ## This script produces only figures and tables used by the manuscript.  It
 ## deliberately excludes the home-built embedding methods used in early pilot
 ## runs.  Published competitors enter only through audited adapters in
-## 03_study2_published_competitors.R, with failures recorded explicitly.
+## competitors.R, with failures recorded explicitly.
 ############################################################
 
 if (!exists("fit_eivgp_ordprobit_fb")) {
-  source("00_study2_functions.R")
+  source("model_multivariate.R")
 }
 if (!exists("run_study2_published_competitors")) {
-  source("03_study2_published_competitors.R")
+  source("competitors.R")
 }
 
 needed_pkgs <- c("ggplot2", "patchwork", "dplyr", "tidyr", "knitr")

@@ -1,0 +1,19 @@
+# Univariate latent-input model
+
+This reusable engine handles one latent continuous input represented by one
+ordinal proxy, together with any number of numeric predictors. Study I is one
+configured use of this model; the fitting and prediction code itself is not
+study-specific.
+
+```{r copy-study1-engine, include=FALSE}
+repository_dir <- dirname(knitr::current_input(dir = TRUE))
+source_file <- file.path(
+  repository_dir, "script", "newly-written-and-modified-scripts",
+  "model_univariate.R"
+)
+target_file <- file.path(usethis::proj_get(), "R", basename(source_file))
+stopifnot(file.copy(source_file, target_file, overwrite = TRUE))
+stopifnot(identical(
+  unname(tools::md5sum(source_file)), unname(tools::md5sum(target_file))
+))
+```

@@ -12,7 +12,7 @@
 ############################################################
 
 if (!exists("fit_eivgp_1d")) {
-  source("00_study1_functions.R")
+  source("model_univariate.R")
 }
 
 needed_pkgs <- c("ggplot2", "patchwork", "dplyr", "tidyr", "knitr")

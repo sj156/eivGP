@@ -1,7 +1,8 @@
-# Core utilities and frozen data
+# Shared foundations
 
-Deterministic parallel mapping, validation helpers, and versioned synthetic
-datasets are shared by both scientific engines.
+Numerical linear algebra, posterior diagnostics, scoring rules, deterministic
+parallel mapping, validation helpers, and versioned reproduction data are
+shared by both model engines.
 
 ```{r copy-core-utilities, include=FALSE}
 repository_dir <- dirname(knitr::current_input(dir = TRUE))
@@ -9,7 +10,7 @@ source_dir <- file.path(
   repository_dir, "script", "newly-written-and-modified-scripts"
 )
 package_r_dir <- file.path(usethis::proj_get(), "R")
-modules <- c("00_parallel_utils.R", "00_synthetic_data.R")
+modules <- c("core_parallel.R", "core_numerics.R", "reproduction_data.R")
 copied <- file.copy(
   file.path(source_dir, modules),
   file.path(package_r_dir, modules),

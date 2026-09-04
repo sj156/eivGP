@@ -191,6 +191,81 @@ testthat::test_that("parallel maps are reproducible", {
   testthat::expect_identical(serial_m, parallel_m)
 })
 
+testthat::test_that("adaptive MCMC projects bounded continuation lengths", {
+  control <- mixedgp_adaptive_mcmc_control(
+    initial_draws = 5000L,
+    target_ess = 200,
+    max_draws = 15000L,
+    extension_draws = 1000L
+  )
+  extend <- mixedgp_adaptive_next_draws(
+    current_draws = 5000L,
+    observed_ess = 25,
+    control = control,
+    n_chains = 4L
+  )
+  stop_now <- mixedgp_adaptive_next_draws(
+    current_draws = 5000L,
+    observed_ess = 55,
+    control = control,
+    n_chains = 4L
+  )
+  testthat::expect_equal(extend$next_draws, 10000L)
+  testthat::expect_equal(stop_now$next_draws, 5000L)
+  testthat::expect_equal(stop_now$reason, "ess_target_met")
+})
+
+testthat::test_that("Study I adaptive MCMC continues without restarting", {
+  set.seed(4113)
+  n <- 18L
+  x <- seq(-1, 1, length.out = n)
+  u <- stats::rnorm(n)
+  c_ord <- cut(u, c(-Inf, -0.4, 0.4, Inf), labels = FALSE)
+  y <- sin(x) + u + stats::rnorm(n, sd = 0.1)
+  fit <- fit_eivgp_1d(
+    x, y, c_ord, u_true = u, calib_idx = 1:6, m = 3L,
+    n_iter = 25L, burn = 5L, thin = 1L, n_chains = 1L,
+    preset = "fast", parallel_chains = FALSE,
+    adaptive_control = list(
+      initial_draws = 10L, target_ess = 100,
+      max_draws = 20L, extension_draws = 5L
+    )
+  )
+  testthat::expect_equal(fit$mcmc$chain_stats$saved, 20L)
+  testthat::expect_equal(fit$mcmc$chain_stats$iterations_run, 25L)
+  testthat::expect_true(fit$mcmc$chain_stats$adaptive_extensions >= 1L)
+  testthat::expect_true(nrow(fit$mcmc$adaptive_schedule) >= 2L)
+  testthat::expect_true(length(fit$mcmc$chain_final[[1L]]$rng_state) > 1L)
+})
+
+testthat::test_that("Study II uses the shared adaptive MCMC protocol", {
+  set.seed(4114)
+  n <- 18L
+  X <- matrix(seq(-1, 1, length.out = n), ncol = 1L)
+  U <- cbind(stats::rnorm(n), stats::rnorm(n))
+  C <- cbind(
+    cut(U[, 1L], c(-Inf, -0.3, 0.3, Inf), labels = FALSE),
+    cut(U[, 2L], c(-Inf, -0.3, 0.3, Inf), labels = FALSE)
+  )
+  y <- X[, 1L] + U[, 1L] - 0.5 * U[, 2L] + stats::rnorm(n, sd = 0.2)
+  fit <- fit_eivgp_ordprobit_fb(
+    X, y, C, U_obs = U, calib_idx = 1:8,
+    d = 2L, m_vec = c(3L, 3L),
+    n_iter = 15L, burn = 5L, thin = 1L, n_chains = 1L,
+    preset = "fast", sampler_strategy = "legacy",
+    parallel_chains = FALSE, store_scores = FALSE,
+    adaptive_control = list(
+      initial_draws = 6L, target_ess = 100,
+      max_draws = 10L, extension_draws = 2L
+    )
+  )
+  testthat::expect_equal(fit$mcmc$chain_stats$saved, 10L)
+  testthat::expect_equal(fit$mcmc$chain_stats$iterations_run, 15L)
+  testthat::expect_true(fit$mcmc$chain_stats$adaptive_extensions >= 1L)
+  testthat::expect_true(nrow(fit$mcmc$adaptive_schedule) >= 2L)
+  testthat::expect_true(length(fit$mcmc$chain_final[[1L]]$rng_state) > 1L)
+})
+
 testthat::test_that("seeded parallel maps preserve the caller RNG stream", {
   set.seed(4101)
   expected_lapply_continuation <- stats::runif(4)
@@ -346,10 +421,10 @@ testthat::test_that("package loading has no reporting or thread side effects", {
       "search_before <- search()",
       "env_before <- Sys.getenv(thread_vars, unset = NA_character_)",
       "source_modules <- c(",
-      "  '00_parallel_utils.R', '00_study1_functions.R',",
-      "  '00_study2_functions.R', '03_study2_published_competitors.R',",
-      "  '00_synthetic_data.R', '00_public_api.R',",
-      "  '00_experiment_runner.R')",
+      "  'core_parallel.R', 'core_numerics.R', 'model_univariate.R',",
+      "  'model_multivariate.R', 'competitors.R',",
+      "  'reproduction_data.R', 'model_api.R',",
+      "  'reproduction_compat.R')",
       "source_paths <- file.path(package_path, 'R', source_modules)",
       "if (all(file.exists(source_paths))) {",
       "  package_env <- new.env(parent = baseenv())",

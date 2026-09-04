@@ -2,7 +2,7 @@
 
 For the publication simulations, start with
 [`PUBLICATION_SIMULATIONS.md`](PUBLICATION_SIMULATIONS.md). The current
-publication interface is one helper bundle (`simulation_helpers.R`) and one
+publication interface is one helper bundle (`reproduction_workflows.R`) and one
 master script per study (`run_study1_simulation.R` and
 `run_study2_simulation.R`). Both masters default to a read-only dry run.
 
@@ -28,7 +28,7 @@ library is not stored beside the project root. Optional `MIXEDGP_DATA_ROOT`
 and `MIXEDGP_OUTPUT_ROOT` variables place large workstation artifacts outside
 the synchronized Overleaf tree without changing the masters.
 
-`simulation_helpers.R` is the single source of truth for design cells, seeds,
+`reproduction_workflows.R` is the single source of truth for design cells, seeds,
 task eligibility, frozen-data checks, dispatch, gates, aggregation, and paired
 comparisons. The masters contain only the user-editable run configuration and
 one function call. The scientific posterior engines remain separate because
@@ -37,15 +37,15 @@ simulation layer.
 
 ## Canonical modules
 
-- `00_public_api.R`: package-facing EIV-GP and competitor calls.
-- `simulation_helpers.R`: publication design and orchestration bundle.
+- `model_api.R`: package-facing EIV-GP and competitor calls.
+- `reproduction_workflows.R`: publication design and orchestration bundle.
 - `run_study1_simulation.R` and `run_study2_simulation.R`: publication masters.
-- `00_experiment_runner.R`: package-facing and historical unified workflow.
-- `00_parallel_utils.R`: deterministic `mclapply`/`mcmapply` wrappers.
-- `00_synthetic_data.R`: versioned frozen datasets and checksum manifests.
-- `00_study1_functions.R` and `00_study2_functions.R`: posterior engines.
-- `03_study2_published_competitors.R`: audited public-package adapters shared
-  by both studies; the historical filename is retained for compatibility.
+- `reproduction_compat.R`: package-facing and historical unified workflow.
+- `core_parallel.R`: deterministic `mclapply`/`mcmapply` wrappers.
+- `core_numerics.R`: shared linear algebra, diagnostics, and scoring utilities.
+- `reproduction_data.R`: versioned frozen datasets and checksum manifests.
+- `model_univariate.R` and `model_multivariate.R`: reusable posterior engines.
+- `competitors.R`: audited public-package adapters shared by both studies.
 - `08_published_competitor_validation.R`: exact small-data fit and prediction
   checks for every published competitor adapter.
 - `09_experiment_design_validation.R`: exact paired-design and nested-proxy

@@ -1,5 +1,9 @@
 # eivGP 0.1.0
 
+- Consolidated package code into responsibility-based univariate,
+  multivariate, shared-numerics, parallel, API, and reproduction modules.
+- Added a shared adaptive MCMC continuation protocol for both numerical
+  studies, with retained state, ESS schedules, timing, and progress logs.
 - Added stable fitting, prediction, imputation, and competitor interfaces.
 - Added installed-package Study I and Study II publication runners.
 - Added frozen-data checksums, source fingerprints, resumable outputs,

@@ -14,10 +14,12 @@ documentclass: book
 # Literate package source
 
 The explicitly ordered `.Rmd` chapters are the authoritative package-building
-source for `eivGP`. Their maintained computational payload is kept under
-`script/newly-written-and-modified-scripts/`; every chapter identifies and
-copies one coherent module into the generated package. Historical R scripts
-are clearly separated under `script/legacy-code-scripts/`.
+source for `eivGP`. Their maintained computational payload is organized by
+general responsibility under `script/newly-written-and-modified-scripts/`:
+shared numerics and parallelism, univariate and multivariate model engines, a
+unified model API, application interfaces, optional competitors, and isolated
+reproduction workflows. Historical R scripts are clearly separated under
+`script/legacy-code-scripts/`.
 
 The package book never launches publication-scale computation. Standalone
 reproduction documents live under `experiments/` and `applications/`; they

@@ -15,11 +15,11 @@
 ############################################################
 
 if (!exists("fit_eivgp_ordprobit_fb")) {
-  source("00_study2_functions.R")
+  source("model_multivariate.R")
 }
-if (!exists("load_mixedgp_synthetic_dataset")) source("00_synthetic_data.R")
+if (!exists("load_mixedgp_synthetic_dataset")) source("reproduction_data.R")
 if (!exists("run_study2_published_competitors")) {
-  source("03_study2_published_competitors.R")
+  source("competitors.R")
 }
 if (!exists("STUDY2_RUN_ABLATIONS")) STUDY2_RUN_ABLATIONS <- TRUE
 if (!exists("STUDY2_EVALUATE_F")) STUDY2_EVALUATE_F <- TRUE
@@ -81,6 +81,7 @@ if (!exists("STUDY2_PRIMARY_CALIB_GRID")) {
 }
 if (!exists("STUDY2_CONTRAST_CALIB")) STUDY2_CONTRAST_CALIB <- 25L
 if (!exists("STUDY2_MC_N_REP")) STUDY2_MC_N_REP <- NULL
+if (!exists("STUDY2_ADAPTIVE_MCMC")) STUDY2_ADAPTIVE_MCMC <- NULL
 if (!exists("STUDY2_DATA_DIR")) {
   STUDY2_DATA_DIR <- file.path("..", "data-synthetic", "study2")
 }
@@ -351,8 +352,10 @@ TAB_DIR <- file.path(STUDY2_OUT_PREFIX, "tables")
 RES_DIR <- file.path(STUDY2_OUT_PREFIX, "results", "study2_manuscript_v5")
 REP_DIR <- file.path(RES_DIR, "mc_replications")
 FIT_DIR <- file.path(RES_DIR, "mc_fits")
+MCMC_PROGRESS_DIR <- file.path(RES_DIR, "mcmc_progress")
 
-for (dd in c(FIG_DIR, TAB_DIR, RES_DIR, REP_DIR, FIT_DIR)) {
+for (dd in c(FIG_DIR, TAB_DIR, RES_DIR, REP_DIR, FIT_DIR,
+             MCMC_PROGRESS_DIR)) {
   dir.create(dd, showWarnings = FALSE, recursive = TRUE)
 }
 
@@ -384,7 +387,8 @@ CACHE_SPEC <- list(
     raw_ess_limit = STUDY2_MCMC_RAW_ESS_LIMIT,
     target_bulk_ess_limit = STUDY2_MCMC_TARGET_BULK_ESS_LIMIT,
     target_tail_ess_limit = STUDY2_MCMC_TARGET_TAIL_ESS_LIMIT,
-    target_n_points = STUDY2_MCMC_TARGET_N_POINTS
+    target_n_points = STUDY2_MCMC_TARGET_N_POINTS,
+    adaptive = STUDY2_ADAPTIVE_MCMC
   ),
   prediction = list(
     n_draw = n_pred_draw,
@@ -826,6 +830,7 @@ run_one_study2_replication <- function(rep_id, scenario) {
   }
 
   diagnostics <- list()
+  mcmc_schedules <- list()
   target_diagnostics <- list()
   imputation <- list()
   imputation_status <- list()
@@ -866,7 +871,16 @@ run_one_study2_replication <- function(rep_id, scenario) {
       store_scores = FALSE,
       seed = fit_seed_base + 1000L + n_calib,
       parallel_chains = parallel_chains,
-      verbose = FALSE
+      verbose = FALSE,
+      progress_every = 1000L,
+      progress_label = sprintf(
+        "Study II %s rep %03d |O|=%d", scenario, rep_id, n_calib
+      ),
+      progress_file = file.path(
+        MCMC_PROGRESS_DIR,
+        sprintf("%s_rep%03d_calib%03d.log", scenario, rep_id, n_calib)
+      ),
+      adaptive_control = STUDY2_ADAPTIVE_MCMC
     )
 
     draw_ids <- seq_len(dim(fit$mcmc$samples_U)[1])
@@ -1026,6 +1040,13 @@ run_one_study2_replication <- function(rep_id, scenario) {
       raw_coordinate_pass
     }
     diagnostics[[as.character(n_calib)]] <- diag_row
+    schedule_row <- fit$mcmc$adaptive_schedule
+    if (is.data.frame(schedule_row) && nrow(schedule_row) > 0L) {
+      schedule_row$rep <- rep_id
+      schedule_row$scenario <- scenario
+      schedule_row$n_calib <- n_calib
+      mcmc_schedules[[as.character(n_calib)]] <- schedule_row
+    }
 
     if (isTRUE(STUDY2_EVALUATE_U)) {
       imputation[[paste0("EIV_training_", n_calib)]] <-
@@ -1562,6 +1583,7 @@ run_one_study2_replication <- function(rep_id, scenario) {
     mean_truth_rejection = mean_truth_rejection,
     mean_truth_diagnostics = mean_truth_diagnostics,
     diagnostics = bind_rows(diagnostics),
+    mcmc_schedule = bind_rows(mcmc_schedules),
     target_diagnostics = bind_rows(target_diagnostics),
     imputation = bind_rows(c(imputation, ablation_imputation)),
     imputation_status = bind_rows(imputation_status),
@@ -1716,6 +1738,9 @@ mc_mean_truth_diagnostics <- bind_rows(
   lapply(successful_rep_objects, `[[`, "mean_truth_diagnostics")
 )
 mc_diagnostics <- bind_rows(lapply(successful_rep_objects, `[[`, "diagnostics"))
+mc_mcmc_schedule <- bind_rows(
+  lapply(successful_rep_objects, `[[`, "mcmc_schedule")
+)
 mc_target_diagnostics <- bind_rows(
   lapply(successful_rep_objects, `[[`, "target_diagnostics")
 )
@@ -1749,6 +1774,7 @@ raw_outputs <- list(
   mean_truth_rejection = mc_mean_truth_rejection,
   mean_truth_diagnostics = mc_mean_truth_diagnostics,
   mcmc_diagnostics = mc_diagnostics,
+  mcmc_schedule = mc_mcmc_schedule,
   mcmc_target_diagnostics = mc_target_diagnostics,
   latent_imputation = mc_imputation,
   latent_imputation_status = mc_imputation_status,
@@ -1774,6 +1800,11 @@ write.csv(mc_mean_recovery, file.path(TAB_DIR, paste0("study2_mean_recovery_raw_
 write.csv(mc_mean_truth_rejection, file.path(TAB_DIR, paste0("study2_mean_truth_rejection_", CACHE_TAG, ".csv")), row.names = FALSE)
 write.csv(mc_mean_truth_diagnostics, file.path(TAB_DIR, paste0("study2_mean_truth_diagnostics_", CACHE_TAG, ".csv")), row.names = FALSE)
 write.csv(mc_diagnostics, file.path(TAB_DIR, paste0("study2_mcmc_diagnostics_", CACHE_TAG, ".csv")), row.names = FALSE)
+write.csv(
+  mc_mcmc_schedule,
+  file.path(TAB_DIR, paste0("study2_mcmc_schedule_", CACHE_TAG, ".csv")),
+  row.names = FALSE
+)
 write.csv(
   mc_target_diagnostics,
   file.path(
@@ -1971,6 +2002,7 @@ write.csv(
   row.names = FALSE
 )
 
+if (nrow(mean_summary) > 0L) {
 p_mean <- mean_summary |>
   filter(metric %in% c("RMSE", "MAE", "Bias")) |>
   ggplot(aes(n_calib, mean, color = method, group = method)) +
@@ -1994,6 +2026,7 @@ save_plot(
   width = 11,
   height = 9
 )
+}
 
 mc_overall <- mc_results |>
   filter(evaluation_stratum == "overall")
@@ -2588,6 +2621,7 @@ plot_summary <- bind_rows(varying_rows, fixed_rows)
 plot_summary$metric <- factor(plot_summary$metric, levels = metric_levels)
 plot_summary$method <- factor(plot_summary$method, levels = method_levels)
 
+if (nrow(plot_summary) > 0L) {
 p_primary <- ggplot(
   plot_summary,
   aes(x = n_calib, y = mean, color = method, group = method)
@@ -2625,6 +2659,7 @@ save_plot(
   width = 12,
   height = 7.5
 )
+}
 
 contrast_crps <- metric_summary |>
   filter(
@@ -2646,6 +2681,7 @@ contrast_crps <- metric_summary |>
     method = factor(method, levels = method_levels)
   )
 
+if (nrow(contrast_crps) > 0L) {
 p_contrast <- ggplot(
   contrast_crps,
   aes(x = method, y = mean, color = method)
@@ -2664,6 +2700,7 @@ save_plot(
   width = 11,
   height = 6.5
 )
+}
 
 ############################################################
 ## Publication gates

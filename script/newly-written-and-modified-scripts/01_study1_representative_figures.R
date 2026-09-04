@@ -5,10 +5,10 @@
 ############################################################
 
 if (!exists("fit_eivgp_1d")) {
-  source("00_study1_functions.R")
+  source("model_univariate.R")
 }
 if (!exists("run_study1_published_competitors")) {
-  source("03_study2_published_competitors.R")
+  source("competitors.R")
 }
 
 needed_pkgs <- c("ggplot2", "dplyr", "tidyr", "knitr")

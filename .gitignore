@@ -12,3 +12,4 @@ applications/*_cache/
 applications/*_files/
 applications/*.html
 .Rproj.user/
+.Rhistory

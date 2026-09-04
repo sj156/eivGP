@@ -1,0 +1,75 @@
+# Reproduction workflows
+
+The current publication workflow has one configuration constructor and one
+runner per study. Configurations freeze design cells, seeds, eligible methods,
+MCMC controls, checksums, and diagnostic gates. Both runners default to a
+read-only dry run. Smoke and publication fits automatically run the exact
+published-competitor and paired-design validators before data generation or
+fitting. External competitor failures are retained as auditable status records
+without preventing EIV-GP MCMC; the EIV-GP convergence gate remains mandatory.
+
+```{r copy-publication-api, include=FALSE}
+repository_dir <- dirname(knitr::current_input(dir = TRUE))
+source_dir <- file.path(
+  repository_dir, "script", "newly-written-and-modified-scripts"
+)
+source_file <- file.path(source_dir, "reproduction_workflows.R")
+target_file <- file.path(usethis::proj_get(), "R", basename(source_file))
+stopifnot(file.copy(source_file, target_file, overwrite = TRUE))
+stopifnot(identical(
+  unname(tools::md5sum(source_file)), unname(tools::md5sum(target_file))
+))
+```
+
+The exact scripts hashed and sourced by the publication engine are installed
+with the package. This preserves the same source-identity checks when `eivGP`
+is called outside a development checkout. Validator outputs and their status
+are written under the fingerprinted run's `config/` directory.
+
+```{r install-publication-resources, include=FALSE}
+simulation_resources <- c(
+  "core_parallel.R",
+  "core_numerics.R",
+  "model_api.R",
+  "model_univariate.R",
+  "model_multivariate.R",
+  "competitors.R",
+  "reproduction_data.R",
+  "04_study1_ablations.R",
+  "04_study2_ablations.R",
+  "08_published_competitor_validation.R",
+  "09_experiment_design_validation.R",
+  "02_study1_monte_carlo.R",
+  "02_study2_monte_carlo.R",
+  "reproduction_workflows.R",
+  "run_study1_simulation.R",
+  "run_study2_simulation.R",
+  "run_study1_all.R",
+  "run_study2_all.R",
+  "README.md",
+  "PUBLICATION_SIMULATIONS.md"
+)
+simulation_dir <- file.path(
+  usethis::proj_get(), "inst", "simulation-source"
+)
+dir.create(simulation_dir, recursive = TRUE, showWarnings = FALSE)
+copied <- file.copy(
+  file.path(source_dir, simulation_resources),
+  file.path(simulation_dir, simulation_resources),
+  overwrite = TRUE
+)
+stopifnot(all(copied))
+stopifnot(identical(
+  unname(tools::md5sum(file.path(source_dir, simulation_resources))),
+  unname(tools::md5sum(file.path(simulation_dir, simulation_resources)))
+))
+```
+
+```{r publication-api-example, eval=FALSE}
+study1 <- eivGP::run_study1_simulation(
+  eivGP::study1_simulation_config(mode = "publication", workers = 8L)
+)
+study2 <- eivGP::run_study2_simulation(
+  eivGP::study2_simulation_config(mode = "publication", workers = 8L)
+)
+```

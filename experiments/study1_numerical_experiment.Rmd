@@ -25,6 +25,13 @@ methods, then aggregates the results. Smoke and publication fits automatically
 run the exact published-competitor and paired-design validators; publication
 mode requires every competitor validation to succeed.
 
+The main EIV-GP sampler retains 5,000 post-warmup draws, checks key-parameter
+ESS, and continues the same chain in projected 1,000-draw increments when
+needed, up to 15,000 retained draws by default. Independent frozen
+replications are parallel; chains within each replication are serial. The
+outputs record actual iterations, ESS, R-hat, elapsed time, and every
+continuation decision.
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
   echo = TRUE, message = TRUE, warning = TRUE,

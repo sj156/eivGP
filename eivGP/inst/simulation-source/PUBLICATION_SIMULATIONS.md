@@ -2,12 +2,12 @@
 
 The publication workflow has three entry files:
 
-- `simulation_helpers.R`: the only simulation helper/orchestration bundle;
+- `reproduction_workflows.R`: the only simulation helper/orchestration bundle;
 - `run_study1_simulation.R`: the Study I master;
 - `run_study2_simulation.R`: the Study II master.
 
-The posterior engines remain in `00_study1_functions.R` and
-`00_study2_functions.R` as the maintained payload selected by the
+The posterior engines remain in `model_univariate.R` and
+`model_multivariate.R` as the maintained payload selected by the
 authoritative root `.Rmd` package chapters.
 Master scripts do not source the historical representative, pilot, or unified
 runner entry points.

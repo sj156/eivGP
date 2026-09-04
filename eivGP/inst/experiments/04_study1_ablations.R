@@ -8,7 +8,7 @@
 ############################################################
 
 if (!exists("rtruncnorm_vec") || !exists("gp_mle_fit_1d")) {
-  source("00_study1_functions.R")
+  source("model_univariate.R")
 }
 
 initial_thresholds_response_free <- function(c_ord,

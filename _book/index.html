@@ -12,7 +12,7 @@
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Creating the eivGP R package">
 <meta name="author" content="eivGP authors">
-<meta name="date" content="2026-09-03">
+<meta name="date" content="2026-09-04">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
@@ -107,14 +107,14 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
       <nav role="navigation"><ul class="summary">
 <li class="chapter" data-level="1" data-path="index.html"><a href="index.html"><i class="fa fa-check"></i><b>1</b> Literate package source</a></li>
 <li class="chapter" data-level="2" data-path="package-setup.html"><a href="package-setup.html"><i class="fa fa-check"></i><b>2</b> Package setup</a></li>
-<li class="chapter" data-level="3" data-path="core-utilities-and-frozen-data.html"><a href="core-utilities-and-frozen-data.html"><i class="fa fa-check"></i><b>3</b> Core utilities and frozen data</a></li>
-<li class="chapter" data-level="4" data-path="study-i-engine.html"><a href="study-i-engine.html"><i class="fa fa-check"></i><b>4</b> Study I engine</a></li>
-<li class="chapter" data-level="5" data-path="study-ii-engine.html"><a href="study-ii-engine.html"><i class="fa fa-check"></i><b>5</b> Study II engine</a></li>
-<li class="chapter" data-level="6" data-path="published-competitors.html"><a href="published-competitors.html"><i class="fa fa-check"></i><b>6</b> Published competitors</a></li>
-<li class="chapter" data-level="7" data-path="stable-model-api.html"><a href="stable-model-api.html"><i class="fa fa-check"></i><b>7</b> Stable model API</a></li>
-<li class="chapter" data-level="8" data-path="compatibility-experiment-api.html"><a href="compatibility-experiment-api.html"><i class="fa fa-check"></i><b>8</b> Compatibility experiment API</a></li>
-<li class="chapter" data-level="9" data-path="publication-simulation-api.html"><a href="publication-simulation-api.html"><i class="fa fa-check"></i><b>9</b> Publication simulation API</a></li>
-<li class="chapter" data-level="10" data-path="real-data-interface.html"><a href="real-data-interface.html"><i class="fa fa-check"></i><b>10</b> Real-data interface</a></li>
+<li class="chapter" data-level="3" data-path="shared-foundations.html"><a href="shared-foundations.html"><i class="fa fa-check"></i><b>3</b> Shared foundations</a></li>
+<li class="chapter" data-level="4" data-path="univariate-latent-input-model.html"><a href="univariate-latent-input-model.html"><i class="fa fa-check"></i><b>4</b> Univariate latent-input model</a></li>
+<li class="chapter" data-level="5" data-path="multivariate-latent-input-model.html"><a href="multivariate-latent-input-model.html"><i class="fa fa-check"></i><b>5</b> Multivariate latent-input model</a></li>
+<li class="chapter" data-level="6" data-path="competitor-interfaces.html"><a href="competitor-interfaces.html"><i class="fa fa-check"></i><b>6</b> Competitor interfaces</a></li>
+<li class="chapter" data-level="7" data-path="unified-model-api.html"><a href="unified-model-api.html"><i class="fa fa-check"></i><b>7</b> Unified model API</a></li>
+<li class="chapter" data-level="8" data-path="compatibility-api.html"><a href="compatibility-api.html"><i class="fa fa-check"></i><b>8</b> Compatibility API</a></li>
+<li class="chapter" data-level="9" data-path="reproduction-workflows.html"><a href="reproduction-workflows.html"><i class="fa fa-check"></i><b>9</b> Reproduction workflows</a></li>
+<li class="chapter" data-level="10" data-path="application-interface.html"><a href="application-interface.html"><i class="fa fa-check"></i><b>10</b> Application interface</a></li>
 <li class="chapter" data-level="11" data-path="package-tests.html"><a href="package-tests.html"><i class="fa fa-check"></i><b>11</b> Package tests</a></li>
 <li class="chapter" data-level="12" data-path="documentation.html"><a href="documentation.html"><i class="fa fa-check"></i><b>12</b> Documentation</a></li>
 </ul></nav>
@@ -134,17 +134,19 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
             <section class="normal" id="section-"><div id="header">
 <h1 class="title">Creating the <code>eivGP</code> R package</h1>
 <p class="author"><em>eivGP authors</em></p>
-<p class="date"><em>2026-09-03</em></p>
+<p class="date"><em>2026-09-04</em></p>
 </div>
 <div id="literate-package-source" class="section level1 hasAnchor" number="1">
 <h1>
 <span class="header-section-number">1</span> Literate package source<a href="index.html#literate-package-source" class="anchor-section" aria-label="Anchor link to header"></a>
 </h1>
 <p>The explicitly ordered <code>.Rmd</code> chapters are the authoritative package-building
-source for <code>eivGP</code>. Their maintained computational payload is kept under
-<code>script/newly-written-and-modified-scripts/</code>; every chapter identifies and
-copies one coherent module into the generated package. Historical R scripts
-are clearly separated under <code>script/legacy-code-scripts/</code>.</p>
+source for <code>eivGP</code>. Their maintained computational payload is organized by
+general responsibility under <code>script/newly-written-and-modified-scripts/</code>:
+shared numerics and parallelism, univariate and multivariate model engines, a
+unified model API, application interfaces, optional competitors, and isolated
+reproduction workflows. Historical R scripts are clearly separated under
+<code>script/legacy-code-scripts/</code>.</p>
 <p>The package book never launches publication-scale computation. Standalone
 reproduction documents live under <code>experiments/</code> and <code>applications/</code>; they
 call the same exported package functions used by scripts and downstream users.</p>

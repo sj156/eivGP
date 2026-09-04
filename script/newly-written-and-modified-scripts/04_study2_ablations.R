@@ -8,7 +8,7 @@
 ## Full-U GP is an infeasible fitted benchmark that observes every training U.
 ############################################################
 
-if (!exists("sample_scores_ord")) source("00_study2_functions.R")
+if (!exists("sample_scores_ord")) source("model_multivariate.R")
 
 fit_ordinalprobit_measurement_fb <- function(
     C_ord,

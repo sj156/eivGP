@@ -162,8 +162,8 @@ if (sys.nframe() == 0L) {
     .libPaths(unique(c(normalizePath(configured_library), .libPaths())))
   }
   for (module in c(
-    "00_parallel_utils.R", "00_study1_functions.R",
-    "00_study2_functions.R", "00_synthetic_data.R"
+    "core_parallel.R", "core_numerics.R", "model_univariate.R",
+    "model_multivariate.R", "reproduction_data.R"
   )) {
     sys.source(file.path(validator_dir, module), envir = .GlobalEnv)
   }

@@ -1,0 +1,19 @@
+# Multivariate latent-input model
+
+This reusable engine handles a multivariate latent state measured through
+multiple noisy ordinal proxies, together with multivariate numeric predictors.
+Study II is one configured use of this model; the posterior, prediction, and
+diagnostic code is available to general package users.
+
+```{r copy-study2-engine, include=FALSE}
+repository_dir <- dirname(knitr::current_input(dir = TRUE))
+source_file <- file.path(
+  repository_dir, "script", "newly-written-and-modified-scripts",
+  "model_multivariate.R"
+)
+target_file <- file.path(usethis::proj_get(), "R", basename(source_file))
+stopifnot(file.copy(source_file, target_file, overwrite = TRUE))
+stopifnot(identical(
+  unname(tools::md5sum(source_file)), unname(tools::md5sum(target_file))
+))
+```

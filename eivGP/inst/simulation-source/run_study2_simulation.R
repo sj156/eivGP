@@ -19,7 +19,7 @@ MASTER_CODE_DIR <- if (length(master_file_arg) > 0L) {
 } else {
   normalizePath(getwd(), winslash = "/", mustWork = TRUE)
 }
-source(file.path(MASTER_CODE_DIR, "simulation_helpers.R"))
+source(file.path(MASTER_CODE_DIR, "reproduction_workflows.R"))
 
 RUN_MODE <- Sys.getenv("MIXEDGP_RUN_MODE", unset = "dry_run")
 WORKERS <- suppressWarnings(as.integer(Sys.getenv(

@@ -12,6 +12,13 @@ response_draws <- predict(fit, new_X = X_new, new_C = C_new, target = 'response'
 latent_draws <- impute_eivgp(fit, new_C = C_new)
 ```
 
+## Package organization
+
+Model code is organized by responsibility rather than by paper study:
+`model_api.R`, `model_univariate.R`, `model_multivariate.R`,
+`core_numerics.R`, `core_parallel.R`, and `application_interface.R`.
+Study-specific names are confined to frozen reproduction workflows.
+
 ## Publication workflows
 
 Both exported runners default to a read-only dry run:

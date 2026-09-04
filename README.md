@@ -43,6 +43,31 @@ The published mixed-input competitors are available through
 `fit_ucgp()`, `fit_lvgp()`, `fit_ezgp()`, and
 `fit_mixedgp_competitor()` when their suggested packages are installed.
 
+## Package organization
+
+The installed package is organized by reusable responsibility, rather than by
+paper study:
+
+- `model_api.R` provides the unified user-facing fit, prediction, imputation,
+  summary, and diagnostic interface.
+- `model_univariate.R` implements the one-latent-input model with arbitrary
+  numeric predictors.
+- `model_multivariate.R` implements multivariate latent inputs and multiple
+  ordinal proxies.
+- `core_numerics.R` contains the single shared implementation of linear
+  algebra, MCMC diagnostic, and predictive scoring helpers.
+- `core_parallel.R` contains deterministic parallel and adaptive-MCMC control
+  utilities.
+- `application_interface.R` validates general real-data inputs.
+- `competitors.R` contains optional external-method adapters.
+- `reproduction_data.R`, `reproduction_workflows.R`, and
+  `reproduction_compat.R` isolate paper-reproduction concerns from the model
+  API.
+
+Study I and Study II names therefore appear only where they describe frozen
+paper designs, data generators, output tables, or compatibility entry points.
+They are not separate packages or separate public model implementations.
+
 ## Reproduce the paper's numerical experiments
 
 This section is the supported route for reproducing the numerical tables and
@@ -163,12 +188,12 @@ wall-clock time, an estimated remaining time, and an estimated finish time.
 This estimate is a completed-cell average, so it is informative rather than a
 guarantee: cells and optional competitor fits can have different costs.
 
-For Study I, each EIV-GP fit also writes sampler-level ETA updates every 1,000
-iterations under `cells/<design-cell>/results/study1_publication/mcmc_progress/`.
-For example, monitor the first pilot fit with:
+For both studies, each EIV-GP fit also writes sampler-level ETA updates every
+1,000 iterations under the cell's `mcmc_progress/` directory. For example,
+monitor the first Study I fit with:
 
 ```sh
-tail -f "$RUN_DIR/cells/eta0_balanced/results/study1_publication/mcmc_progress/pilot_rep001_calib005.log"
+tail -f "$RUN_DIR/cells/eta0_balanced/results/study1_publication/mcmc_progress/rep001_calib005.log"
 ```
 
 ### Fast code-path demonstration (not paper reproduction)
@@ -187,24 +212,48 @@ Substitute `study2-data` and `study2` for the Study II demonstration. Formal
 publication mode retains the full frozen replication grid and strict MCMC
 diagnostic gates, and can require substantially longer runtimes.
 
-### Study I MCMC pilot and mixing diagnostics
+### Shared adaptive MCMC protocol and mixing diagnostics
 
-Before starting the full Study I grid, publication mode runs two fixed frozen
-replications through EIV-GP at the anchored calibration sizes. This pilot uses
-the exact publication sampler settings and stops early if R-hat exceeds 1.05
-or key effective sample size is below 200. Its summary is written to
-`cells/<design-cell>/tables/study1_mcmc_pilot.csv`; the full replication grid
-is not started when the pilot fails.
+Study I and Study II use the same continuation protocol for the main EIV-GP
+posterior sampler. Warmup is separate. Each chain first retains 5,000
+post-warmup draws, then the fit evaluates effective sample size for the key
+model parameters. With four chains, each chain targets one fourth of the
+prespecified total ESS of 200. If the target is missed, the required chain
+length is projected from the observed ESS rate, rounded up to the next 1,000
+retained draws, and capped at 15,000 retained draws per chain. The chain is
+continued from its current parameter state and RNG state: warmup and completed
+draws are not restarted. A nondefault cap can be supplied through the
+simulation configuration or `adaptive_control` in `fit_eivgp()`.
 
-The Study I publication sampler uses four chains, 14,000 iterations with 1,000
-warmup iterations, a thorough latent-update schedule, joint elliptical-slice
-updates for correlated GP hyperparameters, and centered/noncentered
-interweaving for ordinal thresholds and latent inputs. The transition kernels
-preserve the specified posterior. Fits below the predeclared 200-draw ESS
-threshold are not used; they must be rerun with longer chains before
-publication results are accepted.
+The simulation drivers parallelize independent frozen data replications.
+Chains within a replication are serial, preventing nested process trees and
+oversubscription. The final diagnostic summary records actual iterations,
+retained draws, minimum key-parameter ESS, R-hat, elapsed time, extension
+count, termination reason, and parallel backend. The detailed decision history
+is written as `study1_mcmc_schedule.csv` or
+`study2_mcmc_schedule_<fingerprint>.csv`; sampler ETA logs are stored in
+`mcmc_progress/`.
 
-For the first pilot replication at the smallest and largest anchored
+The measurement-model ablation samplers remain on their separately declared
+fixed schedules; the adaptive protocol governs the main EIV-GP sampler used
+for the reported Study I and Study II results.
+
+### Study I mixing plots
+
+Study I no longer runs a separate mandatory publication pilot. The former
+pilot duplicated costly fits and gave Study I a different execution path from
+Study II. Both studies now start their frozen replication grids directly and
+apply the shared adaptive ESS protocol to every main EIV-GP fit.
+
+The Study I publication sampler uses four chains, 1,000 warmup iterations and
+the shared 5,000-to-15,000 retained-draw adaptive schedule, a thorough
+latent-update schedule, joint elliptical-slice updates for correlated GP
+hyperparameters, and centered/noncentered interweaving for ordinal thresholds
+and latent inputs. The transition kernels preserve the specified posterior.
+Fits that still miss the predeclared ESS or R-hat gate at the cap are recorded
+as failures and are not used for publication results.
+
+For the first actual Study I replication at the smallest and largest anchored
 calibration sizes, the runner writes three mixing plots under
 `cells/<design-cell>/figures/`:
 

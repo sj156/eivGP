@@ -11,9 +11,9 @@
 ## X, U, C, and response innovations are paired with the locked primary study.
 ############################################################
 
-if (!exists("fit_eivgp_1d")) source("00_study1_functions.R")
+if (!exists("fit_eivgp_1d")) source("model_univariate.R")
 if (!exists("run_study1_published_competitors")) {
-  source("03_study2_published_competitors.R")
+  source("competitors.R")
 }
 
 needed_pkgs <- c("dplyr", "tidyr", "knitr")

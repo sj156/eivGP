@@ -6,7 +6,10 @@ MCMC controls, checksums, and diagnostic gates. Both runners default to a
 read-only dry run. Smoke and publication fits automatically run the exact
 published-competitor and paired-design validators before data generation or
 fitting. External competitor failures are retained as auditable status records
-without preventing EIV-GP MCMC; the EIV-GP convergence gate remains mandatory.
+without preventing EIV-GP MCMC. The EIV-GP convergence gate is always computed
+and archived, but a fit that reaches its finite iteration cap below target is a
+warning rather than a reason to discard all later frozen replications or cells.
+Actual execution errors still stop the affected cell immediately.
 
 ```{r copy-publication-api, include=FALSE}
 repository_dir <- dirname(knitr::current_input(dir = TRUE))

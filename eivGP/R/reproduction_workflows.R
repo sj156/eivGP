@@ -403,7 +403,10 @@ study1_simulation_config <- function(
     cells = mixedgp_study1_cells(mode),
     published_methods = MIXEDGP_PUBLISHED_METHODS,
     strict_competitors = identical(mode, "publication"),
-    fail_closed = identical(mode, "publication"),
+    ## Individual optimizers and finite MCMC runs can miss diagnostic targets.
+    ## Archive those misses and continue the frozen grid; execution errors still
+    ## stop immediately in mixedgp_run_simulation().
+    fail_closed = FALSE,
     use_cache = TRUE,
     parallel = list(level = "replications", workers = as.integer(workers)),
     mcmc = if (smoke) {
@@ -415,7 +418,7 @@ study1_simulation_config <- function(
     } else {
       list(n_iter = 16000L, burn = 1000L, thin = 1L, n_chains = 4L,
            # Formal publication runs use the stricter 200-draw
-           # key-parameter ESS gate. Fits below it are not accepted.
+           # key-parameter ESS target. Fits below it at the cap are flagged.
            rhat_limit = 1.05, ess_limit = 200L,
            require_gate = identical(mode, "publication"),
            pilot_reps = 0L,
@@ -502,7 +505,9 @@ study2_simulation_config <- function(
     cells = mixedgp_study2_cells(mode),
     published_methods = MIXEDGP_PUBLISHED_METHODS,
     strict_competitors = identical(mode, "publication"),
-    fail_closed = identical(mode, "publication"),
+    ## Keep publication diagnostics auditable without sacrificing every later
+    ## cell when one finite run or external optimizer misses its target.
+    fail_closed = FALSE,
     use_cache = TRUE,
     parallel = list(level = "replications", workers = as.integer(workers)),
     predictive_latent_sampler = "minimax_tilting",
@@ -725,11 +730,12 @@ validate_simulation_config <- function(config) {
     )
   }
   if (config$mode == "publication" &&
-      (!isTRUE(config$strict_competitors) || !isTRUE(config$fail_closed) ||
+      (!isTRUE(config$strict_competitors) ||
        !isTRUE(config$mcmc$require_gate))) {
     stop(
-      "Publication mode requires strict competitors, fail-closed outputs, ",
-      "and the MCMC gate."
+      "Publication mode requires strict competitor validation and the MCMC ",
+      "diagnostic gate. Gate misses are archived as warnings so the remaining ",
+      "frozen simulation grid can finish."
     )
   }
   config
@@ -2687,9 +2693,19 @@ mixedgp_run_simulation <- function(config) {
         "Publication gates failed for ", cell$id, ": ",
         paste(failed_gates, collapse = ", "), "."
       )
+    } else if (gate_failed) {
+      warning(
+        "Diagnostic gates were not met for ", cell$id, ": ",
+        paste(failed_gates, collapse = ", "),
+        ". The failures were archived and the simulation will continue; see ",
+        file.path(run_dir, "config", "diagnostic_gates.csv"), ".",
+        call. = FALSE, immediate. = TRUE
+      )
     }
   }
 
+  all_gates <- mixedgp_bind_rows_base(gate_rows)
+  has_gate_warnings <- nrow(all_gates) > 0L && any(!all_gates$pass)
   combined <- if ("aggregate" %in% config$stages) {
     mixedgp_write_progress(
       run_dir, "running", "aggregation", n_cells, n_cells,
@@ -2709,7 +2725,7 @@ mixedgp_run_simulation <- function(config) {
       automatic_validation = automatic_validation,
       data_manifest = data_manifest,
       paired_validation = paired_validation,
-      gates = mixedgp_bind_rows_base(gate_rows),
+      gates = all_gates,
       results = results,
       combined = combined
     ),
@@ -2723,8 +2739,14 @@ mixedgp_run_simulation <- function(config) {
     file.path(run_dir, "run_summary.rds")
   )
   mixedgp_write_progress(
-    run_dir, "completed", "completed", n_cells, n_cells,
-    detail = "Run completed successfully."
+    run_dir,
+    if (has_gate_warnings) "completed_with_gate_warnings" else "completed",
+    "completed", n_cells, n_cells,
+    detail = if (has_gate_warnings) {
+      "Run completed; inspect config/diagnostic_gates.csv before publication."
+    } else {
+      "Run completed successfully."
+    }
   )
   message("Completed simulation run: ", normalizePath(run_dir))
   invisible(out)

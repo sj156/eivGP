@@ -250,8 +250,12 @@ the shared 5,000-to-15,000 retained-draw adaptive schedule, a thorough
 latent-update schedule, joint elliptical-slice updates for correlated GP
 hyperparameters, and centered/noncentered interweaving for ordinal thresholds
 and latent inputs. The transition kernels preserve the specified posterior.
-Fits that still miss the predeclared ESS or R-hat gate at the cap are recorded
-as failures and are not used for publication results.
+Fits that still miss the predeclared ESS or R-hat gate at the cap are retained
+with an explicit diagnostic warning. The simulation continues through later
+replications and design cells, and `config/diagnostic_gates.csv` provides the
+audit record that must be reviewed before treating the aggregate as final.
+External-competitor fit failures follow the same nonfatal, auditable policy.
+Actual cell execution errors still stop immediately.
 
 For the first actual Study I replication at the smallest and largest anchored
 calibration sizes, the runner writes three mixing plots under

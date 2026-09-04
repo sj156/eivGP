@@ -1,6 +1,6 @@
 # eivGP
 
-`eivGP` implements errors-in-variables Gaussian process regression with
+`eivGP` implements ordinal mixed-input Gaussian process regression with
 numeric predictors, ordinal proxies for latent continuous inputs, and sparse
 calibration measurements. This repository is both the literate package source
 and the reproducibility companion for the numerical studies.

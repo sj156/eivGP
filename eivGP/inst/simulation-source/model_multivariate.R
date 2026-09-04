@@ -2732,7 +2732,10 @@ fit_eivgp_ordprobit_fb <- function(X_raw,
         sigma2_eps = sigma2_eps,
         logtheta = logtheta,
         theta_slice_width = theta_slice_width,
-        rng_state = .Random.seed
+        ## Publication simulations source this module into an isolated
+        ## environment whose parent intentionally excludes .GlobalEnv.
+        ## The RNG state itself nevertheless belongs to .GlobalEnv.
+        rng_state = mixedgp_rng_state()$value
       ),
       adaptive_schedule = adaptive_schedule_df,
       theta_slice_width_final = theta_slice_width,

@@ -266,6 +266,39 @@ testthat::test_that("Study II uses the shared adaptive MCMC protocol", {
   testthat::expect_true(length(fit$mcmc$chain_final[[1L]]$rng_state) > 1L)
 })
 
+testthat::test_that("isolated simulation engines retain adaptive RNG state", {
+  testthat::skip_if(
+    isTRUE(getOption("knitr.in.progress")),
+    "requires installed system.file() semantics; exercised by R CMD check"
+  )
+  had_seed <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  original_seed <- if (had_seed) get(".Random.seed", envir = .GlobalEnv) else NULL
+  on.exit({
+    if (had_seed) {
+      assign(".Random.seed", original_seed, envir = .GlobalEnv)
+    } else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+      rm(".Random.seed", envir = .GlobalEnv)
+    }
+  }, add = TRUE)
+  if (had_seed) rm(".Random.seed", envir = .GlobalEnv)
+
+  source_dir <- system.file("simulation-source", package = "eivGP")
+  engine <- mixedgp_simulation_engine(source_dir)
+  x <- seq(-1, 1, length.out = 12L)
+  u <- seq(-0.8, 0.8, length.out = 12L)
+  c_ord <- cut(u, c(-Inf, -0.3, 0.3, Inf), labels = FALSE)
+  fit <- engine$fit_eivgp_1d(
+    x, sin(x) + u, c_ord, u_true = u, calib_idx = 1:4, m = 3L,
+    n_iter = 15L, burn = 5L, thin = 1L, n_chains = 1L,
+    preset = "fast", parallel_chains = FALSE,
+    adaptive_control = list(
+      initial_draws = 5L, target_ess = 100,
+      max_draws = 10L, extension_draws = 5L
+    )
+  )
+  testthat::expect_true(length(fit$mcmc$chain_final[[1L]]$rng_state) > 1L)
+})
+
 testthat::test_that("seeded parallel maps preserve the caller RNG stream", {
   set.seed(4101)
   expected_lapply_continuation <- stats::runif(4)

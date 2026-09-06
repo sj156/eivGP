@@ -1,0 +1,56 @@
+---
+title: Check the mixing of MCMC results
+author: "Penghui Fu, Sheng Jiang"
+header-includes:
+- \usepackage{pdflscape}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
+output: 
+  pdf_document: 
+toc: true
+params:
+    numclust: no 
+    timestamp: no
+editor: visual
+number-sections: true
+<!-- date: today -->
+---
+
+# Introduction
+
+Load the libraries.
+
+```{r, echo = TRUE, include=TRUE,message=FALSE}
+library("tidyverse")
+dir.output <- "~/Dropbox/.../code/output/MCMC-image/" 
+
+```
+
+## load the MCMC results
+
+
+```{r,read_arg}
+
+res.name <- paste0('MCMC-numclust', params$numclust[1],'-',params$timestamp[1],'.rds')
+
+
+
+```
+
+
+Now we load the MCMC output RDS file and define a few useful variables.
+
+```{R load-setup, eval = TRUE}
+res <- readRDS(file = paste(dir.output, res.name,sep = ""))  ### mcmc output object 
+
+res$prior.spec ## hyper-parameters used in the MCMC  
+
+datobj <- res$dat.info 
+
+dim(res$pos.beta)  ## dimdat, p, numclust, Nmc
+
+dimdat <- dim(res$pos.beta)[1] 
+
+
+```
+

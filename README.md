@@ -1,4 +1,49 @@
-# eivGP
+# eivmixgp 0.2.0
+
+This repository now includes the `eivmixgp` 0.2.0 source release. The GitHub
+repository retains its historical name, `sj156/eivGP`; the new R package is
+installed and loaded as `eivmixgp`.
+
+From a checkout of this repository, install the required dependencies and package:
+
+```sh
+Rscript --vanilla -e 'install.packages(c("posterior", "TruncatedNormal"), repos="https://cloud.r-project.org")'
+R CMD INSTALL package-build/eivmixgp
+Rscript --vanilla -e 'library(eivmixgp); stopifnot(packageVersion("eivmixgp") == "0.2.0")'
+```
+
+Alternatively, use `remotes::install_github("sj156/eivGP", subdir =
+"package-build/eivmixgp")` from R after installing `remotes`.
+
+See the [package guide](package-build/eivmixgp/README.md) for fitting,
+prediction, imputation, and the common experiment interface. See the
+[0.2.0 workflow notes](PACKAGE-UPDATE-20260906.md) for the diagnostic criteria,
+checkpoint compatibility, and validation limits.
+
+```r
+library(eivmixgp)
+# After creating a fit with fit_eivgp():
+report <- diagnose_eivgp(fit, X = X_panel, C = C_panel)
+report$table
+saveRDS(fit, "fit-checkpoint.rds")
+# When diagnostics support further sampling, append 2,000 draws per chain:
+fit <- continue_eivgp(readRDS("fit-checkpoint.rds"), n_iter = 2000L)
+```
+
+The current package is generated from [litr/create-eivmixgp.Rmd](litr/create-eivmixgp.Rmd)
+and the matching modules under `codes/`. Build it with
+`Rscript --vanilla litr/render-package.R`. Version 0.2.0 retains all post-warmup
+draws and introduces explicit diagnostic reports and serializable continuation.
+Old fits without compatible checkpoints must be refitted.
+
+## Historical eivGP 0.1.0 workflow
+
+The instructions below document the earlier `eivGP` package and its existing
+`experiments/run_publication_study.R` launcher. That launcher still calls
+`eivGP`, and installing `eivmixgp` does not switch it to the new package.
+Keep these workflows distinct when reproducing historical results. The
+current release's experiment interface is documented in the package guide above.
+
 
 `eivGP` implements ordinal mixed-input Gaussian process regression with
 numeric predictors, ordinal proxies for latent continuous inputs, and sparse

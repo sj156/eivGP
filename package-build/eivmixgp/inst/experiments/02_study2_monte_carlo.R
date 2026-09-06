@@ -350,10 +350,13 @@ STUDY2_ABLATION_GP_N_STARTS <- as.integer(STUDY2_ABLATION_GP_N_STARTS)
 STUDY2_ABLATION_GP_MAXIT <- as.integer(STUDY2_ABLATION_GP_MAXIT)
 
 if (!exists("STUDY2_PARALLEL_LEVEL")) STUDY2_PARALLEL_LEVEL <- "chains"
-if (!STUDY2_PARALLEL_LEVEL %in% c("chains", "replications", "none")) {
+if (!STUDY2_PARALLEL_LEVEL %in% c("chains", "replications", "none", "hybrid")) {
   stop("STUDY2_PARALLEL_LEVEL must be chains, replications, or none.")
 }
-parallel_chains <- identical(STUDY2_PARALLEL_LEVEL, "chains")
+parallel_chains <- STUDY2_PARALLEL_LEVEL %in% c("chains", "hybrid")
+chain_cores <- if (STUDY2_PARALLEL_LEVEL == "hybrid") {
+  mixedgp_as_integer_strict(STUDY2_CHAIN_WORKERS, "chain workers", 1L, 1L)
+} else NULL
 
 scenario_calib_grid <- function(scenario) {
   if (identical(scenario, "primary")) {
@@ -817,6 +820,7 @@ run_one_study2_replication <- function(rep_id, scenario) {
       store_scores = FALSE,
       seed = fit_seed_base + 1000L + n_calib,
       parallel_chains = parallel_chains,
+      n_cores = chain_cores,
       verbose = FALSE
     )
 
@@ -1128,6 +1132,7 @@ run_one_study2_replication <- function(rep_id, scenario) {
           n_chains = measurement_n_chains,
           seed = fit_seed_base + 5000L + n_calib,
           parallel_chains = parallel_chains,
+          n_cores = chain_cores,
           rhat_limit = STUDY2_MEAS_RHAT_LIMIT,
           bulk_ess_limit = STUDY2_MEAS_BULK_ESS_LIMIT,
           tail_ess_limit = STUDY2_MEAS_TAIL_ESS_LIMIT,
@@ -1618,7 +1623,9 @@ run_or_load_study2_replication <- function(ii) {
   saveRDS(out, rep_files[ii])
   out
 }
-replication_cores <- if (identical(STUDY2_PARALLEL_LEVEL, "replications")) {
+replication_cores <- if (STUDY2_PARALLEL_LEVEL == "hybrid") {
+  min(nrow(run_grid), mixedgp_as_integer_strict(STUDY2_DATASET_WORKERS, "dataset workers", 1L, 1L))
+} else if (identical(STUDY2_PARALLEL_LEVEL, "replications")) {
   min(nrow(run_grid), mixedgp_resolve_cores())
 } else {
   1L

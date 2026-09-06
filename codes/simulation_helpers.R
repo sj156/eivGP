@@ -119,7 +119,82 @@ mixedgp_available_workers <- function(cap = 8L) {
 }
 
 mixedgp_simulation_mode <- function(mode) {
-  match.arg(mode, c("dry_run", "data", "smoke", "publication"))
+  match.arg(mode, c("dry_run", "data", "smoke", "development", "publication"))
+}
+
+mixedgp_development_profile <- function(config) {
+  integer_env <- function(name, default, minimum = 1L) {
+    value <- suppressWarnings(as.numeric(Sys.getenv(name, unset = as.character(default))))
+    mixedgp_validate_scalar_integer(value, name, minimum)
+  }
+  selected <- if (config$study == "study1") {
+    c("eta0_balanced", "eta1_balanced")
+  } else c("primary_q2", "primary_q4_calibration")
+  requested <- Sys.getenv("MIXEDGP_DEV_CELLS", unset = "")
+  ids <- vapply(config$cells, `[[`, character(1L), "id")
+  if (nzchar(requested)) selected <- trimws(strsplit(requested, ",", fixed = TRUE)[[1L]])
+  if (identical(selected, "all")) selected <- ids
+  if (anyDuplicated(selected) || any(!selected %in% ids)) {
+    stop("MIXEDGP_DEV_CELLS must name unique cells from: ", paste(ids, collapse = ", "))
+  }
+  config$cells <- config$cells[match(selected, ids)]
+  reps <- integer_env("MIXEDGP_DEV_REPS", 3L)
+  burn <- integer_env("MIXEDGP_DEV_BURN", 500L, 0L)
+  draws <- integer_env("MIXEDGP_DEV_DRAWS", 1250L)
+  config$cells <- lapply(config$cells, function(cell) {
+    cell$n_rep <- reps
+    cell$n_test <- 200L
+    if (config$study == "study1" && length(cell$calibration_grid) > 1L) {
+      cell$calibration_grid <- c(5L, 20L)
+    } else if (config$study == "study2" && length(cell$calibration_grid) > 1L) {
+      cell$calibration_grid <- c(6L, 24L)
+    }
+    cell
+  })
+  config$run_id <- paste0(config$study, "-development")
+  config$stages <- c("data", "fit", "aggregate")
+  config$strict_competitors <- FALSE
+  config$fail_closed <- FALSE
+  config$mcmc$n_iter <- burn + draws
+  config$mcmc$burn <- burn
+  config$mcmc$thin <- 1L
+  config$mcmc$n_chains <- 4L
+  config$mcmc$require_gate <- FALSE
+  config$mcmc$automatic_continuation <- FALSE
+  config$measurement_mcmc$n_iter <- burn + draws
+  config$measurement_mcmc$burn <- burn
+  if (config$study == "study2") config$measurement_mcmc$thin <- 1L
+  config$evaluation$n_pred_draw <- 100L
+  config$evaluation$n_m_eval <- 30L
+  config$evaluation$n_m_draw <- 50L
+  config$evaluation$n_m_latent <- 64L
+  if (config$study == "study2") {
+    config$evaluation$n_m_truth <- 500L
+    config$evaluation$n_oracle_pool <- 10000L
+  }
+  config$development_note <- paste(
+    "DEVELOPMENT RESULTS: reduced replication and Monte Carlo budgets.",
+    "For draft figures and workflow inspection; review diagnostics and rerun",
+    "the frozen publication design before reporting scientific conclusions."
+  )
+  config
+}
+
+mixedgp_apply_core_budget <- function(config, core_budget = NULL) {
+  if (is.null(core_budget)) {
+    value <- Sys.getenv("MIXEDGP_CORE_BUDGET", unset = "")
+    if (!nzchar(value)) return(config)
+    core_budget <- suppressWarnings(as.numeric(value))
+  }
+  allocation_env <- new.env(parent = baseenv())
+  sys.source(file.path(config$code_dir, "00_parallel_utils.R"), envir = allocation_env)
+  allocation <- allocation_env$eivgp_run_settings(
+    core_budget, max(vapply(config$cells, `[[`, integer(1), "n_rep")),
+    chains = config$mcmc$n_chains,
+    sampling_iterations = config$mcmc$n_iter - config$mcmc$burn,
+    warmup = config$mcmc$burn)
+  config$parallel <- allocation[c("level", "workers", "chain_workers", "core_budget", "active_chain_limit")]
+  config
 }
 
 mixedgp_number_slug <- function(x) {
@@ -293,10 +368,14 @@ study1_simulation_config <- function(
     code_dir = NULL,
     workers = mixedgp_available_workers(),
     output_root = NULL,
-    data_root = NULL) {
+    data_root = NULL, core_budget = NULL) {
   mode <- mixedgp_simulation_mode(mode)
   code_dir <- mixedgp_simulation_code_dir(code_dir)
   revision_dir <- dirname(code_dir)
+  if (mode == "development") {
+    if (is.null(output_root)) output_root <- file.path(revision_dir, "reproduction", "development", "results", "study1")
+    if (is.null(data_root)) data_root <- file.path(revision_dir, "reproduction", "development", "data", "study1")
+  }
   if (is.null(output_root)) {
     output_root <- file.path(revision_dir, "simulation-runs", "study1")
   }
@@ -349,6 +428,8 @@ study1_simulation_config <- function(
     created_at = format(Sys.time(), tz = "UTC", usetz = TRUE)
   )
   class(config) <- c("mixedgp_simulation_config", "list")
+  if (mode == "development") config <- mixedgp_development_profile(config)
+  config <- mixedgp_apply_core_budget(config, core_budget)
   validate_simulation_config(config)
 }
 
@@ -357,10 +438,14 @@ study2_simulation_config <- function(
     code_dir = NULL,
     workers = mixedgp_available_workers(),
     output_root = NULL,
-    data_root = NULL) {
+    data_root = NULL, core_budget = NULL) {
   mode <- mixedgp_simulation_mode(mode)
   code_dir <- mixedgp_simulation_code_dir(code_dir)
   revision_dir <- dirname(code_dir)
+  if (mode == "development") {
+    if (is.null(output_root)) output_root <- file.path(revision_dir, "reproduction", "development", "results", "study2")
+    if (is.null(data_root)) data_root <- file.path(revision_dir, "reproduction", "development", "data", "study2")
+  }
   if (is.null(output_root)) {
     output_root <- file.path(revision_dir, "simulation-runs", "study2")
   }
@@ -422,6 +507,8 @@ study2_simulation_config <- function(
     created_at = format(Sys.time(), tz = "UTC", usetz = TRUE)
   )
   class(config) <- c("mixedgp_simulation_config", "list")
+  if (mode == "development") config <- mixedgp_development_profile(config)
+  config <- mixedgp_apply_core_budget(config, core_budget)
   validate_simulation_config(config)
 }
 
@@ -508,8 +595,15 @@ validate_simulation_config <- function(config) {
   config$parallel$workers <- mixedgp_validate_scalar_integer(
     config$parallel$workers, "parallel$workers", 1L
   )
-  if (!identical(config$parallel$level, "replications")) {
-    stop("Publication runs parallelize replications and keep chains serial.")
+  if (!config$parallel$level %in% c("replications", "hybrid")) {
+    stop("parallel$level must be replications or hybrid.")
+  }
+  if (config$parallel$level == "hybrid") {
+    budget <- mixedgp_validate_scalar_integer(config$parallel$core_budget, "core_budget", 1L)
+    chain_workers <- mixedgp_validate_scalar_integer(config$parallel$chain_workers, "chain_workers", 1L)
+    if (config$parallel$workers * chain_workers > budget) {
+      stop("Dataset workers times chain workers exceeds core_budget.")
+    }
   }
   for (flag in c("strict_competitors", "fail_closed", "use_cache")) {
     mixedgp_validate_boolean(config[[flag]], flag)
@@ -806,7 +900,8 @@ mixedgp_print_dry_run <- function(config, preflight, runtime_preflight, task_pla
     "  schema: ", config$schema_version, "\n",
     "  run directory: ", mixedgp_run_directory(config), "\n",
     "  parallelism: ", config$parallel$workers,
-    " replication worker(s); chains are serial within workers\n",
+    " dataset worker(s); chain workers per dataset: ",
+    if (is.null(config$parallel$chain_workers)) 1L else config$parallel$chain_workers, "\n",
     sep = ""
   )
   print(mixedgp_cell_summary(config), row.names = FALSE)
@@ -1152,11 +1247,13 @@ mixedgp_cell_controls_study1 <- function(config, cell, cell_output) {
     STUDY1_EVALUATE_F = cell$evaluate_f,
     STUDY1_EVALUATE_U = cell$evaluate_u,
     STUDY1_PARALLEL_LEVEL = config$parallel$level,
+    STUDY1_DATASET_WORKERS = config$parallel$workers,
+    STUDY1_CHAIN_WORKERS = if (is.null(config$parallel$chain_workers)) 1L else config$parallel$chain_workers,
     STUDY1_REQUIRE_MCMC_GATE = config$mcmc$require_gate,
     STUDY1_MAX_RHAT = config$mcmc$rhat_limit,
     STUDY1_MIN_ESS = config$mcmc$ess_limit,
     STUDY1_MECHANISM_CALIB = mechanism_calib,
-    STUDY1_LVGP_MAX_ELAPSED = if (config$mode == "smoke") 60 else 1800
+    STUDY1_LVGP_MAX_ELAPSED = if (config$mode %in% c("smoke", "development")) 60 else 1800
   )
 }
 
@@ -1205,6 +1302,8 @@ mixedgp_cell_controls_study2 <- function(config, cell, cell_output) {
     STUDY2_EVALUATE_F = cell$evaluate_f,
     STUDY2_EVALUATE_U = cell$evaluate_u,
     STUDY2_PARALLEL_LEVEL = config$parallel$level,
+    STUDY2_DATASET_WORKERS = config$parallel$workers,
+    STUDY2_CHAIN_WORKERS = if (is.null(config$parallel$chain_workers)) 1L else config$parallel$chain_workers,
     STUDY2_PREDICTIVE_LATENT_SAMPLER = config$predictive_latent_sampler,
     STUDY2_ENFORCE_MCMC_GATE = config$mcmc$require_gate,
     STUDY2_MCMC_RHAT_LIMIT = config$mcmc$rhat_limit,
@@ -1229,9 +1328,9 @@ mixedgp_cell_controls_study2 <- function(config, cell, cell_output) {
     } else {
       config$mcmc$target_tail_ess_limit
     },
-    STUDY2_SAVE_PDF = identical(config$mode, "publication"),
+    STUDY2_SAVE_PDF = config$mode %in% c("publication", "development"),
     STUDY2_SAVE_PNG = FALSE,
-    STUDY2_LVGP_MAX_ELAPSED = if (config$mode == "smoke") 60 else 3600
+    STUDY2_LVGP_MAX_ELAPSED = if (config$mode %in% c("smoke", "development")) 60 else 3600
   )
 }
 
@@ -2141,6 +2240,10 @@ mixedgp_run_simulation <- function(config) {
   mixedgp_write_run_metadata(
     config, run_dir, preflight, runtime_preflight, task_plan
   )
+  if (identical(config$mode, "development")) {
+    writeLines(config$development_note, file.path(run_dir, "DEVELOPMENT_RESULTS.txt"))
+    message(config$development_note)
+  }
   if ("fit" %in% config$stages && isTRUE(config$strict_competitors) &&
       any(!preflight$available)) {
     unavailable <- preflight$method[!preflight$available]

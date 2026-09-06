@@ -188,11 +188,16 @@ if (length(calib_grid) < 1L || anyNA(calib_grid) ||
 calib_grid <- sort(calib_grid)
 n_pred_draw <- settings$n_pred_draw
 if (!exists("STUDY1_PARALLEL_LEVEL")) STUDY1_PARALLEL_LEVEL <- "chains"
-if (!STUDY1_PARALLEL_LEVEL %in% c("chains", "replications", "none")) {
+if (!STUDY1_PARALLEL_LEVEL %in% c("chains", "replications", "none", "hybrid")) {
   stop("STUDY1_PARALLEL_LEVEL must be chains, replications, or none.")
 }
-parallel_chains <- identical(STUDY1_PARALLEL_LEVEL, "chains")
-replication_cores <- if (identical(STUDY1_PARALLEL_LEVEL, "replications")) {
+parallel_chains <- STUDY1_PARALLEL_LEVEL %in% c("chains", "hybrid")
+chain_cores <- if (STUDY1_PARALLEL_LEVEL == "hybrid") {
+  mixedgp_as_integer_strict(STUDY1_CHAIN_WORKERS, "chain workers", 1L, 1L)
+} else NULL
+replication_cores <- if (STUDY1_PARALLEL_LEVEL == "hybrid") {
+  min(n_rep, mixedgp_as_integer_strict(STUDY1_DATASET_WORKERS, "dataset workers", 1L, 1L))
+} else if (identical(STUDY1_PARALLEL_LEVEL, "replications")) {
   min(n_rep, mixedgp_resolve_cores())
 } else {
   1L
@@ -675,6 +680,7 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
         preset = settings$preset,
         seed = 300000L + 1000L * rep_id + n_calib,
         parallel_chains = parallel_chains,
+        n_cores = chain_cores,
         verbose = FALSE
       )
       control_key <- as.character(n_calib)

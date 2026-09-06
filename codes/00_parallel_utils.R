@@ -60,6 +60,46 @@ mixedgp_parse_integer_text <- function(x, name, min_value = 0L) {
   )
 }
 
+#' Allocate a core budget across datasets and posterior chains
+#'
+#' @param core_budget Positive integer CPU budget supplied by the user.
+#' @param pending_datasets Number of datasets available to process.
+#' @param chains Number of independent chains per fitted model.
+#' @param sampling_iterations Retained transitions per chain, excluding warmup.
+#' @param warmup Warmup transitions per chain.
+#' @return A list with dataset and chain worker counts and explicit fit arguments.
+#'   Continuation is never automatic; use [continue_eivgp()] explicitly.
+#' @details On macOS/Linux, dataset workers may fork chain workers within the
+#'   supplied budget. On Windows the current fork backend runs serially.
+#'   Numerical-library threads should be limited to one before starting R.
+#' @export
+eivgp_run_settings <- function(core_budget, pending_datasets = 1L, chains = 4L,
+                               sampling_iterations = 1250L, warmup = 500L) {
+  check <- function(x, name, minimum = 1L) {
+    mixedgp_as_integer_strict(x, name, minimum, 1L)
+  }
+  core_budget <- check(core_budget, "core_budget")
+  pending_datasets <- check(pending_datasets, "pending_datasets", 0L)
+  chains <- check(chains, "chains")
+  sampling_iterations <- check(sampling_iterations, "sampling_iterations")
+  warmup <- check(warmup, "warmup", 0L)
+  total <- check(as.double(sampling_iterations) + warmup, "total iterations")
+  chain_workers <- min(chains, core_budget)
+  dataset_workers <- min(pending_datasets, max(1L, core_budget %/% chain_workers))
+  if (.Platform$OS.type == "windows") {
+    chain_workers <- 1L
+    dataset_workers <- min(pending_datasets, 1L)
+  }
+  list(core_budget = core_budget, workers = dataset_workers,
+       chain_workers = chain_workers, level = "hybrid",
+       active_chain_limit = dataset_workers * chain_workers,
+       retained_draws = as.double(chains) * sampling_iterations,
+       automatic_continuation = FALSE,
+       fit_args = list(n_iter = total, burn = warmup, thin = 1L,
+                       n_chains = chains, parallel = chain_workers > 1L,
+                       n_cores = chain_workers))
+}
+
 mixedgp_resolve_cores <- function(n_cores = NULL, reserve = 2L) {
   validate <- function(x, label) {
     mixedgp_as_integer_strict(

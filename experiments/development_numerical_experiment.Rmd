@@ -1,0 +1,80 @@
+---
+title: "Development numerical experiments — draft results"
+output:
+  html_document:
+    toc: true
+params:
+  study: "study1"
+  execute: false
+  repository_dir: ""
+  core_budget: 12
+---
+
+# Purpose
+
+This document produces a small, reproducible draft of the numerical results.
+These results support inspecting the analysis and writing the paper; they are
+not final publication evidence. Both studies follow the same wrapper below.
+The current algorithms come from the repository's `codes/` modules, which also
+build eivmixgp. The historical eivGP launcher is not used here.
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, error = FALSE, cache = FALSE)
+document <- knitr::current_input(dir = TRUE)
+repository_dir <- params$repository_dir
+if (!nzchar(repository_dir)) {
+  repository_dir <- if (is.character(document) && length(document) == 1L && nzchar(document)) {
+    file.path(dirname(document), "..")
+  } else if (file.exists("codes/simulation_helpers.R")) getwd() else ".."
+}
+repository_dir <- normalizePath(repository_dir, mustWork = TRUE)
+source(file.path(repository_dir, "codes", "00_diagnostics.R"), local = knitr::knit_global())
+source(file.path(repository_dir, "codes", "simulation_helpers.R"), local = knitr::knit_global())
+```
+
+# Explicit experiment wrapper
+
+The default profile uses three replications in two selected cells, four
+chains per dataset, 500 warmup iterations, and 1,250 retained draws per chain.
+Each chain runs 1,750 total iterations. Dataset and chain workers share the
+explicit core budget. Existing diagnostic thresholds remain visible;
+the short run is not required to pass them. The profile generates its own
+frozen development data, then fits and aggregates. Subsequent runs verify
+those data. See `DEVELOPMENT.md` for settings and the paper-writing cycle.
+
+```{r configure}
+run_simulation <- function(study, execute = FALSE, core_budget = 12L) {
+  study <- match.arg(study, c("study1", "study2"))
+  constructor <- if (study == "study1") study1_simulation_config else study2_simulation_config
+  runner <- if (study == "study1") run_study1_simulation else run_study2_simulation
+  config <- constructor(
+    mode = "development", core_budget = core_budget,
+    code_dir = file.path(repository_dir, "codes")
+  )
+  print(config[c("study", "mode", "parallel", "cells", "mcmc", "evaluation", "output_root", "data_root")])
+  if (!execute) {
+    config$mode <- "dry_run"
+    config$stages <- character(0)
+  }
+  runner(config)
+}
+```
+
+# Run and inspect
+
+```{r run-development}
+result <- run_simulation(params$study, params$execute, params$core_budget)
+if (isTRUE(params$execute)) {
+  print(result$run_dir)
+  print(result$gates)
+  print(list.files(file.path(result$run_dir, "combined")))
+}
+```
+
+Review missing-method records and diagnostics alongside every draft table.
+Use the full publication design only once the scientific settings and plotting
+choices are settled. Real-data results remain a separate, deferred step.
+
+```{r session}
+sessionInfo()
+```

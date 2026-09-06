@@ -1,6 +1,18 @@
-# eivmixgp 0.2.0
+# eivmixgp 0.2.1
 
-This repository now includes the `eivmixgp` 0.2.0 source release. The GitHub
+Version 0.2.1 adds explicit core-budget allocation and the agreed 500 warmup
++ 1,250 sampling iterations per chain. See the [release notes](PACKAGE-UPDATE-0.2.1.md).
+The full development-workflow brief is still in progress; existing publication
+gates, cache granularity, and failure handling have not yet been unified.
+
+For the current paper-writing cycle, start with the [lightweight development
+workflow](DEVELOPMENT.md). Preview it with
+`MIXEDGP_CORE_BUDGET=12 Rscript --vanilla experiments/run_development_study.R study1 plan`, then
+replace `plan` with `run` to produce preliminary tables and figures. The same
+commands accept `study2`. Development outputs have their own directories and
+are not final publication results.
+
+This repository now includes the `eivmixgp` 0.2.1 source release. The GitHub
 repository retains its historical name, `sj156/eivGP`; the new R package is
 installed and loaded as `eivmixgp`.
 
@@ -9,7 +21,7 @@ From a checkout of this repository, install the required dependencies and packag
 ```sh
 Rscript --vanilla -e 'install.packages(c("posterior", "TruncatedNormal"), repos="https://cloud.r-project.org")'
 R CMD INSTALL package-build/eivmixgp
-Rscript --vanilla -e 'library(eivmixgp); stopifnot(packageVersion("eivmixgp") == "0.2.0")'
+Rscript --vanilla -e 'library(eivmixgp); stopifnot(packageVersion("eivmixgp") == "0.2.1")'
 ```
 
 Alternatively, use `remotes::install_github("sj156/eivGP", subdir =

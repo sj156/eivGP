@@ -11,7 +11,7 @@ Build and install the package from the generated source directory:
 
 ```sh
 R CMD build eivmixgp
-R CMD INSTALL eivmixgp_0.2.0.tar.gz
+R CMD INSTALL eivmixgp_0.2.1.tar.gz
 ```
 
 ## Statistical targets

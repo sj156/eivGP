@@ -26,6 +26,26 @@ workflow_arguments <- function(engine) {
   out
 }
 
+testthat::test_that("core budgets allocate datasets and chains without oversubscription", {
+  for (budget in c(1L, 2L, 3L, 4L, 8L, 12L, 16L)) {
+    plan <- eivgp_run_settings(budget, pending_datasets = 10L)
+    testthat::expect_lte(plan$workers * plan$chain_workers, budget)
+    testthat::expect_identical(plan$fit_args$n_iter, 1750L)
+    testthat::expect_identical(plan$fit_args$burn, 500L)
+    testthat::expect_equal(plan$retained_draws, 5000)
+    testthat::expect_false(plan$automatic_continuation)
+  }
+  if (.Platform$OS.type != "windows") {
+    testthat::expect_identical(eivgp_run_settings(12L, 10L)$workers, 3L)
+    testthat::expect_identical(eivgp_run_settings(16L, 10L)$workers, 4L)
+  }
+  testthat::expect_identical(eivgp_run_settings(16L, 1L)$workers, 1L)
+  testthat::expect_identical(eivgp_run_settings(16L, 0L)$workers, 0L)
+  for (bad in list(0, -1, 1.5, NA_real_, Inf, "12")) {
+    testthat::expect_error(eivgp_run_settings(bad))
+  }
+})
+
 testthat::test_that("both engines continue exactly, without thinning or re-warmup", {
   for (variant in c("conditional", "collapsed", "legacy", "interwoven")) {
     engine <- if (variant %in% c("conditional", "collapsed")) "univariate" else "multivariate"

@@ -1,3 +1,14 @@
+# eivmixgp 0.2.1
+
+- Added eivgp_run_settings(core_budget, pending_datasets) for explicit
+  dataset/chain allocation within a CPU budget on macOS/Linux.
+- Development defaults: four chains, 500 warmup + 1250 sampling
+  transitions per chain; retain all 5000 posterior draws.
+- Both study drivers support core-budgeted nested parallelism.
+- Continuation remains explicit via continue_eivgp(), not automatic.
+- The complete development orchestration brief is not yet implemented;
+  publication gate policy and existing cache granularity are unchanged.
+
 # eivmixgp 0.2.0
 
 - Added diagnose_eivgp(): full-window, target-aware R-hat, bulk/tail ESS,

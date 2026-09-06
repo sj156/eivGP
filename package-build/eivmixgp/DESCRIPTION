@@ -1,6 +1,6 @@
 Package: eivmixgp
 Title: Gaussian Process Regression with Ordinal Mixed Inputs
-Version: 0.2.0
+Version: 0.2.1
 Authors@R: c( person("Penghui", "Fu", role = "aut"), person("Xinye", "Chen",
         role = "aut"), person("Jianhua Z.", "Huang", role = "aut"),
         person("Sheng", "Jiang", , "jiangsheng@cuhk.edu.cn", role = c("aut",
@@ -16,4 +16,4 @@ Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 8.0.0
 Config/litr/version: 0.9.3
-Config/litr/id: f4f4df6a6f51d5deb4a77a0387f80e3d
+Config/litr/id: e6160252f4267ec3a5323e7d3ebf3117

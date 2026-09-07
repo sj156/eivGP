@@ -42,6 +42,8 @@ library(eivGP)
 document_path <- knitr::current_input(dir = TRUE)
 repository_dir <- normalizePath(file.path(dirname(document_path), ".."),
                                 mustWork = TRUE)
+source(file.path(repository_dir, "codes", "00_diagnostics.R"),
+       local = knitr::knit_global())
 source(file.path(repository_dir, "codes", "simulation_helpers.R"),
        local = knitr::knit_global())
 ```
@@ -92,11 +94,11 @@ run_study2_publication <- function(mode, workers, data_root, output_root) {
     mode = mode,
     workers = workers,
     data_root = data_root,
-    output_root = output_root,
+    output_root = output_root
     # study2_synthetic_data.Rmd owns data creation.  This wrapper verifies
     # the frozen inputs, fits prespecified methods, and aggregates outputs.
-    stages = if (identical(mode, "dry_run")) NULL else c("fit", "aggregate")
   )
+  config$stages <- if (identical(mode, "dry_run")) character() else c("fit", "aggregate")
   run_study2_simulation(config)
 }
 ```

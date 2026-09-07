@@ -284,16 +284,16 @@ mixedgp_estimand_method_matrix <- function(study = c("study1", "study2")) {
 mixedgp_study1_cells <- function(mode) {
   smoke <- identical(mode, "smoke")
   cells <- list()
-  for (threshold_design in c("balanced", "imbalanced")) {
+  for (threshold_design in "balanced") {
     for (eta in c(0, 1)) {
       cells[[length(cells) + 1L]] <- list(
         id = paste0("eta", eta, "_", threshold_design),
-        role = "primary_imbalance_by_heterogeneity",
+        role = "primary_heterogeneity",
         scenario = "heterogeneity_continuum",
         heterogeneity_eta = eta, threshold_design = threshold_design,
         min_class_count = if (threshold_design == "imbalanced") 3L else 0L,
         n = 100L, n_test = if (smoke) 80L else 100L,
-        n_rep = if (smoke) 1L else 100L, m = 6L,
+        n_rep = if (smoke) 1L else 50L, m = 6L,
         calibration_grid = if (smoke) c(0L, 5L) else c(0L, 20L, 50L),
         evaluate_f = identical(eta, 1), evaluate_u = TRUE,
         run_ablations = TRUE)
@@ -308,7 +308,7 @@ mixedgp_study2_cells <- function(mode) {
                         run_ablations, evaluate_f = FALSE, evaluate_u = TRUE) {
     list(id = id, role = role, scenario = scenario, q = as.integer(q),
          d = 2L, m = 4L, n = 100L, n_test = if (smoke) 60L else 100L,
-         n_rep = if (smoke) 1L else 100L, calibration_grid = as.integer(grid),
+         n_rep = if (smoke) 1L else 50L, calibration_grid = as.integer(grid),
          run_ablations = run_ablations, evaluate_f = evaluate_f,
          evaluate_u = evaluate_u)
   }

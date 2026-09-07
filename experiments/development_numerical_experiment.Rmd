@@ -35,7 +35,7 @@ source(file.path(repository_dir, "codes", "simulation_helpers.R"), local = knitr
 
 # Explicit experiment wrapper
 
-The default profile uses three replications in all seven agreed settings, four
+The default profile uses three replications in all five agreed settings, four
 chains per dataset, 500 warmup iterations, and 1,250 retained draws per chain.
 Each chain runs 1,750 total iterations. Dataset and chain workers share the
 explicit core budget. Existing diagnostic thresholds remain visible;

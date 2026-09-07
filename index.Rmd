@@ -14,7 +14,7 @@ R CMD build eivGP
 R CMD check --no-manual eivGP_0.3.0.tar.gz
 ```
 
-The earlier root-level book chapters and `_bookdown.yml` are historical source
-for the 0.1.x package. They are not the current build and must not be used to
-regenerate `eivGP/`. See `README.md` for the current package interface and
-`DEVELOPMENT.md` for the separate repository experiment workflow.
+Obsolete package/book sources have been removed from the working tree.
+Use only the active literate build above to regenerate `eivGP/`.
+See `README.md` for the current package interface and `DEVELOPMENT.md`
+for the separate repository experiment workflow.

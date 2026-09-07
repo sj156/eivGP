@@ -1,7 +1,7 @@
 # Numerical experiment design
 
 Both studies use **100 training and 100 test observations per dataset**.
-Publication uses **100 replications per setting**; development uses **3** to
+Publication uses **50 replications per setting**; development uses **3** to
 exercise the workflow. Development defaults to every setting and the same
 calibration grids, not a selectively smaller scientific design.
 
@@ -9,19 +9,23 @@ calibration grids, not a selectively smaller scientific design.
 |---|---|---|
 | I | Balanced, eta=0 | 0, 20, 50 |
 | I | Balanced, eta=1 | 0, 20, 50 |
-| I | Imbalanced, eta=0 | 0, 20, 50 |
-| I | Imbalanced, eta=1 | 0, 20, 50 |
 | II | Primary q=2 | 50 |
 | II | Primary q=4 | 0, 20, 50, 80 |
 | II | Logistic misspecification q=4 | 50 |
 
-Seven settings, 18 setting–calibration combinations: **1,800 publication
-EIV-GP fits** or **54 development EIV-GP fits**, before other methods.
+Five settings, 12 setting–calibration combinations: **600 publication
+EIV-GP fits** or **36 development EIV-GP fits**, before other methods.
+This uses 250 publication datasets or 15 development datasets across settings.
+The three standalone competitors require 750 publication fits or 45 development
+fits before cache reuse; they do not refit for different calibration sizes.
+Publication selects replication IDs 1–50 from compatible frozen collections;
+any existing replications 51–100 remain stored but are not selected.
 Each calibration set is nested within the same training dataset.
 Study II has two latent dimensions; q counts ordinal proxies. Its primary
 q=2 measurement mechanism is ordinal-probit, as assumed by the fitted model.
-The imbalanced Study I generator retains its minimum of three training
-observations in each ordinal category.
+Imbalanced Study I settings are excluded from the active experiment grid.
+Existing imbalanced datasets/results and generator support remain available for
+historical inspection; they are not included in new default runs.
 
 The existing default squared-exponential response kernel is unchanged.
 The proposed pairwise-only kernel is not implemented or selected here.

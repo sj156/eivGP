@@ -20,5 +20,5 @@ sets their load order explicitly so the current sampler definitions are active.
 Study generators and orchestration are repository code. The package does not
 install `00_synthetic_data.R`, `00_experiment_runner.R`, or `inst/experiments`.
 Current target/workflow tests and reusable utility tests are installed with the
-package. The retired 0.2.1 literate source, including its obsolete tests, is
-preserved under `legacy/` for reference and is not part of this build.
+package. Retired literate sources and their obsolete tests have been removed
+from the working tree; previously committed versions remain in Git history.

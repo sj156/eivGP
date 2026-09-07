@@ -2,20 +2,20 @@ source("codes/simulation_helpers.R")
 code_dir <- normalizePath("codes")
 engine <- mixedgp_simulation_engine(code_dir)
 expected_ids <- list(
-  study1 = c("eta0_balanced", "eta1_balanced", "eta0_imbalanced", "eta1_imbalanced"),
+  study1 = c("eta0_balanced", "eta1_balanced"),
   study2 = c("primary_q2", "primary_q4_calibration", "logistic_q4"))
-fit_counts <- c(study1 = 1200L, study2 = 600L)
+fit_counts <- c(study1 = 300L, study2 = 300L)
 for (study in names(expected_ids)) {
   ctor <- get(paste0(study, "_simulation_config"))
   publication <- ctor("publication", code_dir = code_dir)
   development <- ctor("development", code_dir = code_dir)
   stopifnot(identical(vapply(publication$cells, `[[`, "", "id"), expected_ids[[study]]))
-  expected_grids <- if (study == "study1") rep(list(c(0L, 20L, 50L)), 4L) else
+  expected_grids <- if (study == "study1") rep(list(c(0L, 20L, 50L)), 2L) else
     list(50L, c(0L, 20L, 50L, 80L), 50L)
   for (i in seq_along(publication$cells)) {
     p <- publication$cells[[i]]
     d <- development$cells[[i]]
-    stopifnot(p$n == 100L, p$n_test == 100L, p$n_rep == 100L, d$n_rep == 3L,
+    stopifnot(p$n == 100L, p$n_test == 100L, p$n_rep == 50L, d$n_rep == 3L,
               identical(p$calibration_grid, expected_grids[[i]]))
     p$n_rep <- d$n_rep <- NULL
     stopifnot(identical(p, d))
@@ -42,4 +42,4 @@ for (study in names(expected_ids)) {
   checks <- mixedgp_validate_common_random_numbers(cfg, engine)
   stopifnot(nrow(checks) > 0L, all(checks$pass))
 }
-message("Seven settings, 100/100 sizes, 100 versus 3 replications, nested grids and paired data validated.")
+message("Five settings, 100/100 sizes, 50 versus 3 replications, nested grids and paired data validated.")

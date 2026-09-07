@@ -14,8 +14,8 @@ uncertainty and diagnostic warnings must accompany their interpretation.
 Both development and publication configurations use 100 training and 100 test
 observations per dataset in both studies. A replication is a newly simulated dataset under the same
 setting, with a distinct prespecified seed; all applicable methods share it.
-Development uses three replications in all seven settings. Publication uses
-100 replications in every setting.
+Development uses three replications in all five settings. Publication uses
+50 replications in every setting (IDs 1–50 of compatible frozen collections).
 
 Previously frozen larger test datasets are not overwritten or silently truncated.
 Their manifests may be incompatible with this revised design; select a new
@@ -94,7 +94,7 @@ so editing a figure does not by itself invalidate a fit. This is a repository
 experiment-layer change, not a change to the installed posterior sampler.
 
 The repository experiment layer retains iteration accounting and core-budgeted
-concurrency. Study I crosses balanced/imbalanced categories with eta=0/1,
+concurrency. Study I uses balanced categories with eta=0/1,
 each with calibration 0/20/50. Study II uses primary q=2 (calibration 50),
 primary q=4 (0/20/50/80), and logistic misspecification q=4 (50).
 See NUMERICAL_DESIGN.md for the agreed design.

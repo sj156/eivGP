@@ -11,10 +11,30 @@ posterior prior and sampler. Fits and checkpoints from `eivGP` 0.1.x or
 `eivmixgp` 0.1–0.2.x must be refitted. Renaming or relabeling an old fit does
 not migrate it to the new posterior.
 
+## Repository layout
+
+The working tree keeps the current package and paper-experiment implementation:
+
+- `codes/`: canonical model modules, experiment helpers, and regression tests.
+- `eivGP/`: the generated, installable package (keep this alongside its sources).
+- `litr/`: the active literate package build and build-support tests.
+- `experiments/`: dependency setup, frozen-data generation, competitor/MCMC
+  launchers, and separate reporting.
+- `applications/` and `codes/real-data/`: application work in progress.
+- `reproduction/`: local frozen data, reusable caches, and saved results;
+  Git-ignored and not distributed automatically with the repository.
+
+Obsolete package/book sources, the old `artifacts/` tree, archived superseded
+data, and selected older result runs have been removed. Current frozen data,
+competitor caches, and the latest saved development run per study are retained.
+Retained results must still be checked against the current design; being the
+latest saved run does not make them final publication results. Previously
+committed versions remain in Git history; cleanup does not rewrite history.
+
 ## Install
 
-The current seven-setting numerical design (100 training / 100 test observations,
-100 publication versus 3 development replications) is documented in
+The current five-setting numerical design (100 training / 100 test observations,
+50 publication versus 3 development replications) is documented in
 [NUMERICAL_DESIGN.md](NUMERICAL_DESIGN.md). Publication MCMC budgets remain
 to be finalized. Existing frozen datasets have not been replaced.
 
@@ -42,8 +62,8 @@ You can currently run the revised experiments in **development mode**. This is
 not yet exact reproduction of final paper tables: the revised publication
 results have not been generated, publication MCMC budgets remain undecided,
 and shared frozen-data storage between modes is not yet implemented.
-Development uses the same seven settings and sample sizes, but only three
-replicated datasets per setting instead of 100. Real-data reproduction
+Development uses the same five settings and sample sizes, but only three
+replicated datasets per setting instead of 50. Real-data reproduction
 instructions will be added separately when that workflow is ready.
 
 ### 1. Download the repository
@@ -114,7 +134,7 @@ Rscript --vanilla experiments/run_development_study.R study2 plan
 Check the plans against [NUMERICAL_DESIGN.md](NUMERICAL_DESIGN.md):
 
 - Both studies: 100 training and 100 test observations, three replications per setting.
-- Study I: balanced/imbalanced categories crossed with eta = 0/1; calibration 0, 20, 50 in each setting.
+- Study I: balanced categories with eta = 0/1; calibration 0, 20, 50 in each setting. Imbalanced settings are excluded from new runs.
 - Study II: primary q = 2 at calibration 50; primary q = 4 at 0, 20, 50, 80; logistic misspecification q = 4 at 50.
 
 A replication is a separately generated synthetic dataset, not an MCMC chain.
@@ -151,7 +171,7 @@ Rscript --vanilla experiments/run_competitors.R study2 plan publication
 Rscript --vanilla experiments/run_competitors.R study2 run publication
 ```
 
-`plan` only inspects the setup. `run publication` processes 100 datasets per
+`plan` only inspects the setup. `run publication` processes 50 datasets per
 setting, one dataset per worker, with its methods run serially. Keep the BLAS
 thread limits above; use fewer workers if memory is tight. The entire selected
 frozen collection is verified before fitting. Progress identifies each dataset
@@ -294,7 +314,7 @@ relative to the checkout and require no author-specific local folders.
 
 ### Moving to publication reproduction
 
-Publication uses 100 replications per setting. Before final tables can be
+Publication uses 50 replications per setting. Before final tables can be
 reproduced, we must finalize the publication MCMC/evaluation budgets, prepare and
 audit the revised frozen collection, and make development use a prescribed
 subset of that same collection. Currently the two modes have separate default

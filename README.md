@@ -13,6 +13,11 @@ not migrate it to the new posterior.
 
 ## Install
 
+The current seven-setting numerical design (100 training / 100 test observations,
+100 publication versus 3 development replications) is documented in
+[NUMERICAL_DESIGN.md](NUMERICAL_DESIGN.md). Publication MCMC budgets remain
+to be finalized. Existing frozen datasets have not been replaced.
+
 From a repository checkout:
 
 ```sh

@@ -81,7 +81,7 @@ for (study in c("study1", "study2")) {
     cfg <- ctor(mode, code_dir = "codes", core_budget = 12L)
     stopifnot(!cfg$strict_competitors, !cfg$fail_closed, !cfg$mcmc$require_gate)
     stopifnot(all(vapply(cfg$cells, function(cell) {
-      cell$n_test == 200L && cell$n == if (study == "study1") 100L else 120L
+      cell$n_test == 100L && cell$n == 100L
     }, logical(1))))
   }
   bad <- ctor("publication", code_dir = "codes")

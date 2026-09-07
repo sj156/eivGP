@@ -11,12 +11,11 @@ uncertainty and diagnostic warnings must accompany their interpretation.
 
 ## Dataset sizes and replications
 
-Both development and publication configurations use 200 test observations per
-dataset, including Study II's q=6 setting. Training sizes remain 100 (Study I)
-and 120 (Study II). A replication is a newly simulated dataset under the same
+Both development and publication configurations use 100 training and 100 test
+observations per dataset in both studies. A replication is a newly simulated dataset under the same
 setting, with a distinct prespecified seed; all applicable methods share it.
-Development uses three replications per selected setting. Publication retains
-100 for primary settings and 50 for supplementary settings.
+Development uses three replications in all seven settings. Publication uses
+100 replications in every setting.
 
 Previously frozen larger test datasets are not overwritten or silently truncated.
 Their manifests may be incompatible with this revised design; select a new
@@ -78,11 +77,12 @@ per chain, excluding warmup; `MIXEDGP_DEV_BURN` overrides warmup;
 ## Scope and remaining work
 
 The repository experiment layer retains iteration accounting and core-budgeted
-concurrency; the complete earlier development brief is not implemented. Current cells remain Study I
-eta0/eta1 with calibration 5/20 and Study II primary q2/q4 with calibration
-12 and 6/24, three replications and 200 test observations.
+concurrency. Study I crosses balanced/imbalanced categories with eta=0/1,
+each with calibration 0/10/50. Study II uses primary q=2 (calibration 50),
+primary q=4 (0/20/50/80), and logistic misspecification q=4 (50).
+See NUMERICAL_DESIGN.md for the agreed design.
 
-Remaining work includes the ten-cell design and affine control, scheduling
+Remaining work includes shared frozen-data storage between modes, scheduling
 across settings, method-level time caps/recovery, fit/evaluation cache
 separation, and recovery from genuine fitting/evaluation exceptions.
 Diagnostic handling is now shared: convergence and completeness checks

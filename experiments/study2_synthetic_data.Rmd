@@ -32,6 +32,8 @@ if (!VISUALIZATIONS_ONLY && !requireNamespace("eivGP", quietly = TRUE)) {
 }
 if (!VISUALIZATIONS_ONLY) library(eivGP)
 if (!VISUALIZATIONS_ONLY) {
+  source(file.path(REPOSITORY_DIR, "codes", "00_diagnostics.R"),
+         local = knitr::knit_global())
   source(file.path(REPOSITORY_DIR, "codes", "simulation_helpers.R"),
          local = knitr::knit_global())
 }
@@ -69,9 +71,10 @@ generate_study2_publication_data <- function(mode, workers, data_root,
     mode = mode,
     workers = workers,
     data_root = data_root,
-    output_root = output_root,
-    stages = if (mode %in% c("smoke", "publication")) "data" else NULL
+    output_root = output_root
   )
+  if (mode %in% c("smoke", "publication")) config$stages <- "data"
+  config <- validate_simulation_config(config)
   run_study2_simulation(config)
 }
 ```
@@ -116,7 +119,7 @@ if (!requireNamespace("ggplot2", quietly = TRUE)) {
 }
 library(ggplot2)
 VIS_REP <- 1L
-VIS_CALIBRATION <- 48L
+VIS_CALIBRATION <- 50L
 manifest_paths <- sort(list.files(DATA_ROOT, pattern = "^manifest\\.rds$",
                                  recursive = TRUE, full.names = TRUE))
 frozen_examples <- list()
@@ -180,7 +183,7 @@ frozen_theme <- theme_bw(base_size = 11) +
 
 The figures expose the simulated latent truth for explanation; that truth is
 not made available to fitted methods outside the saved calibration subset.
-The 48-observation calibration set is highlighted only where already stored.
+The 50-observation calibration set is highlighted only where already stored.
 
 ```{r study2-frozen-plots, fig.width=11, fig.height=8}
 if (length(frozen_examples)) {
@@ -203,7 +206,7 @@ if (length(frozen_examples)) {
     ids <- if (available) frozen$calibration_sets[[key]] else integer()
     if (available) stopifnot(length(ids) == VIS_CALIBRATION, !anyDuplicated(ids),
                              all(ids %in% seq_len(nrow(train$X))))
-    label <- paste0(setting, if (available) " | calibration=48" else " | calibration=48 unavailable")
+    label <- paste0(setting, if (available) " | calibration=50" else " | calibration=50 unavailable")
     latent_rows[[setting]] <- data.frame(
       U1 = train$U[, 1], U2 = train$U[, 2], f = train$f,
       setting = label, calibrated = seq_len(nrow(train$X)) %in% ids)

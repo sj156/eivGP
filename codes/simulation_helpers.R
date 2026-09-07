@@ -129,9 +129,7 @@ mixedgp_development_profile <- function(config) {
     value <- suppressWarnings(as.numeric(Sys.getenv(name, unset = as.character(default))))
     mixedgp_validate_scalar_integer(value, name, minimum)
   }
-  selected <- if (config$study == "study1") {
-    c("eta0_balanced", "eta1_balanced")
-  } else c("primary_q2", "primary_q4_calibration")
+  selected <- vapply(config$cells, `[[`, character(1L), "id")
   requested <- Sys.getenv("MIXEDGP_DEV_CELLS", unset = "")
   ids <- vapply(config$cells, `[[`, character(1L), "id")
   if (nzchar(requested)) selected <- trimws(strsplit(requested, ",", fixed = TRUE)[[1L]])
@@ -145,12 +143,6 @@ mixedgp_development_profile <- function(config) {
   draws <- integer_env("MIXEDGP_DEV_DRAWS", 1250L)
   config$cells <- lapply(config$cells, function(cell) {
     cell$n_rep <- reps
-    cell$n_test <- 200L
-    if (config$study == "study1" && length(cell$calibration_grid) > 1L) {
-      cell$calibration_grid <- c(5L, 20L)
-    } else if (config$study == "study2" && length(cell$calibration_grid) > 1L) {
-      cell$calibration_grid <- c(6L, 24L)
-    }
     cell
   })
   config$run_id <- paste0(config$study, "-development")
@@ -283,85 +275,44 @@ mixedgp_estimand_method_matrix <- function(study = c("study1", "study2")) {
 }
 
 mixedgp_study1_cells <- function(mode) {
-  publication <- identical(mode, "publication")
   smoke <- identical(mode, "smoke")
-  primary_rep <- if (smoke) 1L else if (publication) 100L else 100L
-  sensitivity_rep <- if (smoke) 1L else if (publication) 50L else 50L
-  n_test <- if (smoke) 80L else 200L
-  primary <- lapply(c(0, 0.5, 1), function(eta) {
-    list(
-      id = paste0("eta", mixedgp_number_slug(eta), "_balanced"),
-      role = "primary_paired_heterogeneity",
-      scenario = "heterogeneity_continuum",
-      heterogeneity_eta = eta,
-      threshold_design = "balanced",
-      min_class_count = 0L,
-      n = 100L,
-      n_test = n_test,
-      n_rep = primary_rep,
-      m = 6L,
-      calibration_grid = if (smoke) c(0L, 5L) else c(0L, 5L, 10L, 20L, 50L),
-      evaluate_f = identical(eta, 1),
-      evaluate_u = eta %in% c(0, 1),
-      run_ablations = TRUE
-    )
-  })
-  sensitivity <- list(list(
-    id = "eta1_imbalanced",
-    role = "appendix_threshold_imbalance",
-    scenario = "heterogeneity_continuum",
-    heterogeneity_eta = 1,
-    threshold_design = "imbalanced",
-    min_class_count = 3L,
-    n = 100L,
-    n_test = n_test,
-    n_rep = sensitivity_rep,
-    m = 6L,
-    calibration_grid = if (smoke) c(5L) else c(20L),
-    evaluate_f = TRUE,
-    evaluate_u = TRUE,
-    run_ablations = TRUE
-  ))
-  c(primary, sensitivity)
+  cells <- list()
+  for (threshold_design in c("balanced", "imbalanced")) {
+    for (eta in c(0, 1)) {
+      cells[[length(cells) + 1L]] <- list(
+        id = paste0("eta", eta, "_", threshold_design),
+        role = "primary_imbalance_by_heterogeneity",
+        scenario = "heterogeneity_continuum",
+        heterogeneity_eta = eta, threshold_design = threshold_design,
+        min_class_count = if (threshold_design == "imbalanced") 3L else 0L,
+        n = 100L, n_test = if (smoke) 80L else 100L,
+        n_rep = if (smoke) 1L else 100L, m = 6L,
+        calibration_grid = if (smoke) c(0L, 5L) else c(0L, 10L, 50L),
+        evaluate_f = identical(eta, 1), evaluate_u = TRUE,
+        run_ablations = TRUE)
+    }
+  }
+  cells
 }
 
 mixedgp_study2_cells <- function(mode) {
-  publication <- identical(mode, "publication")
   smoke <- identical(mode, "smoke")
-  main_rep <- if (smoke) 1L else if (publication) 100L else 100L
-  appendix_rep <- if (smoke) 1L else if (publication) 50L else 50L
-  n_test <- if (smoke) 60L else 200L
-  n_test_stress <- if (smoke) 80L else 200L
-  make_cell <- function(id, role, scenario, q, grid, n_rep, n_test,
-                        run_ablations, evaluate_f = FALSE,
-                        evaluate_u = TRUE) {
-    list(
-      id = id, role = role, scenario = scenario, q = as.integer(q),
-      d = 2L, m = 4L, n = 120L, n_test = as.integer(n_test),
-      n_rep = as.integer(n_rep), calibration_grid = as.integer(grid),
-      run_ablations = isTRUE(run_ablations),
-      evaluate_f = isTRUE(evaluate_f), evaluate_u = isTRUE(evaluate_u)
-    )
+  make_cell <- function(id, role, scenario, q, grid,
+                        run_ablations, evaluate_f = FALSE, evaluate_u = TRUE) {
+    list(id = id, role = role, scenario = scenario, q = as.integer(q),
+         d = 2L, m = 4L, n = 100L, n_test = if (smoke) 60L else 100L,
+         n_rep = if (smoke) 1L else 100L, calibration_grid = as.integer(grid),
+         run_ablations = run_ablations, evaluate_f = evaluate_f,
+         evaluate_u = evaluate_u)
   }
   list(
-    make_cell("primary_q2", "primary_proxy_dimension", "primary", 2L,
-              if (smoke) 6L else 12L, main_rep, n_test, TRUE),
-    make_cell("primary_q3", "primary_proxy_dimension", "primary", 3L,
-              if (smoke) 6L else 12L, main_rep, n_test, TRUE),
+    make_cell("primary_q2", "correct_measurement_specification", "primary", 2L,
+              if (smoke) 6L else 50L, TRUE),
     make_cell("primary_q4_calibration", "primary_calibration_curve", "primary", 4L,
-              if (smoke) c(0L, 6L) else c(0L, 6L, 12L, 24L, 48L),
-              main_rep, n_test, TRUE, evaluate_f = TRUE),
-    make_cell("additive_q4", "negative_control", "latent_additive_control", 4L,
-              if (smoke) 6L else 12L, appendix_rep, n_test, TRUE,
-              evaluate_u = FALSE),
-    make_cell("high_uncertainty_q4", "uncertainty_control", "high_uncertainty", 4L,
-              if (smoke) 6L else 12L, appendix_rep, n_test, TRUE,
-              evaluate_u = FALSE),
-    make_cell("logistic_q4", "appendix_misspecification", "logistic_misspec", 4L,
-              if (smoke) 6L else 12L, appendix_rep, n_test, FALSE,
-              evaluate_u = FALSE),
-    make_cell("primary_q6", "appendix_sparse_pattern_stress", "primary", 6L,
-              if (smoke) 6L else 12L, appendix_rep, n_test_stress, TRUE)
+              if (smoke) c(0L, 6L) else c(0L, 20L, 50L, 80L), TRUE,
+              evaluate_f = TRUE),
+    make_cell("logistic_q4", "measurement_misspecification", "logistic_misspec", 4L,
+              if (smoke) 6L else 50L, FALSE, evaluate_u = FALSE)
   )
 }
 
@@ -1086,8 +1037,9 @@ mixedgp_validate_common_random_numbers <- function(config, engine = NULL) {
   }
   by_id <- setNames(config$cells, vapply(config$cells, `[[`, character(1L), "id"))
   if (config$study == "study1") {
+    for (design in c("balanced", "imbalanced")) {
     primary_ids <- intersect(
-      c("eta0_balanced", "eta0p5_balanced", "eta1_balanced"), names(by_id)
+      paste0("eta", c(0, 1), "_", design), names(by_id)
     )
     if (length(primary_ids) >= 2L) {
       reference <- by_id[[primary_ids[[1L]]]]
@@ -1132,6 +1084,7 @@ mixedgp_validate_common_random_numbers <- function(config, engine = NULL) {
           add_check(reference$id, id, component, component_pass[[component]], n_check)
         }
       }
+    }
     }
   } else {
     reference_id <- if ("primary_q4_calibration" %in% names(by_id)) {
@@ -1222,8 +1175,8 @@ mixedgp_validate_common_random_numbers <- function(config, engine = NULL) {
 }
 
 mixedgp_cell_controls_study1 <- function(config, cell, cell_output) {
-  mechanism_calib <- if (20L %in% cell$calibration_grid) {
-    20L
+  mechanism_calib <- if (50L %in% cell$calibration_grid) {
+    50L
   } else {
     max(cell$calibration_grid)
   }
@@ -2044,17 +1997,22 @@ mixedgp_method_comparisons <- function(combined) {
   ))
 }
 
-mixedgp_study1_mechanism_contrasts <- function(comparisons) {
+mixedgp_study1_mechanism_contrasts <- function(comparisons, threshold_design = NULL) {
+  if (is.null(threshold_design)) {
+    return(mixedgp_bind_rows_base(lapply(c("balanced", "imbalanced"), function(design) {
+      mixedgp_study1_mechanism_contrasts(comparisons, design)
+    })))
+  }
   if (!is.data.frame(comparisons) || nrow(comparisons) == 0L ||
       !"cell_id" %in% names(comparisons)) return(data.frame())
   control <- comparisons[
-    comparisons$cell_id == "eta0_balanced" &
+    comparisons$cell_id == paste0("eta0_", threshold_design) &
       comparisons$task %in% c(
         "response prediction Y*|x*,c*", "observable mean m(x,c)"
       ), , drop = FALSE
   ]
   active <- comparisons[
-    comparisons$cell_id == "eta1_balanced" &
+    comparisons$cell_id == paste0("eta1_", threshold_design) &
       comparisons$task %in% c(
         "response prediction Y*|x*,c*", "observable mean m(x,c)"
       ), , drop = FALSE
@@ -2072,7 +2030,7 @@ mixedgp_study1_mechanism_contrasts <- function(comparisons) {
   names(control)[names(control) == "EIV_advantage"] <- "advantage_eta0"
   names(active)[names(active) == "EIV_advantage"] <- "advantage_eta1"
   out <- merge(control, active, by = keys, all = FALSE, sort = FALSE)
-  out$contrast <- "heterogeneity: eta=1 minus eta=0"
+  out$contrast <- paste0("heterogeneity (", threshold_design, "): eta=1 minus eta=0")
   out$advantage_change <- out$advantage_eta1 - out$advantage_eta0
   out$contrast_direction <- "positive means heterogeneity strengthens EIV advantage"
   out

@@ -33,6 +33,8 @@ if (!VISUALIZATIONS_ONLY && !requireNamespace("eivGP", quietly = TRUE)) {
 }
 if (!VISUALIZATIONS_ONLY) library(eivGP)
 if (!VISUALIZATIONS_ONLY) {
+  source(file.path(REPOSITORY_DIR, "codes", "00_diagnostics.R"),
+         local = knitr::knit_global())
   source(file.path(REPOSITORY_DIR, "codes", "simulation_helpers.R"),
          local = knitr::knit_global())
 }
@@ -72,11 +74,10 @@ generate_study1_publication_data <- function(mode, workers, data_root,
     mode = mode,
     workers = workers,
     data_root = data_root,
-    output_root = output_root,
-    # The data-only stage does not create simulation results.  In dry-run mode
-    # the repository helper retains its read-only default stages.
-    stages = if (mode %in% c("smoke", "publication")) "data" else NULL
+    output_root = output_root
   )
+  if (mode %in% c("smoke", "publication")) config$stages <- "data"
+  config <- validate_simulation_config(config)
   run_study1_simulation(config)
 }
 ```

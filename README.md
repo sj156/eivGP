@@ -6,7 +6,12 @@ The reusable package and the manuscript's numerical experiments are separate:
 `eivGP/` is the single installable package; `codes/` is its canonical source;
 `experiments/` and the repository simulation helpers define the studies.
 
-Version 0.3.1 improves transitions without changing the 0.3.0 posterior:
+The current source default is `r ~ Beta(13,3)`, with probability 0.9021 between
+0.65 and 0.95 and mean 0.8125. Earlier 0.3.1 fits used Beta(32,8); version alone
+does not identify the prior. Inspect saved `priors$signal_shape`. Continuation
+preserves a fit's original prior; adopting the new prior requires a fresh fit.
+
+The original version 0.3.1 release improved transitions without changing the 0.3.0 posterior:
 deterministic-threshold cutoffs use exact coordinate Gibbs updates, while
 ordinal-probit joint moves reuse exact block-GP calculations and evaluate
 only affected ordinal factors. Existing cutoff/input transports are retained.
@@ -70,7 +75,7 @@ R CMD check --no-manual eivGP_0.3.1.tar.gz
 
 You can currently run the revised experiments in **development mode**. This is
 not yet exact reproduction of final paper tables: the revised publication
-results have not been generated, publication MCMC budgets remain undecided,
+results have not been generated, the publication MCMC budget is specified below,
 and shared frozen-data storage between modes is not yet implemented.
 Development uses the same five settings and sample sizes, but only three
 replicated datasets per setting instead of 50. Real-data reproduction
@@ -356,15 +361,68 @@ relative to the checkout and require no author-specific local folders.
 
 ### Moving to publication reproduction
 
-Publication uses 50 replications per setting. Before final tables can be
-reproduced, we must finalize the publication MCMC/evaluation budgets, prepare and
-audit the revised frozen collection, and make development use a prescribed
-subset of that same collection. Currently the two modes have separate default
-data directories. Fits from before 0.3.0 must be refitted under the new posterior;
-0.3.0 fits cannot be relabeled as results from the 0.3.1 algorithm.
-Do not interpret the existing publication launcher's numeric
-defaults as a finalized paper protocol. See [DEVELOPMENT.md](DEVELOPMENT.md) for
-current limitations and diagnostic handling.
+Publication uses 50 replications per setting. Both studies use the following
+EIV-GP sampling budget:
+
+| Setting | Chains | Warmup per chain | Retained per chain | Total iterations per chain |
+|---|---:|---:|---:|---:|
+| Study I and Study II | 4 | 5,000 | 15,000 | 20,000 |
+
+All 60,000 post-warmup draws are kept (`thin = 1`). Development and smoke
+budgets, measurement-only comparator budgets, and evaluation/integration
+budgets are unchanged. Keeping every sampling draw does not imply evaluating
+every draw in every prediction routine; those separate budgets remain recorded
+in the resolved configuration.
+
+```bash
+Rscript --vanilla experiments/run_publication_study.R study1-data
+Rscript --vanilla experiments/run_publication_study.R study2-data
+Rscript --vanilla experiments/run_publication_study.R study1
+Rscript --vanilla experiments/run_publication_study.R study2
+```
+
+The launcher defaults to publication mode. `EIVGP_WORKERS` controls replication
+workers, not chain count. Use a worker count appropriate to memory and avoid
+nested parallel oversubscription. Existing frozen data are verified rather than
+silently replaced; changed fitting configurations receive distinct run identities.
+
+The budget is a starting protocol, not a convergence guarantee. Runs finish
+with diagnostic warnings rather than requiring a convergence gate, and do not
+automatically extend. Review target-specific R-hat (reference 1.01), bulk/tail
+ESS (reference 400), MCSE, and traces, particularly for variance summaries and
+latent imputation. Extend selected fits explicitly when warranted. Numerical
+failures remain errors, not mixing warnings.
+
+#### Interruptions and restart
+
+Results are saved atomically after each complete synthetic-data replication
+within a design cell (including its configured calibration settings and
+evaluation), not every 500 MCMC iterations. Rerun the same command with the
+same source, configuration, and data to validate and reuse completed caches.
+An unfinished replication restarts from its beginning; completed replications
+do not. This is dataset-level recovery, not within-chain continuation.
+
+Each cell's `tables/study1_replication_status.csv.tasks/` or
+`tables/study2_replication_status.csv.tasks/` contains one live status file per
+task: `pending`, `running`, `success`, or `failed`. The adjacent status CSV
+summarizes the batch after workers return. After a killed process, `running`
+may be stale; the validated result cache, not the status label, determines reuse.
+Do not run two launchers concurrently against the same output directory.
+Diagnostic warnings do not invalidate a completed result. Changes to priors,
+code, or fitting configuration require a distinct compatible run identity;
+old-prior results are never relabeled as new-prior fits.
+
+This budget change does not change priors or promote experimental input--signal
+moves into the default sampler. Code and manuscript now use Beta(13,3).
+The saved continuation used Beta(32,8), and the earlier joint-move Study I pilots
+used Beta(13.052446,2.794765); neither validates the current prior. First check one
+representative fit per study at the publication budget for runtime and mixing.
+
+Before final tables are reported, audit the frozen collection and evaluation
+budgets. Development and publication still have separate default data directories.
+Fits from before 0.3.0 must be refitted under the new posterior; 0.3.0 fits cannot
+be relabeled as results from the 0.3.1 algorithm. See [DEVELOPMENT.md](DEVELOPMENT.md)
+for remaining design limitations and diagnostic handling.
 
 ## Fit, predict, and diagnose
 
@@ -414,7 +472,7 @@ can improve Monte Carlo precision; poor mixing also requires investigation.
 ## Posterior and repository experiments
 
 The current sampler integrates out the common variance and uses
-`V ~ IG(3,2)`, a signal fraction `r ~ Beta(32,8)`, continuous numeric-input
+`V ~ IG(3,2)`, a signal fraction `r ~ Beta(13,3)`, continuous numeric-input
 kernel coefficients, a finite dictionary of latent-input kernel coefficients,
 and Dirichlet priors
 on ordinal category probabilities. Conditional variance recovery preserves the

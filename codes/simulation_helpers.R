@@ -369,7 +369,9 @@ study1_simulation_config <- function(
       list(n_iter = 120L, burn = 40L, thin = 1L, n_chains = 1L,
            rhat_limit = 1.05, ess_limit = 20L, require_gate = FALSE)
     } else {
-      list(n_iter = 5000L, burn = 1000L, thin = 1L, n_chains = 4L,
+      list(n_iter = if (mode == "publication") 20000L else 5000L,
+           burn = if (mode == "publication") 5000L else 1000L,
+           thin = 1L, n_chains = 4L,
            rhat_limit = 1.01, ess_limit = 400L,
            require_gate = identical(mode, "publication"))
     },
@@ -442,7 +444,9 @@ study2_simulation_config <- function(
            target_bulk_ess_limit = 10L, target_tail_ess_limit = 10L,
            require_gate = FALSE)
     } else {
-      list(n_iter = 4000L, burn = 1000L, thin = 1L, n_chains = 4L,
+      list(n_iter = if (mode == "publication") 20000L else 4000L,
+           burn = if (mode == "publication") 5000L else 1000L,
+           thin = 1L, n_chains = 4L,
            rhat_limit = 1.01, raw_ess_limit = 400L,
            target_bulk_ess_limit = 400L, target_tail_ess_limit = 400L,
            require_gate = identical(mode, "publication"))
@@ -1310,18 +1314,41 @@ mixedgp_get_cell_output <- function(envir, name) {
 
 ## Catch errors inside workers before mclapply converts them to try-error
 ## strings. Keep successful replications and expose the original failure.
+mixedgp_save_replication <- function(object, path) {
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  temporary <- tempfile(paste0(basename(path), ".tmp-"), dirname(path))
+  on.exit(unlink(temporary), add = TRUE)
+  saveRDS(object, temporary)
+  if (!file.rename(temporary, path)) stop("Could not commit replication: ", path)
+  invisible(path)
+}
+
 mixedgp_run_replications <- function(X, FUN, n_cores, seeds, status_path,
                                     study, parallel_map, mc.preschedule = FALSE) {
-  worker <- function(x) {
+  ## Each worker owns one small status file. No shared CSV writes from forks.
+  task_dir <- paste0(status_path, ".tasks")
+  dir.create(task_dir, recursive = TRUE, showWarnings = FALSE)
+  task_paths <- file.path(task_dir, sprintf("task-%05d.csv", seq_along(X)))
+  record <- function(i, state, message = "", elapsed = NA_real_) {
+    mixedgp_atomic_write_csv(data.frame(
+      task = paste(X[[i]], collapse = ","), status = state,
+      message = message, elapsed_seconds = elapsed,
+      updated_at = format(Sys.time(), tz = "UTC", usetz = TRUE)), task_paths[i])
+  }
+  for (i in seq_along(X)) if (!file.exists(task_paths[i])) record(i, "pending")
+  worker <- function(i) {
+    record(i, "running")
     started <- proc.time()[["elapsed"]]
-    tryCatch(list(ok = TRUE, value = FUN(x), message = "", call = "",
+    result <- tryCatch(list(ok = TRUE, value = FUN(X[[i]]), message = "", call = "",
                   elapsed = proc.time()[["elapsed"]] - started),
       error = function(e) list(ok = FALSE, value = NULL,
         message = conditionMessage(e),
         call = paste(deparse(conditionCall(e)), collapse = " "),
         elapsed = proc.time()[["elapsed"]] - started))
+    record(i, if (result$ok) "success" else "failed", result$message, result$elapsed)
+    result
   }
-  results <- parallel_map(X, worker, n_cores = n_cores,
+  results <- parallel_map(as.list(seq_along(X)), worker, n_cores = n_cores,
     seeds = seeds, mc.preschedule = mc.preschedule)
   results <- lapply(results, function(x) {
     if (is.list(x) && is.logical(x$ok) && length(x$ok) == 1L && !is.na(x$ok)) return(x)

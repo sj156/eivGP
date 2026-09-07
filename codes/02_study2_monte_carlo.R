@@ -900,7 +900,7 @@ run_or_load_study2_replication <- function(ii) {
       isTRUE(STUDY2_MC_RESUME) &&
       file.exists(rep_files[ii])
   ) {
-    cached <- readRDS(rep_files[ii])
+    cached <- tryCatch(readRDS(rep_files[ii]), error = function(e) NULL)
     data_path <- file.path(
       STUDY2_DATA_DIR,
       mixedgp_dataset_filename(
@@ -922,7 +922,7 @@ run_or_load_study2_replication <- function(ii) {
     message("Ignoring incompatible Study II cache: ", rep_files[ii])
   }
   out <- run_one_study2_replication(rep_id, scenario)
-  saveRDS(out, rep_files[ii])
+  mixedgp_save_replication(out, rep_files[ii])
   out
 }
 replication_cores <- if (STUDY2_PARALLEL_LEVEL == "hybrid") {

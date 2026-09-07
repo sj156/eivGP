@@ -451,7 +451,7 @@ run_or_load_study1_replication <- function(rr) {
     sprintf("study1_rep%03d_%s_%s.rds", rr, STUDY1_DESIGN_TAG, cache_mode)
   )
   if (isTRUE(STUDY1_USE_CACHE) && file.exists(rep_file)) {
-    cached <- readRDS(rep_file)
+    cached <- tryCatch(readRDS(rep_file), error = function(e) NULL)
     data_path <- file.path(
       STUDY1_DATA_DIR,
       mixedgp_dataset_filename(
@@ -475,7 +475,7 @@ run_or_load_study1_replication <- function(rr) {
     rr,
     run_eiv = !isTRUE(STUDY1_REUSE_LOCKED_EIV)
   )
-  saveRDS(out, rep_file)
+  mixedgp_save_replication(out, rep_file)
   out
 }
 rep_objects <- mixedgp_run_replications(

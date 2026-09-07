@@ -33,7 +33,7 @@ a study, data generation, replications, and reporting remain repository scripts.
 ## Target and transitions
 
 - Signal covariance is V*r*R and response-noise variance is V*(1-r).
-  Independently, V ~ IG(3,2) and r ~ Beta(32,8), on the standardized response
+  Independently, V ~ IG(3,2) and r ~ Beta(13,3), on the standardized response
   scale. IG(a,b) has density proportional to v^(-a-1)*exp(-b/v).
   r is a pointwise variance fraction, not realized regression R-squared.
 - GP values, V, and ordinal-probit scores are marginalized in the primary

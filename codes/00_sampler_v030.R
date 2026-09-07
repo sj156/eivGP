@@ -10,7 +10,7 @@ mixedgp_v030_logadd <- function(a, b) {
 
 mixedgp_v030_priors <- function(priors = list(), p, d, m_vec) {
   defaults <- list(
-    variance_shape = 3, variance_rate = 2, signal_shape = c(32, 8),
+    variance_shape = 3, variance_rate = 2, signal_shape = c(13, 3),
     log_theta_x_mean = rep(log(0.5), p), log_theta_x_sd = rep(1.5, p),
     u_dictionary = rep(list(exp(log(0.5) + 1.5 *
       stats::qnorm((seq_len(5L) - 0.5) / 5))), d),

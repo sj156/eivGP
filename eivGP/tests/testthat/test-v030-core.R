@@ -17,7 +17,7 @@ testthat::test_that("reference priors and the product dictionary match the targe
   prior <- mixedgp_v030_priors(list(), p = 2L, d = 2L, m_vec = c(2L, 4L))
   testthat::expect_equal(prior$variance_shape, 3)
   testthat::expect_equal(prior$variance_rate, 2)
-  testthat::expect_equal(prior$signal_shape, c(32, 8))
+  testthat::expect_equal(prior$signal_shape, c(13, 3))
   testthat::expect_equal(prior$log_theta_x_mean, rep(log(.5), 2L))
   testthat::expect_equal(prior$log_theta_x_sd, rep(1.5, 2L))
   testthat::expect_equal(prior$loading_sd, 2.5)
@@ -171,7 +171,7 @@ testthat::test_that("measurement decoding enforces structural loadings and prior
   testthat::expect_equal(decoded$A[1L, 2L], 0)
   testthat::expect_true(all(diag(decoded$A) > 0))
   testthat::expect_equal(decoded$A[2L, 1L], -1)
-  testthat::expect_equal(decoded$r, qbeta(pnorm(.3), 32, 8), tolerance = 1e-12)
+  testthat::expect_equal(decoded$r, qbeta(pnorm(.3), 13, 3), tolerance = 1e-12)
   testthat::expect_equal(decoded$theta_u,
     c(prior$u_dictionary[[1L]][1L], prior$u_dictionary[[2L]][4L]))
   internal_tau <- vector("list", 2L)

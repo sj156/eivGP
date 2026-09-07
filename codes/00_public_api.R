@@ -166,7 +166,7 @@ mixedgp_resolve_latent_scale <- function(object,
 #'   variance is \eqn{V(1-r)}. Multiply either variance by `fit$data$y_scale^2`
 #'   to express it in response units. The defaults are independent
 #'   \eqn{V\sim IG(3,2)} (density proportional to \eqn{v^{-4}\exp(-2/v)}) and
-#'   \eqn{r\sim Beta(32,8)}; r is a pointwise variance fraction, not realized
+#'   \eqn{r\sim Beta(13,3)}; r is a pointwise variance fraction, not realized
 #'   regression R-squared. Kernel coefficients refer to model-scaled inputs.
 #'   In particular, `u_dictionary` contains positive inverse squared-distance
 #'   coefficients, not lengths: the SE correlation is

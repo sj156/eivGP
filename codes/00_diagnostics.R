@@ -1,3 +1,45 @@
+## Shared export protocol; never recomputes diagnostics or changes their gates.
+mixedgp_write_diagnostic_tables <- function(summary, detail, output_dir,
+                                            prefix = "eivgp", overwrite = FALSE) {
+  if (!is.data.frame(summary) || !is.data.frame(detail))
+    stop("summary and detail must be data frames.")
+  if (!is.character(prefix) || length(prefix) != 1L || is.na(prefix) ||
+      !grepl("^[A-Za-z0-9_-]+$", prefix)) stop("Invalid export prefix.")
+  if (!is.logical(overwrite) || length(overwrite) != 1L || is.na(overwrite))
+    stop("overwrite must be TRUE or FALSE.")
+  if (!is.character(output_dir) || length(output_dir) != 1L ||
+      is.na(output_dir) || !nzchar(output_dir)) stop("Invalid output_dir.")
+  if (!"parameter" %in% names(detail)) {
+    if (nrow(detail)) stop("detail must contain parameter.")
+    detail$parameter <- character()
+  }
+  role <- if ("diagnostic_role" %in% names(detail)) as.character(detail$diagnostic_role) else
+    if ("group" %in% names(detail)) as.character(detail$group) else
+      if ("target" %in% names(detail)) ifelse(detail$target == "raw_coordinate", "raw",
+        ifelse(detail$target == "ordinal_measurement_invariant", "invariant", "target")) else
+          rep("unclassified", nrow(detail))
+  role[!is.na(role) & role == "raw_and_training_imputation"] <- "raw"
+  role[!is.na(role) & role == "measurement_invariant"] <- "invariant"
+  role[!is.na(role) & role == "scientific_panel"] <- "target"
+  role[!is.na(role) & role == "user_functional"] <- "additional"
+  detail$diagnostic_role <- role
+  raw <- !is.na(role) & role == "raw"
+  target <- !is.na(role) & role %in% c("target", "invariant", "additional")
+  tables <- list(mcmc_diagnostics = summary, mcmc_parameter_diagnostics = detail[raw, , drop = FALSE],
+    mcmc_target_diagnostics = detail[target, , drop = FALSE], mcmc_diagnostic_details = detail)
+  paths <- file.path(output_dir, paste0(prefix, "_", names(tables), ".csv"))
+  if (!overwrite && any(file.exists(paths))) stop("Diagnostic export exists; use overwrite = TRUE explicitly.")
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  for (i in seq_along(tables)) {
+    tmp <- tempfile(".diagnostics-", tmpdir = output_dir)
+    tryCatch({
+      utils::write.csv(tables[[i]], tmp, row.names = FALSE, na = "NA")
+      if (!file.rename(tmp, paths[i])) stop("Cannot publish diagnostic export: ", paths[i])
+    }, finally = if (file.exists(tmp)) unlink(tmp))
+  }
+  invisible(setNames(paths, names(tables)))
+}
+
 ## Release diagnostics must retain nonfinite entries: dropping one changes the
 ## proposition being checked. Only known fixed model coordinates are excluded
 ## when constructing the series, never because their diagnostics are inconvenient.

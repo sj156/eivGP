@@ -1,4 +1,4 @@
-# Canonical eivGP 0.3.0 source and repository experiments
+# Canonical eivGP 0.3.1 source and repository experiments
 
 The general model implementation in this directory is the source of the
 installable `eivGP/` package. Rebuild it from the repository root with
@@ -10,14 +10,28 @@ ordinal threshold prior. Earlier fits, checkpoints, and cached results must
 be refitted. All retained fitting draws are kept, without HMC or thinning.
 Fixed-budget fits return diagnostic warnings; continuation is explicit.
 
+Version 0.3.1 leaves that posterior unchanged and adds exact threshold cutoff
+Gibbs updates plus exact block-GP acceleration of probit joint moves.
+0.3.0 draws remain draws targeting the same posterior, but continuation must
+use the matching sampler version. Start fresh to use the new transitions.
+
 ## Model modules
+
+Standalone historical prototypes (`Basics.R`, `Demo.R`, `slides.R`,
+`latent-linear-regrssion.r`, and `eivgp_1d_deterministic_example_v3.R`)
+were removed from the active source tree on 2026-09-07. They are not inputs
+to the package build or current study workflows. A byte-preserving local
+backup is stored outside the repository at
+`/Users/sheng/Documents/ChatGPT/mixed-inputGP/cleanup-20260907/archive/`.
+Use `fit_eivgp()` for applications and the study masters below for experiments;
+the old standalone sampler is not the current posterior implementation.
 
 - `00_parallel_utils.R`: reusable deterministic parallel utilities and CPU
   allocation.
 - `00_study1_functions.R` and `00_study2_functions.R`: shared model,
   prediction, and numerical helpers; the historical filenames are retained.
 - `00_sampler_v030.R`: current collapsed target, prior transforms,
-  elliptical slice updates, finite-dictionary updates, and variance recovery.
+  elliptical slice and cutoff Gibbs updates, finite-dictionary updates, and variance recovery.
 - `00_sampler_v030_api.R`: current fitting adapters, diagnostics, and
   checkpoint state assembly.
 - `00_public_api.R`: reusable fitting, prediction, imputation, and competitor

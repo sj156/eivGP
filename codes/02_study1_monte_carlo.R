@@ -511,18 +511,8 @@ surface_recovery <- bind_rows(lapply(rep_objects, `[[`, "surface_recovery"))
 ablation_surface_recovery <- bind_rows(
   lapply(rep_objects, `[[`, "ablation_surface_recovery")
 )
-if (nrow(mcmc_diagnostics) > 0L) {
-  write.csv(
-    mcmc_diagnostics,
-    file.path(TAB_DIR, "study1_mcmc_diagnostics.csv"),
-    row.names = FALSE
-  )
-}
-if (nrow(mcmc_parameter_diagnostics) > 0L) {
-  write.csv(mcmc_parameter_diagnostics,
-            file.path(TAB_DIR, "study1_mcmc_parameter_diagnostics.csv"),
-            row.names = FALSE)
-}
+mixedgp_write_diagnostic_tables(mcmc_diagnostics, mcmc_parameter_diagnostics,
+  TAB_DIR, "study1", overwrite = TRUE)
 if (nrow(sampler_control_manifest) > 0L) {
   write.csv(
     sampler_control_manifest,

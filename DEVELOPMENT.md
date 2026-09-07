@@ -1,10 +1,12 @@
-# Repository development experiments with eivGP 0.3.0
+# Repository development experiments with eivGP 0.3.1
 
 This document describes the separate numerical-experiment layer. Its study
 cells, replication counts, evaluation budgets, and output paths are not
 package defaults or installed package APIs. The current posterior engines
-come from the canonical `codes/` modules used to build `eivGP` 0.3.0.
-Existing older fits and caches require refitting under the new posterior.
+come from the canonical `codes/` modules used to build `eivGP` 0.3.1.
+Version 0.3.1 changes transitions, not the 0.3.0 posterior. Keep results from
+different code revisions distinguishable and start fresh when comparing
+samplers. Fits from versions earlier than 0.3.0 target a different posterior.
 
 Development estimates are scientifically informative, but replication
 uncertainty and diagnostic warnings must accompany their interpretation.

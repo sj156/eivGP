@@ -132,7 +132,7 @@ mixedgp_resolve_latent_scale <- function(object,
 #' @param store_scores Whether to retain ordinal-probit score draws.
 #' @param parallel Whether to run independent MCMC chains in parallel.
 #' @param n_cores Number of forked workers; `NULL` uses package settings.
-#' @param priors Named list of 0.3.0 prior settings. These include
+#' @param priors Named list of 0.3.1 prior settings. These include
 #'   `variance_shape`, `variance_rate`, `signal_shape`, `log_theta_x_mean`,
 #'   `log_theta_x_sd`, `u_dictionary`, `u_weights`, `category_alpha`, and
 #'   `loading_sd`. `u_dictionary` is a list of positive coordinate grids or a
@@ -140,13 +140,21 @@ mixedgp_resolve_latent_scale <- function(object,
 #' @param sampler_control Named list controlling the collapsed sampler:
 #'   `u_block_size`, `cross_every`, `ess_max_steps`, `dictionary_mode`,
 #'   `max_dictionary_size`, and
-#'   `gp_block_schur`. The default dictionary update is conditional;
+#'   `gp_block_schur`, and `threshold_update`. Deterministic-threshold models
+#'   default to exact coordinate cutoff Gibbs updates. Use
+#'   `threshold_update = "gibbs"` (default), or `"ess"` to retain the previous joint cutoff slice update for
+#'   comparisons. This setting does not change the ordinal-probit updates.
+#'   `gp_block_schur` also accelerates the ordinal-probit joint move exactly.
+#'   `u_block_size` counts subjects (default 8), with every latent coordinate
+#'   of a selected subject updated together. Smaller blocks require more
+#'   setups per sweep; assess effective samples per second when tuning it.
+#'   The default dictionary update is conditional;
 #'   `dictionary_mode = "marginal"` integrates the finite dictionary in the
 #'   continuous latent-input updates.
 #' @param ... Additional sampler arguments such as `n_iter`, `burn`, and
 #'   `n_chains`. Every post-warm-up draw is retained: `thin`, if supplied, must
 #'   equal one. Defaults are 1750 transitions, 500 warm-up transitions, and
-#'   four chains. Version 0.3.0 uses a collapsed total-variance update, a
+#'   four chains. Version 0.3.1 uses a collapsed total-variance update, a
 #'   continuous signal fraction and X-kernel parameters, a finite U-kernel
 #'   dictionary, and blocked elliptical slice updates. Historical sampler
 #'   settings such as `noise_strategy`, `sampler_strategy`, and
@@ -383,7 +391,7 @@ fit_eivgp <- function(X,
     latent_kernel_metric = "diagonal ARD",
     latent_kernel_prior = "finite dictionary",
     variance_parameterization = "V { r R + (1-r) I }; V total variance, r signal fraction",
-    sampler_version = "0.3.0",
+    sampler_version = "0.3.1",
     sampler = "collapsed total variance, finite kernel dictionary, blocked elliptical slice",
     loading_structure = if (engine == "multivariate") ident else NA_character_,
     ordinal_residual_covariance = if (engine == "multivariate") "I_q" else NA_character_,
@@ -549,7 +557,7 @@ summary.eivgp_fit <- function(object, ...) {
   )
   names(mcmc) <- mcmc_names
   mcmc$sampler_version <- mixedgp_first_value(object$sampler_version, NA_character_)
-  mcmc$noise_strategy <- if (identical(object$sampler_version, "0.3.0"))
+  mcmc$noise_strategy <- if (isTRUE(object$sampler_version %in% c("0.3.0", "0.3.1")))
     "collapsed total variance" else mixedgp_first_value(object$control$noise_strategy, NA_character_)
   mcmc$dictionary_mode <- mixedgp_first_value(object$control$dictionary_mode, NA_character_)
   mcmc$u_block_size <- mixedgp_first_value(object$control$u_block_size, NA_integer_)

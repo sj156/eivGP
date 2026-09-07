@@ -1,4 +1,4 @@
-# eivGP 0.3.0
+# eivGP 0.3.1
 
 `eivGP` fits Gaussian process regressions with numeric predictors, ordinal
 proxies for latent continuous inputs, and optional calibration measurements.
@@ -6,7 +6,17 @@ The reusable package and the manuscript's numerical experiments are separate:
 `eivGP/` is the single installable package; `codes/` is its canonical source;
 `experiments/` and the repository simulation helpers define the studies.
 
-Version 0.3.0 restores the package name `eivGP` and replaces the previous
+Version 0.3.1 improves transitions without changing the 0.3.0 posterior:
+deterministic-threshold cutoffs use exact coordinate Gibbs updates, while
+ordinal-probit joint moves reuse exact block-GP calculations and evaluate
+only affected ordinal factors. Existing cutoff/input transports are retained.
+Set `sampler_control = list(threshold_update = "ess")` to compare with the
+previous cutoff transition; the default is `"gibbs"`. Neither option thins.
+Continuation requires a matching 0.3.1 checkpoint. Existing 0.3.0 draws target
+the same posterior, but should be continued using 0.3.0, or refitted to use
+the new transition schedule. Do not relabel old checkpoints.
+
+Version 0.3.0 restored the package name `eivGP` and replaced the previous
 posterior prior and sampler. Fits and checkpoints from `eivGP` 0.1.x or
 `eivmixgp` 0.1–0.2.x must be refitted. Renaming or relabeling an old fit does
 not migrate it to the new posterior.
@@ -53,7 +63,7 @@ To regenerate the package from canonical code, install `litr`, `rmarkdown`,
 ```sh
 Rscript --vanilla litr/render-package.R
 R CMD build eivGP
-R CMD check --no-manual eivGP_0.3.0.tar.gz
+R CMD check --no-manual eivGP_0.3.1.tar.gz
 ```
 
 ## Reproduce the numerical experiments: a new-reader workflow
@@ -89,7 +99,7 @@ R CMD INSTALL eivGP
 Rscript --vanilla -e 'library(eivGP); print(packageVersion("eivGP")); stopifnot(rmarkdown::pandoc_available())'
 ```
 
-The package version for this workflow is 0.3.0. If dependency installation
+The package version for this workflow is 0.3.1. If dependency installation
 fails, resolve the reported error before continuing. Missing optional
 competitors (`kergp`, `LVGP`, or `EzGP`) are recorded and skipped, so their
 comparisons will be incomplete. If Pandoc is not detected from Terminal,
@@ -350,8 +360,9 @@ Publication uses 50 replications per setting. Before final tables can be
 reproduced, we must finalize the publication MCMC/evaluation budgets, prepare and
 audit the revised frozen collection, and make development use a prescribed
 subset of that same collection. Currently the two modes have separate default
-data directories. Old fits must be refitted under 0.3.0; they cannot be relabeled
-as new results. Do not interpret the existing publication launcher's numeric
+data directories. Fits from before 0.3.0 must be refitted under the new posterior;
+0.3.0 fits cannot be relabeled as results from the 0.3.1 algorithm.
+Do not interpret the existing publication launcher's numeric
 defaults as a finalized paper protocol. See [DEVELOPMENT.md](DEVELOPMENT.md) for
 current limitations and diagnostic handling.
 
@@ -390,7 +401,7 @@ is kept (`thin = 1`); no HMC is used. Fits finish their requested budget and
 report diagnostic warnings. Review target-specific R-hat, ESS, and MCSE before
 scientific interpretation; numerical failures remain errors.
 
-Continuation is explicit and requires a compatible 0.3.0 checkpoint:
+Continuation is explicit and requires a compatible 0.3.1 checkpoint:
 
 ```r
 saveRDS(fit, "fit-checkpoint.rds")
@@ -426,3 +437,21 @@ release does not regenerate study results or establish publication readiness.
 The package retains optional reusable `fit_ucgp()`, `fit_lvgp()`, and
 `fit_ezgp()` competitor adapters. Run `citation("eivGP")` for the manuscript
 citation.
+# Unified diagnostic exports
+
+After `d <- diagnose_eivgp(fit)`, use
+`write_diagnostics_eivgp(d, "diagnostics")` to save summary, raw-parameter,
+target/invariant, and complete-detail CSVs plus the full diagnostic report RDS.
+Existing exports require explicit `overwrite = TRUE`. NA diagnostics remain NA;
+exporting does not refit, thin, extend chains, or certify convergence.
+
+Both study fitting drivers and saved-result reporting use the same table writer.
+The stable names are `studyN_mcmc_diagnostics.csv`,
+`studyN_mcmc_parameter_diagnostics.csv`, `studyN_mcmc_target_diagnostics.csv`, and
+`studyN_mcmc_diagnostic_details.csv`. Parameter files now contain raw coordinates
+only; the details file preserves the combined table formerly exported by Study I.
+Existing Study II cache-tagged reports remain available for compatibility.
+Study II `measurement_parameter_diagnostics` refers to the optional response-free
+measurement comparator, not EIV-GP; an empty comparator table does not imply
+missing EIV-GP diagnostics. Export normalization preserves study-specific gates
+and recorded draw windows; it does not retrospectively apply package thresholds.

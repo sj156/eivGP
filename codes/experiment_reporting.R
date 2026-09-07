@@ -71,6 +71,12 @@ mixedgp_report_run <- function(run_dir, action = c("report", "summarize", "plot"
       assign(paste0(toupper(config$study), "_OUT_PREFIX"), target, env)
       for (dir in c(env$FIG_DIR, env$TAB_DIR, env$RES_DIR)) dir.create(dir, recursive = TRUE, showWarnings = FALSE)
       env$write.csv <- if (action == "plot") function(...) invisible(NULL) else utils::write.csv
+      if (action != "plot" && config$study == "study1")
+        mixedgp_write_diagnostic_tables(env$mcmc_diagnostics, env$mcmc_parameter_diagnostics,
+          env$TAB_DIR, "study1", overwrite = TRUE)
+      if (action != "plot" && config$study == "study2")
+        mixedgp_write_diagnostic_tables(env$mc_diagnostics, env$mc_target_diagnostics,
+          env$TAB_DIR, "study2", overwrite = TRUE)
       env$writeLines <- if (action == "plot") function(...) invisible(NULL) else base::writeLines
       env$capture.output <- function(..., file = NULL) {
         if (action == "plot" && !is.null(file)) return(invisible(NULL))

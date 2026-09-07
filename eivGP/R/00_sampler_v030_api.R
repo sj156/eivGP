@@ -1,4 +1,4 @@
-## General-purpose adapters for the 0.3.0 collapsed sampler.
+## General-purpose adapters for the 0.3.1 collapsed sampler.
 ## Existing prediction helpers use an algebraically equivalent covariance:
 ## sigma2 = V * (1-r), rho^2 = r/(1-r).
 
@@ -7,7 +7,7 @@ mixedgp_v030_validate_arguments <- function(n_iter, burn, thin, n_chains,
                                            verbose, preset, dots) {
   mixedgp_validate_named_dots(dots)
   if (length(dots)) {
-    stop("Unsupported 0.3.0 sampler argument(s): ", paste(names(dots), collapse = ", "),
+    stop("Unsupported 0.3.1 sampler argument(s): ", paste(names(dots), collapse = ", "),
          ". Configure the new model with priors and sampler_control; historical sampler controls are incompatible.")
   }
   n_iter <- mixedgp_as_integer_strict(n_iter, "n_iter", 1L, 1L)
@@ -25,7 +25,7 @@ mixedgp_v030_validate_arguments <- function(n_iter, burn, thin, n_chains,
         !preset %in% c("fast", "balanced", "robust", "thorough")) {
       stop("preset must be NULL or a recognized historical budget label.")
     }
-    warning("preset is a deprecated budget label; 0.3.0 uses explicit n_iter, burn, priors, and sampler_control.",
+    warning("preset is a deprecated budget label; 0.3.1 uses explicit n_iter, burn, priors, and sampler_control.",
             call. = FALSE)
   }
   list(n_iter = n_iter, burn = burn, n_chains = n_chains, seed = seed,
@@ -178,7 +178,7 @@ mixedgp_v030_checkpoint_hash <- function(object) {
 
 mixedgp_v030_fit_object <- function(result, data, engine, kernel, matern_nu,
                                     resume = NULL) {
-  if (!identical(result$sampler_version, "0.3.0")) stop("Unexpected sampler version.")
+  if (!identical(result$sampler_version, "0.3.1")) stop("Unexpected sampler version.")
   if (!is.null(resume)) resume$target_iteration <- result$iteration
   chains <- result$chains
   m_vec <- if (engine == "univariate") data$m else data$m_vec
@@ -207,8 +207,8 @@ mixedgp_v030_fit_object <- function(result, data, engine, kernel, matern_nu,
   fit <- list(data = data, kernel = list(name = kernel, matern_nu = matern_nu),
               priors = result$priors, gp_prior = result$priors, control = result$control,
               sampler_strategy = "collapsed_dictionary_ess",
-              sampler_version = "0.3.0", mcmc = mcmc,
-              checkpoint = list(version = 2L, sampler_version = "0.3.0",
+              sampler_version = "0.3.1", mcmc = mcmc,
+              checkpoint = list(version = 2L, sampler_version = "0.3.1",
                 iteration = result$iteration, burn = result$burn, thin = 1L,
                 control = result$control,
                 states = lapply(chains, function(chain) chain$checkpoint)))
@@ -224,7 +224,7 @@ mixedgp_v030_fit_object <- function(result, data, engine, kernel, matern_nu,
   }
   finite_summary <- function(x, f) if (length(x) && all(is.finite(x))) f(x) else NA_real_
   diagnostic_summary <- data.frame(
-    sampler_version = "0.3.0", sampler_strategy = "collapsed_dictionary_ess",
+    sampler_version = "0.3.1", sampler_strategy = "collapsed_dictionary_ess",
     kernel = kernel, matern_nu = matern_nu, n_chains = length(chains),
     parallel_backend = result$parallel_backend, parallel_cores = result$parallel_cores,
     n_iter = result$iteration, burn = result$burn, thin = 1L,

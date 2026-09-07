@@ -1016,3 +1016,5 @@ report_context <- mget(report_names, envir = environment(), inherits = FALSE)
 report_context <- Filter(function(x) !is.function(x) && !is.environment(x), report_context)
 mixedgp_atomic_save_rds(list(schema = 1L, study = "study2", context = report_context),
         file.path(STUDY2_OUT_PREFIX, "report_inputs.rds"))
+mixedgp_write_diagnostic_tables(mc_diagnostics, mc_target_diagnostics,
+  TAB_DIR, "study2", overwrite = TRUE)

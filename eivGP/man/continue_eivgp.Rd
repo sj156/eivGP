@@ -13,9 +13,11 @@ continue_eivgp(
 )
 }
 \arguments{
-\item{object}{An unmodified fit returned by \code{\link[=fit_eivgp]{fit_eivgp()}} in version 0.3.0,
+\item{object}{An unmodified fit returned by \code{\link[=fit_eivgp]{fit_eivgp()}} in version 0.3.1,
 or by a previous call to this function. Earlier sampler checkpoints are
-incompatible and must be refitted.}
+incompatible with this transition revision. Version 0.3.0 targets the
+same posterior, but reproduce/continue those chains with that version,
+or start a fresh fit to use the new transitions.}
 
 \item{n_iter}{Additional transitions per chain, not additional saved draws.
 Every post-warm-up transition is retained; there is no thinning.}

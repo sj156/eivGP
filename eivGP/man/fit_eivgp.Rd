@@ -67,7 +67,7 @@ fitting. The default is \code{TRUE} when calibration is available.}
 
 \item{n_cores}{Number of forked workers; \code{NULL} uses package settings.}
 
-\item{priors}{Named list of 0.3.0 prior settings. These include
+\item{priors}{Named list of 0.3.1 prior settings. These include
 \code{variance_shape}, \code{variance_rate}, \code{signal_shape}, \code{log_theta_x_mean},
 \code{log_theta_x_sd}, \code{u_dictionary}, \code{u_weights}, \code{category_alpha}, and
 \code{loading_sd}. \code{u_dictionary} is a list of positive coordinate grids or a
@@ -76,14 +76,22 @@ positive matrix with one complete latent-kernel parameter vector per row.}
 \item{sampler_control}{Named list controlling the collapsed sampler:
 \code{u_block_size}, \code{cross_every}, \code{ess_max_steps}, \code{dictionary_mode},
 \code{max_dictionary_size}, and
-\code{gp_block_schur}. The default dictionary update is conditional;
+\code{gp_block_schur}, and \code{threshold_update}. Deterministic-threshold models
+default to exact coordinate cutoff Gibbs updates. Use
+\code{threshold_update = "gibbs"} (default), or \code{"ess"} to retain the previous joint cutoff slice update for
+comparisons. This setting does not change the ordinal-probit updates.
+\code{gp_block_schur} also accelerates the ordinal-probit joint move exactly.
+\code{u_block_size} counts subjects (default 8), with every latent coordinate
+of a selected subject updated together. Smaller blocks require more
+setups per sweep; assess effective samples per second when tuning it.
+The default dictionary update is conditional;
 \code{dictionary_mode = "marginal"} integrates the finite dictionary in the
 continuous latent-input updates.}
 
 \item{...}{Additional sampler arguments such as \code{n_iter}, \code{burn}, and
 \code{n_chains}. Every post-warm-up draw is retained: \code{thin}, if supplied, must
 equal one. Defaults are 1750 transitions, 500 warm-up transitions, and
-four chains. Version 0.3.0 uses a collapsed total-variance update, a
+four chains. Version 0.3.1 uses a collapsed total-variance update, a
 continuous signal fraction and X-kernel parameters, a finite U-kernel
 dictionary, and blocked elliptical slice updates. Historical sampler
 settings such as \code{noise_strategy}, \code{sampler_strategy}, and

@@ -9,7 +9,7 @@ Run from the repository root:
 ```sh
 Rscript --vanilla litr/render-package.R
 R CMD build eivGP
-R CMD check --no-manual eivGP_0.3.0.tar.gz
+R CMD check --no-manual eivGP_0.3.1.tar.gz
 ```
 
 The wrapper resolves absolute paths, so the output location does not depend

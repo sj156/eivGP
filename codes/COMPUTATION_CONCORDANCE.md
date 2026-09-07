@@ -1,4 +1,28 @@
-# eivGP 0.3.0: computation-to-code concordance
+# eivGP 0.3.1: computation-to-code concordance
+
+## Transition revision (posterior unchanged)
+
+For deterministic thresholds, let P_k = Phi(tau_k), P_0=0, P_m=1.
+At fixed U and neighboring cutoffs, the split
+T_k=(P_k-P_{k-1})/(P_{k+1}-P_{k-1}) has a Beta(alpha_k,alpha_{k+1})
+prior conditional. Its full conditional is this distribution restricted by
+max(U_i : C_i <= k) <= tau_k < min(U_i : C_i > k), intersected with the
+neighbor interval. Empty groups impose no additional bound. Gaussian prior
+factors for U and the collapsed GP likelihood are constant in this update.
+One sequential sweep updates every internal cutoff, using inverse Beta CDFs
+and both log tails, then maps probabilities back to Gaussian stick coordinates.
+This is a coordinate Gibbs kernel for the existing posterior, not a new prior.
+The ordinary latent block and joint cutoff/input transport are retained.
+`threshold_update="ess"` selects the old cutoff step for comparisons.
+
+For the probit joint move, a subject block and one measurement row change.
+All other U and all GP kernel parameters stay fixed. The same exact Schur
+calculation used by ordinary U blocks is therefore valid. The ordinal residual
+is item j for all subjects plus other items for the selected subjects; omitted
+terms are constant along the slice. The old dense fallback remains active.
+
+New fits/checkpoints identify sampler 0.3.1; 0.3.0 checkpoints are not silently
+reinterpreted. The prior/target specification below remains unchanged.
 
 The reusable sampler lives in 00_sampler_v030.R; 00_sampler_v030_api.R
 validates/scales data and packages posterior draws. The two historical
@@ -33,8 +57,9 @@ a study, data generation, replications, and reporting remain repository scripts.
   interval-preserving Gaussian coordinates with the GP likelihood as ESS
   residual. Probit models use the population Gaussian reference and the
   GP likelihood times the score-marginal ordinal likelihood.
-- Measurement parameters update jointly within each item. At fixed U these
-  require no GP factorization. Every ten sweeps, the reference schedule adds
+- Probit measurement parameters update jointly within each item; threshold
+  cutoffs use the coordinate Gibbs step above. At fixed U neither update
+  requires a GP factorization. Every ten sweeps, the reference schedule adds
   coordinated measurement/input moves. Threshold transport moves every
   missing input, includes category factors only for missing subjects, and
   preserves calibrated inputs. Probit cross-block moves combine one
@@ -82,7 +107,7 @@ are not silently excluded. Movement angles, likelihood evaluations, and
 full/block factorization counts accompany each chain.
 
 Independent chains use reproducible serial/fork execution. Checkpoint schema
-2 records the 0.3.0 sampler version, terminal collapsed state, RNG state, and
+2 records the 0.3.1 sampler version, terminal collapsed state, RNG state, and
 valid covariance cache. Public continuation checks the full fit signature,
 freezes model/control choices, and appends within-chain draws. Pre-0.3.0
 posteriors/checkpoints must be refitted, not relabeled.

@@ -1,4 +1,4 @@
-## eivGP 0.3.0: exact dense-GP, variance-collapsed, score-marginal sampler.
+## eivGP 0.3.1: exact dense-GP, variance-collapsed, score-marginal sampler.
 ## This module is data-generic. Study designs and run budgets belong to callers.
 
 mixedgp_v030_logadd <- function(a, b) {
@@ -79,7 +79,7 @@ mixedgp_v030_priors <- function(priors = list(), p, d, m_vec) {
 mixedgp_v030_control <- function(control = list(), n_mis) {
   out <- list(u_block_size = 8L, cross_every = 10L, ess_max_steps = 10000L,
               dictionary_mode = "conditional", max_dictionary_size = 125L,
-              gp_block_schur = TRUE)
+              gp_block_schur = TRUE, threshold_update = "gibbs")
   if (!is.list(control) || (length(control) && (is.null(names(control)) ||
       any(!nzchar(names(control))) || anyDuplicated(names(control)))))
     stop("sampler_control must be a uniquely named list.")
@@ -90,6 +90,7 @@ mixedgp_v030_control <- function(control = list(), n_mis) {
     out[[nm]] <- mixedgp_as_integer_strict(out[[nm]], nm, 1L, 1L)
   out$cross_every <- mixedgp_as_integer_strict(out$cross_every, "cross_every", 0L, 1L)
   out$dictionary_mode <- match.arg(out$dictionary_mode, c("conditional", "marginal"))
+  out$threshold_update <- match.arg(out$threshold_update, c("gibbs", "ess"))
   out$gp_block_schur <- mixedgp_validate_flag(out$gp_block_schur, "gp_block_schur")
   out
 }
@@ -138,6 +139,62 @@ mixedgp_v030_cutpoints <- function(pi, scale = 1) {
       stats::qnorm(log(hi), lower.tail = FALSE, log.p = TRUE)
   }, numeric(1))
   c(-Inf, scale * b, Inf)
+}
+
+## Inverse-CDF sampling from a truncated Beta, using both log tails. No
+## rejection tuning or clipping: an unrepresentable interval is an error.
+mixedgp_v031_truncated_beta <- function(lower, upper, shape, uniform = stats::runif(1L)) {
+  if (length(lower) != 1L || length(upper) != 1L ||
+      any(!is.finite(c(lower, upper, shape, uniform))) ||
+      length(shape) != 2L || any(shape <= 0) || lower < 0 || upper > 1 ||
+      lower >= upper || length(uniform) != 1L || uniform <= 0 || uniform >= 1)
+    stop("Invalid truncated Beta interval, shapes, or uniform variate.")
+  lp <- mixedgp_v030_logadd(log1p(-uniform) + stats::pbeta(lower, shape[1L], shape[2L], log.p = TRUE),
+                            log(uniform) + stats::pbeta(upper, shape[1L], shape[2L], log.p = TRUE))
+  lq <- mixedgp_v030_logadd(log1p(-uniform) + stats::pbeta(lower, shape[1L], shape[2L], lower.tail = FALSE, log.p = TRUE),
+                            log(uniform) + stats::pbeta(upper, shape[1L], shape[2L], lower.tail = FALSE, log.p = TRUE))
+  ans <- if (lp <= lq) stats::qbeta(lp, shape[1L], shape[2L], log.p = TRUE) else
+    stats::qbeta(lq, shape[1L], shape[2L], lower.tail = FALSE, log.p = TRUE)
+  if (!is.finite(ans) || ans <= lower || ans >= upper)
+    stop("Truncated Beta draw exceeded floating-point resolution.")
+  ans
+}
+
+## Conditional on all U, adjacent Dirichlet spacings have a Beta split.
+## Observed categories restrict each split to the interval between the
+## largest U with C <= k and smallest U with C > k. Use every subject,
+## including calibration; empty categories are allowed. No GP likelihood.
+mixedgp_v031_threshold_gibbs <- function(state, ctx) {
+  if (ctx$measurement != "threshold") stop("Cutoff Gibbs requires threshold measurement.")
+  pi <- mixedgp_v030_decode(state, ctx)$pi[[1L]]
+  alpha <- ctx$priors$category_alpha[[1L]]
+  u <- state$U[, 1L]; categories <- ctx$C[, 1L]
+  for (k in seq_len(length(pi) - 1L)) {
+    tau <- mixedgp_v030_cutpoints(pi)
+    left <- tau[k]; right <- tau[k + 2L]
+    low <- max(c(left, u[categories <= k]))
+    high <- min(c(right, u[categories > k]))
+    if (!is.finite(tau[k + 1L]) || low >= high)
+      stop("Empty conditional cutoff support; check U and ordinal categories.")
+    logmass <- log_normal_interval_prob(left, right)
+    ## Work with the smaller side of the current split to avoid loss of
+    ## precision when a cutpoint is deep in the upper normal tail.
+    flip <- pi[k] > pi[k + 1L]
+    fraction <- function(a, b) if (a == b) 0 else
+      exp(log_normal_interval_prob(a, b) - logmass)
+    lower <- if (flip) fraction(high, right) else fraction(left, low)
+    upper <- if (flip) fraction(low, right) else fraction(left, high)
+    split <- mixedgp_v031_truncated_beta(lower, upper,
+      if (flip) alpha[c(k + 1L, k)] else alpha[c(k, k + 1L)])
+    total <- pi[k] + pi[k + 1L]
+    pi[c(k, k + 1L)] <- total * if (flip) c(1 - split, split) else c(split, 1 - split)
+  }
+  state$e_pi[[1L]] <- mixedgp_v030_stick_inverse(pi, alpha)
+  if (!is.finite(mixedgp_v030_measurement_loglik(state, mixedgp_v030_decode(state, ctx), ctx)))
+    stop("Cutoff Gibbs roundtrip exceeded floating-point resolution.")
+  previous <- ctx$counts$threshold_gibbs_updates
+  ctx$counts$threshold_gibbs_updates <- (if (is.null(previous)) 0 else previous) + length(pi) - 1L
+  state
 }
 
 mixedgp_v030_interval_forward <- function(z, lower, upper) {
@@ -466,7 +523,9 @@ mixedgp_v030_sweep <- function(state, ctx, iteration) {
     mixedgp_v030_record_ess(ctx, update, "u")
   }
 
-  for (j in seq_len(ctx$q)) {
+  if (ctx$measurement == "threshold" && ctx$control$threshold_update == "gibbs") {
+    state <- mixedgp_v031_threshold_gibbs(state, ctx)
+  } else for (j in seq_len(ctx$q)) {
     active <- if (ctx$ident == "lower_triangular") seq_len(min(j, ctx$d)) else seq_len(ctx$d)
     z <- state$e_pi[[j]]
     if (ctx$measurement == "probit") z <- c(state$e_A[j, active], z)
@@ -514,6 +573,7 @@ mixedgp_v030_sweep <- function(state, ctx, iteration) {
       ## random independently of its values. Every coordinate of a subject moves.
       j <- 1L + ((iteration %/% ctx$control$cross_every - 1L) %% ctx$q)
       rows <- blocks[[1L]]
+      prep <- mixedgp_v030_prepare_block(state, ctx, rows)
       active <- if (ctx$ident == "lower_triangular") seq_len(min(j, ctx$d)) else seq_len(ctx$d)
       na <- length(active); np <- length(state$e_pi[[j]])
       z <- c(state$e_A[j, active], state$e_pi[[j]], as.numeric(state$U[rows, , drop = FALSE]))
@@ -526,8 +586,12 @@ mixedgp_v030_sweep <- function(state, ctx, iteration) {
       }
       residual <- function(v) {
         st <- propose(v); dd <- mixedgp_v030_decode(st, ctx)
-        ## Full ordinal product counts the affected-factor union once.
-        mixedgp_v030_loggp(st, ctx) + mixedgp_v030_measurement_loglik(st, dd, ctx)
+        ## Only item j changes for all subjects; only the selected subjects
+        ## change for other items. Count this affected-factor union once.
+        mixedgp_v030_loggp(st, ctx, prep) +
+          mixedgp_v030_measurement_loglik(st, dd, ctx, items = j) +
+          mixedgp_v030_measurement_loglik(st, dd, ctx, rows = rows,
+                                         items = setdiff(seq_len(ctx$q), j))
       }
     }
     update <- mixedgp_v030_ess(z, residual, ctx$control$ess_max_steps)
@@ -600,8 +664,8 @@ mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
     mixedgp_v030_dictionary(priors, control$max_dictionary_size) else NULL
   start <- if (is.null(.resume)) 0L else .resume$iteration
   if (!is.null(.resume) && (!identical(.resume$version, 2L) ||
-      !identical(.resume$sampler_version, "0.3.0") || length(.resume$states) != n_chains ||
-      .resume$burn != burn || start >= n_iter)) stop("Incompatible 0.3.0 continuation state.")
+      !identical(.resume$sampler_version, "0.3.1") || length(.resume$states) != n_chains ||
+      .resume$burn != burn || start >= n_iter)) stop("Incompatible 0.3.1 continuation state.")
   seeds <- as.integer((as.double(seed) + 10000 * seq_len(n_chains)) %% .Machine$integer.max)
   backend <- mixedgp_parallel_backend(if (parallel_chains) n_cores else 1L)
   workers <- min(n_chains, backend$cores)
@@ -619,6 +683,7 @@ mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
     ctx$counts <- new.env(parent = emptyenv())
     names <- c("u_ess_total", "u_ess_eval_total",
       "measurement_ess_total", "measurement_ess_eval_total", "cross_ess_total",
+      "threshold_gibbs_updates",
       "cross_ess_eval_total", "theta_ess_total", "theta_ess_eval_total",
       "dictionary_evaluations", "dictionary_switches", "gp_full_factorizations",
       "gp_block_setups", "gp_block_evaluations", "gp_block_fallbacks",
@@ -703,7 +768,7 @@ mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
       n_cores = workers, seeds = seeds, mc.preschedule = FALSE)
   })
   list(chains = chains, priors = priors, control = control,
-       iteration = n_iter, burn = burn, sampler_version = "0.3.0",
+       iteration = n_iter, burn = burn, sampler_version = "0.3.1",
        time_seconds = unname(timing["elapsed"]),
        parallel_backend = if (use_fork) "fork" else "serial", parallel_cores = workers)
 }

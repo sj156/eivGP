@@ -3,9 +3,11 @@
 
 #' Extend the existing posterior chains
 #'
-#' @param object An unmodified fit returned by [fit_eivgp()] in version 0.3.0,
+#' @param object An unmodified fit returned by [fit_eivgp()] in version 0.3.1,
 #'   or by a previous call to this function. Earlier sampler checkpoints are
-#'   incompatible and must be refitted.
+#'   incompatible with this transition revision. Version 0.3.0 targets the
+#'   same posterior, but reproduce/continue those chains with that version,
+#'   or start a fresh fit to use the new transitions.
 #' @param n_iter Additional transitions per chain, not additional saved draws.
 #'   Every post-warm-up transition is retained; there is no thinning.
 #' @param parallel Whether to run chains in parallel. NULL keeps the fit setting.
@@ -32,11 +34,11 @@ continue_eivgp <- function(object, n_iter, parallel = NULL, n_cores = NULL,
   verbose <- mixedgp_validate_flag(verbose, "verbose")
   cp <- object$checkpoint
   if (is.null(cp) || is.null(cp$arguments)) {
-    stop("This fit has no supported continuation checkpoint; refit with version 0.3.0.")
+    stop("This fit has no supported continuation checkpoint; refit with version 0.3.1.")
   }
-  if (!identical(cp$version, 2L) || !identical(cp$sampler_version, "0.3.0") ||
-      !identical(object$sampler_version, "0.3.0")) {
-    stop("Incompatible sampler checkpoint: continuation requires a version 0.3.0 fit; earlier fits must be refitted.")
+  if (!identical(cp$version, 2L) || !identical(cp$sampler_version, "0.3.1") ||
+      !identical(object$sampler_version, "0.3.1")) {
+    stop("Incompatible sampler checkpoint: continuation requires a version 0.3.1 fit; earlier fits must be refitted.")
   }
   if (!identical(cp$control, object$control)) stop("The fit controls were modified; cannot continue.")
   if (!identical(cp$signature, mixedgp_v030_checkpoint_hash(object))) {
@@ -188,7 +190,7 @@ diagnose_eivgp <- function(object, X = NULL, C = NULL, U = NULL,
       stop("U has the wrong latent dimension.")
     }
   }
-  raw <- if (identical(object$sampler_version, "0.3.0")) mixedgp_v030_raw_series(object) else
+  raw <- if (isTRUE(object$sampler_version %in% c("0.3.0", "0.3.1"))) mixedgp_v030_raw_series(object) else
     if (engine == "univariate") mixedgp_study1_raw_series(object) else mixedgp_study2_raw_series(object)
   latent_names <- names(raw)[grepl("^[uU]\\[", names(raw))]
   for (name in latent_names) raw[[paste0(name, "^2")]] <- lapply(raw[[name]], function(z) z^2)
@@ -238,6 +240,35 @@ diagnose_eivgp <- function(object, X = NULL, C = NULL, U = NULL,
       n_latent = n_latent, seed = seed, full_retained_window = TRUE,
       physical_scale_anchored = isTRUE(object$data$latent_scale_anchored))),
     class = "eivgp_diagnostics")
+}
+
+#' Export an existing diagnostic report without refitting
+#'
+#' @param object An `eivgp_diagnostics` returned by [diagnose_eivgp()].
+#' @param output_dir Destination directory.
+#' @param prefix File prefix, containing letters, digits, underscores or hyphens.
+#' @param overwrite Explicitly allow replacement of existing exports.
+#' @return Invisibly, named paths to summary, raw-parameter, target and complete
+#'   diagnostic CSV files and an RDS containing the full diagnostic report.
+#' @details Undefined diagnostics are retained as NA, not interpreted as passes.
+#'   The RDS preserves settings, panel locations and recommendations. No fitting,
+#'   draw selection, thinning or automatic chain extension is performed.
+#' @export
+write_diagnostics_eivgp <- function(object, output_dir, prefix = "eivgp", overwrite = FALSE) {
+  if (!inherits(object, "eivgp_diagnostics")) stop("object must be an eivgp_diagnostics.")
+  if (!is.character(prefix) || length(prefix) != 1L || is.na(prefix) ||
+      !grepl("^[A-Za-z0-9_-]+$", prefix)) stop("Invalid export prefix.")
+  rds <- file.path(output_dir, paste0(prefix, "_diagnostics.rds"))
+  if (!isTRUE(overwrite) && file.exists(rds)) stop("Diagnostic export exists; use overwrite = TRUE explicitly.")
+  paths <- mixedgp_write_diagnostic_tables(
+    data.frame(status = object$status, recommendation = object$recommendation),
+    object$table, output_dir, prefix, overwrite)
+  tmp <- tempfile(".diagnostics-", tmpdir = output_dir)
+  tryCatch({
+    saveRDS(object, tmp)
+    if (!file.rename(tmp, rds)) stop("Cannot publish diagnostic report.")
+  }, finally = if (file.exists(tmp)) unlink(tmp))
+  invisible(c(paths, report = rds))
 }
 
 #' @export

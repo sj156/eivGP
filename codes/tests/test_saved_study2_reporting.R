@@ -28,10 +28,18 @@ mixedgp_simulation_engine <- function(code_dir) {
   e
 }
 engine <- mixedgp_simulation_engine(config$code_dir)
-invisible(mixedgp_run_study2_cell(config,config$cells[[1]],engine,root))
+saved_input <- file.path(source_cell, "report_inputs.rds")
+if (file.exists(saved_input)) {
+  stopifnot(file.copy(saved_input, target_cell))
+} else {
+  invisible(mixedgp_run_study2_cell(config,config$cells[[1]],engine,root))
+}
 stopifnot(file.exists(file.path(target_cell,"report_inputs.rds")))
 status <- mixedgp_report_run(root, "report", config$code_dir)
 stopifnot(all(status$status == "success"), identical(tools::md5sum(input_files),hash))
+for (suffix in c("diagnostics", "parameter_diagnostics", "target_diagnostics", "diagnostic_details"))
+  stopifnot(file.exists(file.path(root, "reporting", "primary_q2", "tables",
+    paste0("study2_mcmc_", suffix, ".csv"))))
 ## Exercise an empty primary plot with logistic-only saved summary inputs.
 path <- file.path(target_cell,"report_inputs.rds")
 snapshot <- readRDS(path)

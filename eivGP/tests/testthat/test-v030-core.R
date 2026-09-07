@@ -197,7 +197,7 @@ testthat::test_that("Study I cutpoint transport uses missing counts and fixes ca
     measurement = "threshold", ident = "none", observed = 1L, missing = 2:4,
     C = matrix(c(1L, 1L, 2L, 3L), ncol = 1L),
     control = list(u_block_size = 2L, cross_every = 1L, ess_max_steps = 100L,
-      dictionary_mode = "conditional"))
+      dictionary_mode = "conditional", threshold_update = "ess"))
   state <- list(e_pi = list(mixedgp_v030_stick_inverse(c(.25, .4, .35), rep(2, 3L))),
     e_A = matrix(0, 1L, 1L), e_r = .2, J = 2L, logtheta_x = log(.7),
     U = matrix(c(-1.5, 0, 0, 0), ncol = 1L))

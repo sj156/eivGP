@@ -1,4 +1,4 @@
-## Canonical 0.3.0 public workflow tests, also copied into installed package tests.
+## Canonical 0.3.1 public workflow tests, also copied into installed package tests.
 if (!exists("mixedgp_v030_fit", mode = "function")) {
   cli <- grep("^--file=", commandArgs(FALSE), value = TRUE)
   code_dir <- dirname(dirname(normalizePath(sub("^--file=", "", cli[1L]))))
@@ -26,7 +26,7 @@ v030_workflow_args <- function(engine, dictionary_mode = "conditional") {
   args
 }
 
-testthat::test_that("0.3.0 public operations preserve the sampler and draw contracts", {
+testthat::test_that("0.3.1 public operations preserve the sampler and draw contracts", {
   for (engine in c("univariate", "multivariate")) {
     args <- v030_workflow_args(engine)
     args$n_chains <- 4L
@@ -34,7 +34,7 @@ testthat::test_that("0.3.0 public operations preserve the sampler and draw contr
     rng <- mixedgp_rng_state()
     fit <- do.call(fit_eivgp, c(args, list(n_iter = 20L)))
     testthat::expect_identical(mixedgp_rng_state(), rng)
-    testthat::expect_identical(fit$sampler_version, "0.3.0")
+    testthat::expect_identical(fit$sampler_version, "0.3.1")
     testthat::expect_identical(fit$checkpoint$version, 2L)
     testthat::expect_equal(fit$mcmc$samples_sigma2,
                            fit$mcmc$samples_V * (1 - fit$mcmc$samples_r))
@@ -65,7 +65,7 @@ testthat::test_that("0.3.0 public operations preserve the sampler and draw contr
   }
 })
 
-testthat::test_that("0.3.0 continuation appends exact same chains across serial and forked execution", {
+testthat::test_that("0.3.1 continuation appends exact same chains across serial and forked execution", {
   for (engine in c("univariate", "multivariate")) {
     for (mode in c("conditional", "marginal")) {
       args <- v030_workflow_args(engine, mode)
@@ -94,7 +94,7 @@ testthat::test_that("0.3.0 continuation appends exact same chains across serial 
   }
 })
 
-testthat::test_that("0.3.0 continuation rejects incompatible or modified checkpoints", {
+testthat::test_that("0.3.1 continuation rejects incompatible or modified checkpoints", {
   args <- v030_workflow_args("univariate")
   first <- do.call(fit_eivgp, c(args, list(n_iter = 16L)))
   old <- first; old$checkpoint <- NULL
@@ -102,6 +102,9 @@ testthat::test_that("0.3.0 continuation rejects incompatible or modified checkpo
   old <- first; old$checkpoint$version <- 1L
   testthat::expect_error(continue_eivgp(old, 5L), "Incompatible sampler checkpoint")
   old <- first; old$checkpoint$sampler_version <- "0.2.1"
+  testthat::expect_error(continue_eivgp(old, 5L), "Incompatible sampler checkpoint")
+  old <- first; old$checkpoint$sampler_version <- "0.3.0"
+  old$sampler_version <- "0.3.0"
   testthat::expect_error(continue_eivgp(old, 5L), "Incompatible sampler checkpoint")
   for (field in c("data", "draws", "pooled_draws", "dictionary", "state")) {
     modified <- first
@@ -113,7 +116,7 @@ testthat::test_that("0.3.0 continuation rejects incompatible or modified checkpo
     testthat::expect_error(continue_eivgp(modified, 5L), "modified")
   }
   testthat::expect_error(do.call(fit_eivgp, c(args, list(n_iter = 16L, thin = 2L))), "every post-warm-up")
-  testthat::expect_error(do.call(fit_eivgp, c(args, list(n_iter = 16L, noise_strategy = "conditional"))), "Unsupported 0.3.0")
+  testthat::expect_error(do.call(fit_eivgp, c(args, list(n_iter = 16L, noise_strategy = "conditional"))), "Unsupported 0.3.1")
   testthat::expect_error(do.call(fit_eivgp, c(args, list(n_iter = 16L, .resume = list()))), "internal")
 })
 

@@ -12,7 +12,7 @@ for (measurement in c("univariate", "multivariate")) {
     n_iter = 8L, burn = 4L, n_chains = 2L, parallel = FALSE, seed = 913L)
   if (measurement == "multivariate") args$ident <- "none"
   fit <- do.call(engine$fit_eivgp, args)
-  stopifnot(identical(fit$sampler_version, "0.3.0"))
+  stopifnot(identical(fit$sampler_version, "0.3.1"))
 }
 ## Helper needs the same parallel function that cell drivers inherit.
 for (cores in c(1L, 2L)) {

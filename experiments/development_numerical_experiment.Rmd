@@ -6,6 +6,7 @@ output:
 params:
   study: "study1"
   execute: false
+  fit_only: false
   repository_dir: ""
   core_budget: 12
 ---
@@ -43,7 +44,7 @@ frozen development data, then fits and aggregates. Subsequent runs verify
 those data. See `DEVELOPMENT.md` for settings and the paper-writing cycle.
 
 ```{r configure}
-run_simulation <- function(study, execute = FALSE, core_budget = 12L) {
+run_simulation <- function(study, execute = FALSE, core_budget = 12L, fit_only = FALSE) {
   study <- match.arg(study, c("study1", "study2"))
   constructor <- if (study == "study1") study1_simulation_config else study2_simulation_config
   runner <- if (study == "study1") run_study1_simulation else run_study2_simulation
@@ -52,6 +53,7 @@ run_simulation <- function(study, execute = FALSE, core_budget = 12L) {
     code_dir = file.path(repository_dir, "codes")
   )
   print(config[c("study", "mode", "parallel", "cells", "mcmc", "evaluation", "output_root", "data_root")])
+  if (isTRUE(fit_only)) config$stages <- c("data", "fit")
   if (!execute) {
     config$mode <- "dry_run"
     config$stages <- character(0)
@@ -63,7 +65,7 @@ run_simulation <- function(study, execute = FALSE, core_budget = 12L) {
 # Run and inspect
 
 ```{r run-development}
-result <- run_simulation(params$study, params$execute, params$core_budget)
+result <- run_simulation(params$study, params$execute, params$core_budget, params$fit_only)
 if (isTRUE(params$execute)) {
   print(result$run_dir)
   print(result$gates)
@@ -72,6 +74,11 @@ if (isTRUE(params$execute)) {
 ```
 
 Review missing-method records and diagnostics alongside every draft table.
+Use the launcher's `fit` action to omit reporting. Once fitting is saved, run
+`Rscript --vanilla experiments/report_study.R RUN_DIRECTORY report` from the
+repository root to regenerate tables and figures without MCMC. `summarize`
+and `plot` are also available separately. Output is written to the saved run's
+`reporting/` subdirectory; reporting failures do not remove completed fits.
 Use the full publication design only once the scientific settings and plotting
 choices are settled. Real-data results remain a separate, deferred step.
 

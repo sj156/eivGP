@@ -204,6 +204,7 @@ mixedgp_config_fingerprint <- function(config) {
   code_files <- unique(c(
     mixedgp_simulation_modules(), "simulation_helpers.R",
     "02_study1_monte_carlo.R", "02_study2_monte_carlo.R",
+    "setup_study1_experiment.R", "setup_study2_experiment.R",
     "run_study1_simulation.R", "run_study2_simulation.R"
   ))
   code_paths <- file.path(config$code_dir, code_files)
@@ -757,6 +758,8 @@ mixedgp_code_hashes <- function(config) {
   files <- unique(c(
     mixedgp_simulation_modules(), "simulation_helpers.R",
     "02_study1_monte_carlo.R", "02_study2_monte_carlo.R",
+    "setup_study1_experiment.R", "setup_study2_experiment.R",
+    "report_study1_results.R", "report_study2_results.R", "experiment_reporting.R",
     "run_study1_simulation.R", "run_study2_simulation.R"
   ))
   paths <- file.path(config$code_dir, files)
@@ -2422,6 +2425,13 @@ mixedgp_run_simulation <- function(config) {
     file.path(run_dir, "run_summary.rds")
   )
   message("Completed simulation run: ", normalizePath(run_dir))
+  if ("aggregate" %in% config$stages) {
+    report_env <- new.env(parent = environment())
+    sys.source(file.path(config$code_dir, "experiment_reporting.R"), report_env)
+    tryCatch(report_env$mixedgp_report_run(run_dir, "report", code_dir = config$code_dir),
+      error = function(e) warning("Fitting completed, but reporting failed: ", conditionMessage(e),
+        ". Use experiments/report_study.R to retry without fitting.", call. = FALSE))
+  }
   invisible(out)
 }
 

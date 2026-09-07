@@ -136,6 +136,49 @@ not automatic. These runs can still take substantial time. The knitting progress
 percentage measures document chunks, not completed datasets or remaining MCMC
 time; a document can remain at its fitting chunk for a long time.
 
+### Run fitting and reporting independently
+
+For long experiments, you can finish fitting/evaluation without generating
+figures or publication tables:
+
+```sh
+Rscript --vanilla experiments/run_development_study.R study1 fit
+Rscript --vanilla experiments/run_development_study.R study2 fit
+```
+
+The existing `run` action fits/evaluates all cells first, then aggregates and
+reports. Each completed cell saves `report_inputs.rds` before reporting begins.
+The fitting stage still computes predictive/evaluation metrics; those costly
+calculations are not repeated by the reporting commands below.
+
+To regenerate tables and figures, use the exact saved run directory printed by
+the fitting command. Replace the example path with yours:
+
+```sh
+RUN_DIR="reproduction/development/results/study2/study2-development-YOUR_RUN_ID"
+Rscript --vanilla experiments/report_study.R "$RUN_DIR" summarize
+Rscript --vanilla experiments/report_study.R "$RUN_DIR" plot
+```
+
+Use `report` instead of `summarize`/`plot` to generate both. These commands do
+not fit models, generate datasets, or select a run automatically. `plot` reads
+saved evaluation results and computes plotting summaries in memory; it does not
+require the `summarize` command first. New files go under
+`RUN_DIR/reporting/<cell>/tables/` and `figures/`, with study-wide summaries
+under `RUN_DIR/reporting/combined/`, and status and provenance
+files. Plot-only runs leave table files unchanged. Empty plots are skipped and
+recorded in `plot_status.csv`; other reporting failures are recorded separately
+from fitting failures. Incomplete reporting returns a nonzero CLI exit status,
+but never triggers refitting or deletes cached results.
+
+Previously saved Study II `study2_results_*.rds` bundles can also be reported
+without rerunning MCMC, provided the run's saved configuration is present and
+each cell has a unique bundle. Cells with no saved results are explicitly
+marked `missing_inputs`, not silently treated as complete. Older Study I runs
+without `report_inputs.rds` are not automatically migrated. Preserve all old
+run directories: this refactor changes fitting code identity, so a fresh `fit`
+or `run` may use a new directory rather than reuse an older run automatically.
+
 ### 6. Inspect results and diagnostics
 
 Outputs stay inside the repository checkout:
@@ -147,7 +190,8 @@ reproduction/development/
 └── reports/
 ```
 
-Start with the study HTML reports in `reports/`. The report identifies its run
+Start with the study HTML reports in `reports/`. A `fit` action writes
+`study1_development_fit.html` or `study2_development_fit.html`. The report identifies its run
 directory; inspect its combined outputs, missing-method records, and
 `config/diagnostic_gates.csv`. Review R-hat, ESS, Monte Carlo errors, and diagnostic
 advice alongside estimates and figures. Diagnostic warnings do not automatically

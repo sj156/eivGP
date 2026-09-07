@@ -76,6 +76,23 @@ per chain, excluding warmup; `MIXEDGP_DEV_BURN` overrides warmup;
 
 ## Scope and remaining work
 
+Fitting/evaluation and reporting now have separate entry points. Use the
+development launcher's `fit` action to save cell-level `report_inputs.rds`
+without figures or publication summaries. `run` performs reporting only after
+the fitting stage. `experiments/report_study.R RUN_DIRECTORY summarize|plot|report`
+regenerates outputs from saved data, without any model fitting. It accepts
+older Study II raw bundles as well as the new checkpoints; missing cells are
+listed explicitly. Reporting writes to a separate `reporting/` tree and does
+not modify replication caches. See README.md for copy-ready commands.
+
+The former monolithic drivers are split into `setup_study*_experiment.R`
+(configuration and helpers), `02_study*_monte_carlo.R` (fitting/evaluation),
+and `report_study*_results.R` (tables/figures). `experiment_reporting.R` restores
+the reporting context, records provenance, and handles empty plots. Reporting
+source files are tracked in provenance but excluded from the fit fingerprint,
+so editing a figure does not by itself invalidate a fit. This is a repository
+experiment-layer change, not a change to the installed posterior sampler.
+
 The repository experiment layer retains iteration accounting and core-budgeted
 concurrency. Study I crosses balanced/imbalanced categories with eta=0/1,
 each with calibration 0/10/50. Study II uses primary q=2 (calibration 50),

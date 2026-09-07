@@ -2237,6 +2237,12 @@ mixedgp_run_simulation <- function(config) {
   preflight_fun <- get("mixedgp_competitor_preflight", envir = engine)
   preflight <- preflight_fun(config$published_methods, strict = FALSE)
   runtime_preflight <- mixedgp_runtime_preflight(config)
+  if (any(!preflight$available) || any(!runtime_preflight$available)) {
+    message("Install missing experiment dependencies explicitly from the repository root:\n",
+      "  Rscript --vanilla experiments/install_eivgp_dependencies.R\n",
+      "Use the same Rscript and MIXEDGP_R_LIBRARY setting for setup and execution.\n",
+      "No packages are installed automatically. Existing missing-method caches are not repaired by installation.")
+  }
   task_plan <- mixedgp_task_plan(config)
   if (identical(config$mode, "dry_run")) {
     mixedgp_print_dry_run(config, preflight, runtime_preflight, task_plan)

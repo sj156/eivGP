@@ -64,7 +64,7 @@ this repository root. An existing checkout does not need to be cloned again.
 Install the experiment dependencies outside the package:
 
 ```sh
-Rscript --vanilla -e 'install.packages(c("posterior", "TruncatedNormal", "rmarkdown", "knitr", "ggplot2", "dplyr", "tidyr", "patchwork", "kergp", "LVGP", "EzGP"), repos="https://cloud.r-project.org")'
+Rscript --vanilla experiments/install_eivgp_dependencies.R
 R CMD INSTALL eivGP
 Rscript --vanilla -e 'library(eivGP); print(packageVersion("eivGP")); stopifnot(rmarkdown::pandoc_available())'
 ```
@@ -74,6 +74,16 @@ fails, resolve the reported error before continuing. Missing optional
 competitors (`kergp`, `LVGP`, or `EzGP`) are recorded and skipped, so their
 comparisons will be incomplete. If Pandoc is not detected from Terminal,
 make it available there before rendering the experiment documents.
+
+The setup script installs only missing dependencies, including `kergp` (UC-GP),
+`LVGP`, and `EzGP`, and prints their versions and library locations. It belongs
+to `experiments/`, not the installed package. Package loading, fitting, and
+reporting never install software automatically. Run setup on each machine,
+using the same R installation as the experiments. If you set `MIXEDGP_R_LIBRARY`,
+retain that setting for both setup and execution; an existing repository
+`R-library/` is also recognized. These comparison packages remain optional
+(`Suggests`) for package-only use. Installation does not backfill missing
+comparisons in existing cached results.
 
 ### 3. Set the computing budget
 

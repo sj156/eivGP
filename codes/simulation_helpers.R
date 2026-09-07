@@ -56,7 +56,9 @@ mixedgp_simulation_modules <- function() {
     "00_study2_functions.R",
     "00_sampler_v030.R",
     "00_sampler_v030_api.R",
+    "00_public_api.R",
     "00_diagnostics.R",
+    "00_mcmc_workflow.R",
     "03_study2_published_competitors.R",
     "00_synthetic_data.R",
     "04_study1_ablations.R",
@@ -1299,6 +1301,45 @@ mixedgp_cell_controls_study2 <- function(config, cell, cell_output) {
 
 mixedgp_get_cell_output <- function(envir, name) {
   get0(name, envir = envir, inherits = FALSE, ifnotfound = data.frame())
+}
+
+## Catch errors inside workers before mclapply converts them to try-error
+## strings. Keep successful replications and expose the original failure.
+mixedgp_run_replications <- function(X, FUN, n_cores, seeds, status_path,
+                                    study, parallel_map, mc.preschedule = FALSE) {
+  worker <- function(x) {
+    started <- proc.time()[["elapsed"]]
+    tryCatch(list(ok = TRUE, value = FUN(x), message = "", call = "",
+                  elapsed = proc.time()[["elapsed"]] - started),
+      error = function(e) list(ok = FALSE, value = NULL,
+        message = conditionMessage(e),
+        call = paste(deparse(conditionCall(e)), collapse = " "),
+        elapsed = proc.time()[["elapsed"]] - started))
+  }
+  results <- parallel_map(X, worker, n_cores = n_cores,
+    seeds = seeds, mc.preschedule = mc.preschedule)
+  results <- lapply(results, function(x) {
+    if (is.list(x) && is.logical(x$ok) && length(x$ok) == 1L && !is.na(x$ok)) return(x)
+    list(ok = FALSE, value = NULL, message = if (inherits(x, "try-error"))
+      as.character(x) else "Worker returned no valid result (possibly terminated).",
+      call = "", elapsed = NA_real_)
+  })
+  ok <- vapply(results, function(x) isTRUE(x$ok), logical(1))
+  status <- data.frame(task = vapply(X, function(x) paste(x, collapse = ","), ""),
+    status = ifelse(ok, "success", "failed"),
+    message = vapply(results, `[[`, "", "message"),
+    call = vapply(results, `[[`, "", "call"),
+    elapsed_seconds = vapply(results, `[[`, 0, "elapsed"))
+  mixedgp_atomic_write_csv(status, status_path)
+  if (any(!ok)) {
+    detail <- paste0(study, ": ", sum(!ok), "/", length(ok),
+      " replications failed. First error: ", status$message[which(!ok)[1L]],
+      ". See ", status_path)
+    if (!any(ok)) stop(detail, call. = FALSE)
+    warning(detail, ". Aggregating successful replications only; report failures alongside estimates.",
+            call. = FALSE)
+  }
+  lapply(results[ok], `[[`, "value")
 }
 
 mixedgp_run_study1_cell <- function(config, cell, engine, run_dir) {

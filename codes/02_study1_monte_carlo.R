@@ -906,11 +906,14 @@ run_or_load_study1_replication <- function(rr) {
   saveRDS(out, rep_file)
   out
 }
-rep_objects <- mixedgp_parallel_lapply(
+rep_objects <- mixedgp_run_replications(
   as.list(seq_len(n_rep)),
   run_or_load_study1_replication,
   n_cores = replication_cores,
   seeds = 910000L + seq_len(n_rep),
+  status_path = file.path(TAB_DIR, "study1_replication_status.csv"),
+  study = "Study I",
+  parallel_map = mixedgp_parallel_lapply,
   mc.preschedule = FALSE
 )
 

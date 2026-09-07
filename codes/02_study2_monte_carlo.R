@@ -1609,11 +1609,14 @@ replication_cores <- if (STUDY2_PARALLEL_LEVEL == "hybrid") {
 } else {
   1L
 }
-rep_objects <- mixedgp_parallel_lapply(
+rep_objects <- mixedgp_run_replications(
   as.list(seq_len(nrow(run_grid))),
   run_or_load_study2_replication,
   n_cores = replication_cores,
   seeds = 920000L + seq_len(nrow(run_grid)),
+  status_path = file.path(TAB_DIR, "study2_replication_status.csv"),
+  study = "Study II",
+  parallel_map = mixedgp_parallel_lapply,
   mc.preschedule = FALSE
 )
 

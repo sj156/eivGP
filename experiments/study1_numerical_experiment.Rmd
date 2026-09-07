@@ -15,22 +15,20 @@ params:
 
 This is the sole top-to-bottom fitting and reporting document for the frozen
 Study I publication design. Generate the frozen datasets first with
-`study1_synthetic_data.Rmd`. The model implementations, including MCMC, live
-in `eivGP`; the wrapper below makes the executed stages explicit.
+`study1_synthetic_data.Rmd`. The canonical model modules in `codes/` also build
+`eivGP`; the study constructors and orchestration remain repository code.
 
 The committed default is a read-only dry run. To reproduce the paper, change
 `run_mode` above to `publication` and render this document in a clean R
 session. Publication execution always verifies frozen data, fits the required
-methods, then aggregates the results. Smoke and publication fits automatically
-run the exact published-competitor and paired-design validators; publication
-mode requires every competitor validation to succeed.
+methods, then aggregates the results. Published-competitor and paired-design
+validators record their status; missing optional competitors are recorded and
+diagnostic warnings do not stop a requested fitting budget.
 
-The main EIV-GP sampler retains 5,000 post-warmup draws, checks key-parameter
-ESS, and continues the same chain in projected 1,000-draw increments when
-needed, up to 15,000 retained draws by default. Independent frozen
-replications are parallel; chains within each replication are serial. The
-outputs record actual iterations, ESS, R-hat, elapsed time, and every
-continuation decision.
+The repository configuration records fixed iteration budgets and retains every
+post-warmup draw. Continuation is explicit. Inspect the resolved configuration
+and diagnostic flags before interpreting outputs; the package release does not
+itself rerun or validate this study's scientific results.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -41,13 +39,19 @@ if (!requireNamespace("eivGP", quietly = TRUE)) {
   stop("Install eivGP before rendering this document; see README.md.")
 }
 library(eivGP)
+document_path <- knitr::current_input(dir = TRUE)
+repository_dir <- normalizePath(file.path(dirname(document_path), ".."),
+                                mustWork = TRUE)
+source(file.path(repository_dir, "codes", "simulation_helpers.R"),
+       local = knitr::knit_global())
 ```
 
 # Configuration
 
 Only run mode, worker count, and artifact locations are exposed. The design
 cells, seeds, sample sizes, MCMC controls, estimands, method eligibility, and
-diagnostic gates are frozen inside the package constructor.
+diagnostic thresholds belong to the repository constructor in
+`codes/simulation_helpers.R`.
 
 ```{r configure}
 DOCUMENT_PARAMS <- list(
@@ -83,7 +87,8 @@ OUTPUT_ROOT <- if (nzchar(DOCUMENT_PARAMS$output_root)) {
 }
 run_study1_publication <- function(mode, workers, data_root, output_root) {
   mode <- match.arg(mode, c("dry_run", "smoke", "publication"))
-  config <- eivGP::study1_simulation_config(
+  config <- study1_simulation_config(
+    code_dir = file.path(repository_dir, "codes"),
     mode = mode,
     workers = workers,
     data_root = data_root,
@@ -93,7 +98,7 @@ run_study1_publication <- function(mode, workers, data_root, output_root) {
     # aggregates the resulting tables and figures.
     stages = if (identical(mode, "dry_run")) NULL else c("fit", "aggregate")
   )
-  eivGP::run_study1_simulation(config)
+  run_study1_simulation(config)
 }
 ```
 

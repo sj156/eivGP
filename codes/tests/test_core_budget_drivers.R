@@ -14,8 +14,8 @@ for (study in c("study1", "study2")) {
               controls[[paste0(prefix, "_PARALLEL_LEVEL")]] == "hybrid")
   }
   publication <- constructor("publication", code_dir = "codes", core_budget = 12L)
-  stopifnot(publication$strict_competitors, publication$fail_closed,
-            publication$mcmc$require_gate)
+  stopifnot(!publication$strict_competitors, !publication$fail_closed,
+            !publication$mcmc$require_gate)
 }
 if (.Platform$OS.type != "windows") {
   parent <- Sys.getpid()
@@ -30,3 +30,62 @@ if (.Platform$OS.type != "windows") {
   }, logical(1))))
 }
 message("Both driver allocations and actual nested fork execution passed.")
+
+## Execute the actual diagnostic-warning branches without costly simulation.
+find_if <- function(x, condition) {
+  if (is.call(x) && identical(x[[1L]], as.name("if")) &&
+      identical(paste(deparse(x[[2L]]), collapse = " "), condition)) return(list(x))
+  if (!is.call(x) && !is.expression(x) && !is.pairlist(x)) return(list())
+  unlist(lapply(as.list(x), find_if, condition = condition), recursive = FALSE)
+}
+warning_eval <- function(expr, env) {
+  notices <- character()
+  withCallingHandlers(eval(expr, env), warning = function(w) {
+    notices <<- c(notices, conditionMessage(w))
+    invokeRestart("muffleWarning")
+  })
+  stopifnot(length(notices) > 0L, any(grepl("Inspect diagnostic", notices)))
+}
+s1 <- parse("codes/02_study1_monte_carlo.R")
+s2 <- parse("codes/02_study2_monte_carlo.R")
+env <- new.env(parent = globalenv())
+env$gate_pass <- FALSE
+env$rep_id <- 1L
+env$n_calib <- 10L
+env$RES_DIR <- tempdir()
+env$fit_eiv <- list(retained = 1:5)
+env$parameter_diag <- data.frame(rhat = 1.3)
+env$panel <- 1L
+env$STUDY1_CACHE_SPEC <- list()
+env$max_rhat <- 1.3
+env$min_ess <- 2
+warning_eval(find_if(s1, "!isTRUE(gate_pass)")[[1L]], env)
+stopifnot(identical(readRDS(env$failure_file)$fit$retained, 1:5))
+
+env$diag_row <- list(mcmc_pass = FALSE)
+env$fit <- list(retained = 1:5)
+env$scenario <- "primary"
+warning_eval(find_if(s2, "!isTRUE(diag_row$mcmc_pass)")[[1L]], env)
+env$measurement_warning <- TRUE
+env$measurement_fit <- env$fit
+env$measurement_diag <- list(convergence_pass = FALSE)
+env$measurement_advice <- mixedgp_simulation_diagnostic_advice()
+measurement_blocks <- Filter(function(x) any(grepl("warning\\(", deparse(x))),
+                             find_if(s2, "measurement_warning"))
+warning_eval(measurement_blocks[[1L]], env)
+stopifnot(!any(grepl("failed_convergence", readLines("codes/02_study2_monte_carlo.R"))))
+
+for (study in c("study1", "study2")) {
+  ctor <- get(paste0(study, "_simulation_config"))
+  for (mode in c("development", "publication")) {
+    cfg <- ctor(mode, code_dir = "codes", core_budget = 12L)
+    stopifnot(!cfg$strict_competitors, !cfg$fail_closed, !cfg$mcmc$require_gate)
+    stopifnot(all(vapply(cfg$cells, function(cell) {
+      cell$n_test == 200L && cell$n == if (study == "study1") 100L else 120L
+    }, logical(1))))
+  }
+  bad <- ctor("publication", code_dir = "codes")
+  bad$mcmc$burn <- bad$mcmc$n_iter
+  stopifnot(inherits(try(validate_simulation_config(bad), silent = TRUE), "try-error"))
+}
+message("Actual diagnostic branches warn and preserve fits; both policies match; invalid inputs still stop.")

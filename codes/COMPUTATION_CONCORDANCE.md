@@ -1,215 +1,107 @@
-# Computation-to-code concordance
+# eivGP 0.3.0: computation-to-code concordance
 
-This file maps the posterior computation described in the manuscript to the
-publication R implementation. Updated after the 2026-09-06 no-HMC revision;
-the simulation manifest stores code hashes so that later runs can detect
-changes.
+The reusable sampler lives in 00_sampler_v030.R; 00_sampler_v030_api.R
+validates/scales data and packages posterior draws. The two historical
+fit_eivgp_1d/fit_eivgp_ordprobit_fb entry points forward to this implementation.
+The installed package is eivGP/. Numerical designs, competitors selected for
+a study, data generation, replications, and reporting remain repository scripts.
 
-## Common dense-GP target
+## Target and transitions
 
-- The finite GP vector is integrated out in every training transition.
-- The covariance is
-  `sigma2_eps * (I + rho^2 * R)` with either squared-exponential or Matérn
-  ARD correlation on the joint `(X, U)` input.
-- Likelihood evaluations use Cholesky solves and log determinants; the
-  publication path adds no diagonal jitter and does not form an explicit
-  inverse.
-- `sigma2_eps` has the inverse-gamma full conditional with shape
-  `2 + n / 2` and rate `0.05 + y' B^{-1} y / 2` on the standardized response
-  scale.
+- Signal covariance is V*r*R and response-noise variance is V*(1-r).
+  Independently, V ~ IG(3,2) and r ~ Beta(32,8), on the standardized response
+  scale. IG(a,b) has density proportional to v^(-a-1)*exp(-b/v).
+  r is a pointwise variance fraction, not realized regression R-squared.
+- GP values, V, and ordinal-probit scores are marginalized in the primary
+  chain. With B=(1-r)I+rR and Q=y' solve(B,y), the log likelihood, up to a
+  parameter-independent constant, is
+  -0.5*logdet(B) - (a+n/2)*log(b+Q/2).
+- The X-kernel log inverse squared-distance coefficients have independent
+  N(log(.5),1.5^2) priors. Only U-associated coefficients have a finite
+  dictionary. U itself stays continuous. SE and Matérn use the same ARD
+  distance convention across fitting and prediction.
+- The default U dictionary has five equal-weight quantiles per coordinate;
+  coordinate categorical Gibbs avoids enumerating the Cartesian product.
+  A user-specified matrix defines complete parameter vectors instead.
+- Category probabilities have Dirichlet(2,...,2) reference priors. Gaussian
+  stick coordinates generate these priors. Deterministic thresholds are
+  normal quantiles; probit thresholds multiply them by sqrt(1+||A_j||^2).
+  Free loadings have N(0,2.5^2) priors, with half-normal positive diagonals
+  when the declared structural rule requires them.
+- Every sweep visits all missing U coordinates in state-independent random
+  subject blocks (at most eight subjects by default). Threshold models use
+  interval-preserving Gaussian coordinates with the GP likelihood as ESS
+  residual. Probit models use the population Gaussian reference and the
+  GP likelihood times the score-marginal ordinal likelihood.
+- Measurement parameters update jointly within each item. At fixed U these
+  require no GP factorization. Every ten sweeps, the reference schedule adds
+  coordinated measurement/input moves. Threshold transport moves every
+  missing input, includes category factors only for missing subjects, and
+  preserves calibrated inputs. Probit cross-block moves combine one
+  cyclically selected measurement row with a random subject block.
+- Continuous X coefficients and the signal fraction update jointly by ESS,
+  then the dictionary index updates categorically. There is no random-walk
+  acceptance-rate adaptation and no HMC.
+- Optional dictionary_mode="marginal" uses a sum of likelihoods throughout
+  the continuous blocks and redraws the full index before recovery. It never
+  averages covariance matrices. max_dictionary_size guards exponential cost.
+- Every post-warmup state is retained. V is recovered from
+  IG(a+n/2,b+Q/2), followed deterministically by sigma2=V*(1-r).
+  Optional scores are recovered only for storage, never used by the next sweep.
 
-Primary implementations:
+All priors and sampler controls are explicit fit_eivgp arguments. Reference
+choices need scientific prior-predictive and sensitivity assessment; exact
+invariance is not evidence that mixing will be good in every application.
 
-- Study I: `00_study1_functions.R`, especially `gp_state_1d()`,
-  `sample_sigma2_eps_1d()`, and `fit_eivgp_1d()`.
-- Study II: `00_study2_functions.R`, especially
-  `gp_loglik_integrated_general()`, `sample_sigma2_eps_general()`, and
-  `fit_eivgp_ordprobit_fb()`.
+## Exact calculations and posterior outputs
 
-## Study I sweep
+Dense evaluation uses Cholesky solves without an explicit inverse or jitter.
+Within a latent block the unchanged complementary factor supports exact Schur
+calculations. Setup costs O((n-b)^3); candidates cost O(n^2*b+n*b^2+b^3).
+Invalid shortcuts retry the unchanged dense covariance. Stale complementary
+factors are rejected using their input and kernel keys. Global parameter
+moves and threshold transports generally require dense evaluation.
 
-The loop in `fit_eivgp_1d()` implements the manuscript order:
+Existing predictive helpers are reused by the exact correspondence
+rho^2=r/(1-r), sigma2=V*(1-r). The retained native V,r,J,pi draws accompany
+these compatibility coordinates. Empirical integration of m(x,c) averages
+both GP means and covariance, rather than means alone. Prospective U uses
+the existing exact truncated-Gaussian construction; fixed-fit prediction
+does not reweight the training posterior using new ordinal inputs.
 
-1. Draw `sigma2_eps` from its full conditional.
-2. Draw the ordered deterministic thresholds from their feasible uniform
-   conditionals.
-3. Apply blocked Gaussian-prior elliptical-slice moves to missing `u`, with a
-   periodic all-missing block.
-4. Apply local slice moves in probability coordinates for well-resolved
-   interior categories, or in direct u coordinates including the normal
-   log prior for unbounded, extreme, or narrow categories. The coordinate
-   choice depends on the category bounds, not the current u value.
-5. Apply bounded componentwise slice moves to the GP log covariance
-   parameters conditional on the current noise variance.
-6. Check interval, calibration, and finite-state invariants throughout the
-   sweep and before retention. Singleton index sets cannot expand to other rows.
+No probability clipping or adaptive jitter is used. An out-of-support
+candidate is an ordinary ESS rejection. Undefined calculations, failed exact
+draws, and exhausted ESS searches are explicit errors, not convergence gates.
 
-This remains the default `noise_strategy="conditional"`. The optional
-`noise_strategy="collapsed"` omits the initial noise draw, uses the analytic
-inverse-gamma-integrated likelihood in every latent/kernel move, and regenerates
-noise from the latest latent/kernel state before retention. The thresholds,
-latent prior, kernel prior, calibration constraints, and posterior target do
-not change. Dense and Schur calculations implement both strategies.
+## Diagnostics and continuation
 
-## Study II interwoven sweep
+Report rank-normalized R-hat, bulk/tail ESS, mean MCSE, and target-specific
+diagnostics; native variance, signal fraction, category probabilities, and
+dictionary occupancy remain visible. Unvisited nontrivial dictionary states
+are not silently excluded. Movement angles, likelihood evaluations, and
+full/block factorization counts accompany each chain.
 
-The `sampler_strategy = "interwoven"` loop in
-`fit_eivgp_ordprobit_fb()` implements the manuscript order:
+Independent chains use reproducible serial/fork execution. Checkpoint schema
+2 records the 0.3.0 sampler version, terminal collapsed state, RNG state, and
+valid covariance cache. Public continuation checks the full fit signature,
+freezes model/control choices, and appends within-chain draws. Pre-0.3.0
+posteriors/checkpoints must be refitted, not relabeled.
 
-1. Draw truncated ordinal scores, cut points, and loading rows.
-2. Integrate out `sigma2_eps` and apply score-conditioned local `U` moves and
-   a parameter-only log-covariance move.
-3. Periodically apply a score-conditioned joint move of all missing `U` and
-   the GP log covariance parameters.
-4. Periodically apply a score-marginal/prior-reference joint move of those
-   quantities; redraw scores immediately.
-5. Periodically update `(A, tau)` under the score-marginal ordinal likelihood;
-   redraw scores immediately.
-6. Assert that calibrated rows have never changed, draw `sigma2_eps` from its
-   full conditional, check the state, and only then retain it. A transient
-   violation cannot be repaired by overwriting calibrated rows at retention.
+Diagnostic warnings do not prevent completion of a requested finite budget.
+All stored draws are retained; postprocessing integration budgets are separate.
 
-The regeneration order is mandatory for the partially collapsed chain. The
-implementation fixes the ordinal-probit residual covariance to `Omega = I`;
-it does not estimate residual proxy correlations. Triangular loadings together
-with diagonal ARD are an explicit joint-model restriction. The public API now
-requires an explicit loading choice with sparse/rank-deficient calibration.
+## Verification and next-stage experiments
 
-Two further exact blocks are optional, with both frequencies zero by default:
+codes/tests/test_v030_core.R independently checks likelihood/scale integration,
+prior transforms, dictionaries, transport factors, calibration support,
+prediction covariance, and block/dense equivalence including failed shortcuts.
+codes/tests/test_v030_workflow.R checks the public interface, all-draw retention,
+stored-score recovery, checkpoint tampering, and exact resumed/uninterrupted
+and serial/forked reproducibility.
 
-- `joint_measurement_every`: each row's free loadings and all cutpoints are
-  mapped from their original Gaussian/half-normal and ordered-uniform priors
-  to independent standard normals. A small-row ESS uses the row's marginal
-  ordinal likelihood. Scores are regenerated immediately afterwards.
-- `loading_transport_every`: at fixed scores, missing latent rows are moved
-  with proposed loadings while their standardized conditional latent residuals
-  remain fixed. The Jacobian cancels the conditional Gaussian density. The
-  residual comprises the integrated GP likelihood, missing-row marginal score
-  densities, and calibrated-row conditional score densities. Calibration is
-  untouched; noise is regenerated before retention.
-
-These blocks are inserted after the scalar marginal measurement block and
-before the noise draw. They require `sampler_strategy="interwoven"`. Control
-validation rejects malformed schedules and frozen required blocks. No HMC,
-gradient, new statistical prior, or likelihood approximation is introduced.
-
-## Exact numerical savings
-
-Both engines cache accepted GP determinant/quadratic-form summaries. Noise
-draws do not require another factorization. At fixed kernel parameters, small
-latent-block proposals can use the exact Schur complement of the unchanged
-complementary covariance. Global/kernel moves remain dense.
-
-The default selects this shortcut at n >= 120. Explicit TRUE/FALSE overrides
-are `gp_block_schur` (Study I) and
-`control_overrides=list(gp_use_block_schur=...)` (Study II). A NULL value
-selects automatically. Study I additionally requires n >= 40 and small enough
-blocks; Study II uses blocks smaller than n/2. Study I retries a failed
-shortcut with the same dense covariance; Study II stops. Neither adds jitter.
-
-Per-chain telemetry distinguishes full/complement/block calculations from
-cache hits and residual calls. Effective samples per second—not proposal
-acceptance or raw iteration counts—measure end-to-end efficiency.
-
-## Posterior recovery and prediction
-
-- `gp_integrated_mean_state_1d()` and
-  `gp_integrated_mean_state_general()` implement the empirical-distribution
-  GP linear-functional mean and covariance for `m(x,c)`.
-- `sample_eiv_f_given_xu_fb()` and the corresponding Study I helpers recover
-  `f(x,u)` by ordinary GP conditioning at retained states.
-- Study II prospective `U | C` uses
-  `sample_u_given_c_ordprobit_minimax()`: it samples the truncated marginal
-  Gaussian score by minimax tilting and then samples the exact Gaussian
-  conditional `U | S`. Solver, degeneracy, incomplete-sample, or unfamiliar
-  dependency warnings stop the operation before it can be labeled exact.
-  Finite Gibbs endpoints are diagnostic only.
-- Predictive NLPD is computed from stored conditional Gaussian component means
-  and variances by log-sum-exp, not by a kernel density estimate of predictive
-  draws.
-- Prospective prediction uses the fixed-fit convention; the interface does
-  not update global posterior weights with a new unlabeled ordinal vector.
-- Both engines fix the latent population law to N(0,I), independent of X.
-  Public calibrated standardization is plug-in and is on by default; the
-  low-level simulation engines preserve supplied latent units by default.
-
-## Strict diagnostics
-
-Both publication drivers now require four chains, Rhat <= 1.01, and bulk/tail
-ESS >= 400 for required series. These thresholds are screening requirements,
-not guarantees; MCSE and latent-integration sensitivity still need assessment.
-Mean-specific MCSE and ESS now use `posterior::mcse_mean` and `ess_mean`;
-bulk ESS is not substituted in the MCSE formula. Optional `mcse_limit` and
-`mcse_sd_ratio_limit` arguments screen accuracy of the specified functional
-mean. Their limits must be chosen for the application; they are not evidence
-about model correctness or latent-integration bias.
-
-Study I checks all free parameters and missing inputs, plus a separate panel
-of m, predictive, and eligible f/U moments. Study II checks every ordinal
-correlation and standardized cutpoint, the target panel in both calibration
-regimes, and all free raw coordinates when calibrated. Conditional moments
-use consecutive within-chain states and fixed common integration randomness,
-not newly noised response draws or a short pooled reporting subsample.
-Both target panels default to all retained reporting draws. Explicitly
-truncated panels retain per-parameter incompleteness flags, including after
-outer-list combination/subsetting, and cannot pass the full reporting gate.
-Study II now monitors the integrated m conditional variance, and prospective
-U moment diagnostics back-transform to supplied units when preprocessing was
-used. Integration size and random-seed sensitivity remain separate checks.
-Nonfinite diagnostics fail. Structurally fixed coordinates are excluded by
-model definition, never because their computed diagnostics are inconvenient.
-
-## Publication orchestration
-
-- `simulation_helpers.R` contains the common frozen design and validation
-  layer.
-- `run_study1_simulation.R` and `run_study2_simulation.R` are the two master
-  entry points.
-- Publication parallelism is across replications; chains within a replication
-  are serial to avoid nested forking.
-- Public competitors are called through one adapter each in
-  `03_study2_published_competitors.R`. Missing packages, inadmissible fits,
-  diagnostic failures, exact-sampler underfill, and numerical failures are
-  retained as failures rather than silently replaced.
-
-## Verification status
-
-The September 5 regression tests cover singleton/complete/no calibration,
-tail support, narrow intervals, numerical failure handling, independent
-conditional targets, exact dense/block agreement, API model contracts, and
-strict diagnostic failures. Run `tests/test_study1_sampler_repairs.R`,
-`tests/test_study2_sampler_repairs.R`, `tests/test_diagnostic_gates.R`,
-`tests/test_study1_target_diagnostics.R`, and `tests/test_public_model_contract.R`.
-
-`16_sampler_efficiency_benchmark.R` runs same-target paired timing checks and
-saves the full fits. The fresh 3,000-iteration Study II checks still fail the
-strict publication gates; publication readiness has not been established.
-
-## Historical audit checks
-
-The following focused checks passed on 2026-09-02:
-
-- `09_experiment_design_validation.R`
-- `13_study2_prospective_latent_validation.R`
-- `14_mean_function_validation.R`
-- `15_appendix_computation_validation.R`
-- a reduced two-chain interwoven run of `05_study2_sampler_validation.R`,
-  including its independent one-dimensional grid-target check
-
-The full publication diagnostic gate still has to be satisfied by the final
-workstation runs. Passing a smoke or reduced validation run is not evidence
-for the numerical results reported in the manuscript.
-
-The September 6 additions have independent quadrature, transformation/Jacobian,
-calibration, regeneration-order, numerical-cache, and dense/Schur tests in
-`tests/test_study1_noise_collapse.R` and
-`tests/test_study2_joint_measurement.R`. Diagnostic precision is checked by
-`tests/test_diagnostic_precision.R`. The literate package rebuild passes 178
-tests and R CMD check with zero errors, warnings, or notes.
-
-`17_no_hmc_mixing_pilot.R` runs both studies with frozen synthetic data, source
-snapshots, four parallel chains by default, full-window target diagnostics,
-and ESS/time comparisons. Its output is explicitly non-publication evidence.
-The new pilots still fail strict convergence. Joint measurement rows appear
-promising; the loading transport did not improve consistently and remains
-experimental. See `../COMPUTATION-REVISION-20260906.md` for settings and results.
+Short verification fits are software tests, not numerical-study results or
+proof of adequate scientific mixing. Experiment drivers use the new fitting
+entry points but their study designs and result values are unchanged. Existing
+cached fits and historical ablations are not evidence for the new posterior;
+the experiment revision should audit their provenance, prior matching, and
+reporting fields before starting new study runs.

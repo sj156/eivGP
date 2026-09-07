@@ -4,8 +4,8 @@
 ## Representative-data figures and diagnostics for revised Study I.
 ############################################################
 
-if (!exists("fit_eivgp_1d")) {
-  source("00_study1_functions.R")
+if (!exists("mixedgp_v030_fit")) {
+  source("load_mixedgp.R")
 }
 if (!exists("run_study1_published_competitors")) {
   source("03_study2_published_competitors.R")

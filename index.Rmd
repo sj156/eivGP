@@ -1,33 +1,20 @@
 ---
-title: "Creating the `eivGP` R package"
-author: "eivGP authors"
-date: "`r Sys.Date()`"
-site: bookdown::bookdown_site
-knit: litr::render
-output: litr::litr_gitbook
-params:
-  package_name: "eivGP"
-  package_parent_dir: "."
-documentclass: book
+title: "eivGP package development"
+output: html_document
 ---
 
-# Literate package source
+# Current package build
 
-The explicitly ordered `.Rmd` chapters are the authoritative package-building
-source for `eivGP`. Their maintained computational payload is organized by
-general responsibility under `script/newly-written-and-modified-scripts/`:
-shared numerics and parallelism, univariate and multivariate model engines, a
-unified model API, application interfaces, optional competitors, and isolated
-reproduction workflows. Historical R scripts are clearly separated under
-`script/legacy-code-scripts/`.
+The active package is `eivGP` 0.3.0. Its canonical implementation is maintained
+in `codes/`; `litr/create-eivGP.Rmd` is the sole active package build.
 
-The package book never launches publication-scale computation. Standalone
-reproduction documents live under `experiments/` and `applications/`; they
-call the same exported package functions used by scripts and downstream users.
-
-Render and check the package from the repository root with:
-
-```{r development-workflow, eval=FALSE}
-litr::render("index.Rmd")
-devtools::check("eivGP", document = FALSE)
+```sh
+Rscript --vanilla litr/render-package.R
+R CMD build eivGP
+R CMD check --no-manual eivGP_0.3.0.tar.gz
 ```
+
+The earlier root-level book chapters and `_bookdown.yml` are historical source
+for the 0.1.x package. They are not the current build and must not be used to
+regenerate `eivGP/`. See `README.md` for the current package interface and
+`DEVELOPMENT.md` for the separate repository experiment workflow.

@@ -1,10 +1,8 @@
 bibentry(
   bibtype = 'Unpublished',
   title = 'Ordinal Mixed-Input Gaussian Process Regression',
-  author = c(
-    person('Penghui', 'Fu'), person('Xinye', 'Chen'),
-    person('Jianhua Z.', 'Huang'), person('Sheng', 'Jiang')
-  ),
+  author = c(person('Penghui', 'Fu'), person('Xinye', 'Chen'),
+    person('Jianhua Z.', 'Huang'), person('Sheng', 'Jiang')),
   year = '2026',
   note = 'Manuscript in preparation'
 )

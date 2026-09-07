@@ -1,7 +1,7 @@
-#' eivGP: Errors-in-variables Gaussian processes for ordinal mixed inputs
+#' eivGP: Gaussian process regression with ordinal mixed inputs
 #'
 #' @import stats
-#' @importFrom utils flush.console tail
+#' @importFrom utils combn flush.console head tail
 #' @keywords internal
 "_PACKAGE"
 

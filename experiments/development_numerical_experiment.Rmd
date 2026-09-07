@@ -16,7 +16,7 @@ This document produces a small, reproducible draft of the numerical results.
 These results support inspecting the analysis and writing the paper; they are
 not final publication evidence. Both studies follow the same wrapper below.
 The current algorithms come from the repository's `codes/` modules, which also
-build eivmixgp. The historical eivGP launcher is not used here.
+build eivGP 0.3.0. Study settings and orchestration remain repository code.
 
 ```{r setup}
 knitr::opts_chunk$set(echo = TRUE, error = FALSE, cache = FALSE)

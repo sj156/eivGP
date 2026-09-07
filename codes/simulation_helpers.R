@@ -7,7 +7,7 @@
 ## task eligibility, aggregation, and fail-closed checks live here.
 ############################################################
 
-MIXEDGP_SIMULATION_SCHEMA <- "2.1.0"
+MIXEDGP_SIMULATION_SCHEMA <- "2.1.1"
 MIXEDGP_PUBLISHED_METHODS <- c("UC-GP", "LVGP", "EzGP")
 
 ## Shared with the installed package; keep a single diagnostic implementation.
@@ -54,6 +54,8 @@ mixedgp_simulation_modules <- function() {
     "00_parallel_utils.R",
     "00_study1_functions.R",
     "00_study2_functions.R",
+    "00_sampler_v030.R",
+    "00_sampler_v030_api.R",
     "00_diagnostics.R",
     "03_study2_published_competitors.R",
     "00_synthetic_data.R",
@@ -285,7 +287,7 @@ mixedgp_study1_cells <- function(mode) {
   smoke <- identical(mode, "smoke")
   primary_rep <- if (smoke) 1L else if (publication) 100L else 100L
   sensitivity_rep <- if (smoke) 1L else if (publication) 50L else 50L
-  n_test <- if (smoke) 80L else 1000L
+  n_test <- if (smoke) 80L else 200L
   primary <- lapply(c(0, 0.5, 1), function(eta) {
     list(
       id = paste0("eta", mixedgp_number_slug(eta), "_balanced"),
@@ -328,8 +330,8 @@ mixedgp_study2_cells <- function(mode) {
   smoke <- identical(mode, "smoke")
   main_rep <- if (smoke) 1L else if (publication) 100L else 100L
   appendix_rep <- if (smoke) 1L else if (publication) 50L else 50L
-  n_test <- if (smoke) 60L else 1000L
-  n_test_stress <- if (smoke) 80L else 2000L
+  n_test <- if (smoke) 60L else 200L
+  n_test_stress <- if (smoke) 80L else 200L
   make_cell <- function(id, role, scenario, q, grid, n_rep, n_test,
                         run_ablations, evaluate_f = FALSE,
                         evaluate_u = TRUE) {
@@ -674,15 +676,23 @@ validate_simulation_config <- function(config) {
       config$ablation_gp$maxit, "ablation_gp$maxit", 1L
     )
   }
-  if (config$mode == "publication" &&
-      (!isTRUE(config$strict_competitors) || !isTRUE(config$fail_closed) ||
-       !isTRUE(config$mcmc$require_gate))) {
-    stop(
-      "Publication mode requires strict competitors, fail-closed outputs, ",
-      "and the MCMC gate."
-    )
+  ## Diagnostics assess reliability; they do not terminate either run mode.
+  if (config$mode %in% c("publication", "development")) {
+    config$strict_competitors <- FALSE
+    config$fail_closed <- FALSE
+    config$mcmc$require_gate <- FALSE
   }
   config
+}
+
+mixedgp_simulation_diagnostic_advice <- function() {
+  paste("Inspect diagnostic tables and chain traces before interpretation.",
+        "If mixing is stable but ESS is low or MCSE is high, consider explicit",
+        "continuation with continue_eivgp() for a compatible public fit, then",
+        "recompute diagnostics. High R-hat or separated chains require checking",
+        "identification, initialization and sampler behavior; more iterations",
+        "alone may not help. Missing outputs/packages require repair or rerunning",
+        "the affected method, not longer MCMC. Continuation is never automatic.")
 }
 
 mixedgp_bind_rows_base <- function(rows) {
@@ -2244,12 +2254,12 @@ mixedgp_run_simulation <- function(config) {
     writeLines(config$development_note, file.path(run_dir, "DEVELOPMENT_RESULTS.txt"))
     message(config$development_note)
   }
-  if ("fit" %in% config$stages && isTRUE(config$strict_competitors) &&
-      any(!preflight$available)) {
+  if ("fit" %in% config$stages && any(!preflight$available)) {
     unavailable <- preflight$method[!preflight$available]
-    stop(
-      "Publication run stopped before data generation or fitting because ",
-      "packages are unavailable: ", paste(unavailable, collapse = ", "), "."
+    warning(
+      "Competitor packages unavailable: ", paste(unavailable, collapse = ", "),
+      ". Their missing results will be recorded; other methods may proceed.",
+      call. = FALSE
     )
   }
   if ("fit" %in% config$stages && any(!runtime_preflight$available)) {
@@ -2352,6 +2362,11 @@ mixedgp_run_simulation <- function(config) {
     gate_rows[[cell$id]] <- mixedgp_result_gates(answer, config)
     failed_gates <- gate_rows[[cell$id]]$gate[!gate_rows[[cell$id]]$pass]
     gate_failed <- length(failed_gates) > 0L
+    gate_rows[[cell$id]]$advice <- ifelse(gate_rows[[cell$id]]$pass, "",
+      mixedgp_simulation_diagnostic_advice())
+    if (gate_failed) warning("Cell ", cell$id, " has flagged results: ",
+      paste(failed_gates, collapse = "; "), ". ",
+      mixedgp_simulation_diagnostic_advice(), call. = FALSE)
     cell_status <- if (gate_failed && isTRUE(config$fail_closed)) {
       "gate_failed"
     } else if (gate_failed) {

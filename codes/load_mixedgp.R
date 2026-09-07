@@ -1,8 +1,8 @@
 ############################################################
 ## Development loader
 ##
-## Experiment scripts source this file. A future package build copies the
-## same canonical modules into R/ and does not need this loader.
+## Experiment scripts source this file. The eivGP package build copies the
+## same canonical model modules into R/ and does not need this loader.
 ############################################################
 
 mixedgp_code_dir <- function() {
@@ -18,7 +18,9 @@ mixedgp_source_core <- function(code_dir = mixedgp_code_dir(),
   modules <- c(
     "00_parallel_utils.R",
     "00_study1_functions.R",
-    "00_study2_functions.R"
+    "00_study2_functions.R",
+    "00_sampler_v030.R",
+    "00_sampler_v030_api.R"
   )
   if (isTRUE(include_competitors)) {
     modules <- c(modules, "03_study2_published_competitors.R")

@@ -7,6 +7,8 @@ params:
   run_mode: "dry_run"
   workers: 8
   data_root: ""
+  visualizations_only: false
+  figure_root: ""
 ---
 
 # Purpose
@@ -20,10 +22,19 @@ test data; the committed default is read-only.
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = TRUE,
                       error = FALSE, cache = FALSE)
-if (!requireNamespace("eivGP", quietly = TRUE)) {
+VISUALIZATIONS_ONLY <- exists("params") && isTRUE(params$visualizations_only)
+document_file <- knitr::current_input(dir = TRUE)
+REPOSITORY_DIR <- if (is.character(document_file) && length(document_file) == 1L && nzchar(document_file)) {
+  normalizePath(file.path(dirname(document_file), ".."), mustWork = TRUE)
+} else if (dir.exists("experiments")) normalizePath(".") else normalizePath("..")
+if (!VISUALIZATIONS_ONLY && !requireNamespace("eivGP", quietly = TRUE)) {
   stop("Install eivGP before rendering this document; see README.md.")
 }
-library(eivGP)
+if (!VISUALIZATIONS_ONLY) library(eivGP)
+if (!VISUALIZATIONS_ONLY) {
+  source(file.path(REPOSITORY_DIR, "codes", "simulation_helpers.R"),
+         local = knitr::knit_global())
+}
 ```
 
 # Configuration
@@ -40,34 +51,35 @@ if (length(WORKERS) != 1L || is.na(WORKERS) || WORKERS < 1L) {
   stop("workers must be one positive integer.")
 }
 ARTIFACT_ROOT <- Sys.getenv("EIVGP_ARTIFACT_ROOT", unset = "")
-if (!nzchar(ARTIFACT_ROOT)) ARTIFACT_ROOT <- file.path(getwd(), "reproduction")
+if (!nzchar(ARTIFACT_ROOT)) ARTIFACT_ROOT <- file.path(REPOSITORY_DIR, "reproduction")
 DATA_ROOT <- if (nzchar(DOCUMENT_PARAMS$data_root)) {
   normalizePath(DOCUMENT_PARAMS$data_root, winslash = "/", mustWork = FALSE)
 } else {
   file.path(
     ARTIFACT_ROOT, "data",
-    if (identical(RUN_MODE, "publication")) "synthetic" else "smoke",
+    if (identical(RUN_MODE, "smoke")) "smoke" else "synthetic",
     "study2"
   )
 }
 
 generate_study2_publication_data <- function(mode, workers, data_root,
                                              output_root) {
-  config <- eivGP::study2_simulation_config(
+  config <- study2_simulation_config(
+    code_dir = file.path(REPOSITORY_DIR, "codes"),
     mode = mode,
     workers = workers,
     data_root = data_root,
     output_root = output_root,
     stages = if (mode %in% c("smoke", "publication")) "data" else NULL
   )
-  eivGP::run_study2_simulation(config)
+  run_study2_simulation(config)
 }
 ```
 
 # Generate and verify data
 
 ```{r generate-data}
-STUDY2_DATA_RUN <- generate_study2_publication_data(
+STUDY2_DATA_RUN <- if (VISUALIZATIONS_ONLY) NULL else generate_study2_publication_data(
   mode = RUN_MODE,
   workers = WORKERS,
   data_root = DATA_ROOT,
@@ -80,4 +92,156 @@ print(STUDY2_DATA_RUN$data_manifest)
 
 ```{r session-information}
 sessionInfo()
+```
+
+# Visualize the saved synthetic datasets
+
+These are **data-design illustrations, not fitted GP estimates**. We use the
+prespecified replication 1 from each available setting, never a visually
+favourable replication. Only training observations are plotted. The inventory
+reports the actual saved training and test sizes; older frozen files may have
+larger test sets than the current defaults. No data are regenerated or truncated.
+
+Set `visualizations_only = TRUE` when rendering to skip generation and the
+legacy eivGP dependency. Set `data_root` to the directory holding this study's
+setting folders. This section reads files and verifies their manifest checksums.
+Set `figure_root` (or `EIVGP_FIGURE_ROOT`) to an output figures directory,
+such as the Overleaf project's `figures` folder. Without an override, it uses
+`reproduction/figures`. Figures and an inventory go beneath
+`frozen-data/study2/` within that directory.
+
+```{r frozen-data-selection, fig.width=10, fig.height=7}
+if (!requireNamespace("ggplot2", quietly = TRUE)) {
+  stop("Install ggplot2 to draw the frozen-data figures.")
+}
+library(ggplot2)
+VIS_REP <- 1L
+VIS_CALIBRATION <- 48L
+manifest_paths <- sort(list.files(DATA_ROOT, pattern = "^manifest\\.rds$",
+                                 recursive = TRUE, full.names = TRUE))
+frozen_examples <- list()
+inventory_rows <- list()
+for (manifest_path in manifest_paths) {
+  manifest <- readRDS(manifest_path)
+  if (!is.data.frame(manifest) ||
+      !all(c("study", "rep", "file", "md5") %in% names(manifest))) {
+    stop("Malformed manifest: ", manifest_path)
+  }
+  selected <- manifest[manifest$study == "study2" & manifest$rep == VIS_REP, , drop = FALSE]
+  if (!nrow(selected)) next
+  if (nrow(selected) != 1L) stop("Ambiguous replication in: ", manifest_path)
+  data_path <- file.path(dirname(manifest_path), basename(selected$file))
+  if (!file.exists(data_path) ||
+      !identical(unname(tools::md5sum(data_path)), as.character(selected$md5))) {
+    stop("Missing or checksum-mismatched frozen data: ", data_path)
+  }
+  frozen <- readRDS(data_path)
+  stopifnot(identical(frozen$study, "study2"), frozen$rep_id == VIS_REP,
+            is.list(frozen$data), is.list(frozen$calibration_sets))
+  setting <- basename(dirname(manifest_path))
+  if (setting %in% names(frozen_examples)) stop("Duplicate setting folder: ", setting)
+  frozen_examples[[setting]] <- frozen
+  inventory_rows[[setting]] <- data.frame(
+    setting = setting, replication = frozen$rep_id,
+    n_train = nrow(frozen$data$train$X),
+    n_test = nrow(frozen$data$test$X),
+    saved_calibration_sizes = paste(names(frozen$calibration_sets), collapse = ", "),
+    data_seed = frozen$seeds$data, calibration_seed = frozen$seeds$calibration,
+    file = basename(data_path), md5 = as.character(selected$md5)
+  )
+}
+if (!length(frozen_examples)) {
+  message("No frozen Study II replication-1 datasets found under ", DATA_ROOT,
+          ". No data were generated and no plots were fabricated.")
+} else {
+  FIGURE_ROOT <- if (exists("params") && is.character(params$figure_root) &&
+                    length(params$figure_root) == 1L && nzchar(params$figure_root)) {
+    params$figure_root
+  } else Sys.getenv("EIVGP_FIGURE_ROOT", unset = file.path(ARTIFACT_ROOT, "figures"))
+  figure_dir <- file.path(FIGURE_ROOT, "frozen-data", "study2")
+  dir.create(figure_dir, recursive = TRUE, showWarnings = FALSE)
+  inventory <- do.call(rbind, inventory_rows)
+  rownames(inventory) <- NULL
+  print(knitr::kable(inventory[, 1:7], caption = "Frozen datasets actually visualized"))
+  write.csv(inventory, file.path(figure_dir, "visualized_dataset_inventory.csv"), row.names = FALSE)
+}
+save_frozen_plot <- function(plot, name, width = 10, height = 7) {
+  print(plot)
+  ggplot2::ggsave(file.path(figure_dir, paste0(name, ".png")), plot,
+                 width = width, height = height, dpi = 160, bg = "white")
+  ggplot2::ggsave(file.path(figure_dir, paste0(name, ".pdf")), plot,
+                 width = width, height = height, bg = "white")
+}
+frozen_theme <- theme_bw(base_size = 11) +
+  theme(panel.grid.minor = element_blank(), legend.position = "bottom")
+```
+
+## Proxy frequencies and latent response
+
+The figures expose the simulated latent truth for explanation; that truth is
+not made available to fitted methods outside the saved calibration subset.
+The 48-observation calibration set is highlighted only where already stored.
+
+```{r study2-frozen-plots, fig.width=11, fig.height=8}
+if (length(frozen_examples)) {
+  category_rows <- latent_rows <- response_rows <- list()
+  for (setting in names(frozen_examples)) {
+    frozen <- frozen_examples[[setting]]
+    train <- frozen$data$train
+    stopifnot(is.matrix(train$X), is.matrix(train$U), is.matrix(train$C),
+              ncol(train$U) >= 2L, nrow(train$X) == length(train$y),
+              all(is.finite(train$X)), all(is.finite(train$U)),
+              all(is.finite(train$y)), all(is.finite(train$f)))
+    for (j in seq_len(ncol(train$C))) {
+      category_rows[[paste(setting, j)]] <- data.frame(
+        setting = setting, proxy = paste0("C", j),
+        category = factor(seq_len(frozen$design$m)),
+        proportion = tabulate(train$C[, j], nbins = frozen$design$m) / nrow(train$C))
+    }
+    key <- as.character(VIS_CALIBRATION)
+    available <- key %in% names(frozen$calibration_sets)
+    ids <- if (available) frozen$calibration_sets[[key]] else integer()
+    if (available) stopifnot(length(ids) == VIS_CALIBRATION, !anyDuplicated(ids),
+                             all(ids %in% seq_len(nrow(train$X))))
+    label <- paste0(setting, if (available) " | calibration=48" else " | calibration=48 unavailable")
+    latent_rows[[setting]] <- data.frame(
+      U1 = train$U[, 1], U2 = train$U[, 2], f = train$f,
+      setting = label, calibrated = seq_len(nrow(train$X)) %in% ids)
+    for (j in seq_len(ncol(train$X))) {
+      response_rows[[paste(setting, j)]] <- data.frame(
+        x = train$X[, j], y = train$y, U1 = train$U[, 1],
+        input = paste0("X", j), setting = setting)
+    }
+  }
+  category_data <- do.call(rbind, category_rows)
+  latent_data <- do.call(rbind, latent_rows)
+  response_data <- do.call(rbind, response_rows)
+  p_categories <- ggplot(category_data, aes(category, proxy, fill = proportion)) +
+    geom_tile(colour = "white") +
+    geom_text(aes(label = sprintf("%.2f", proportion)), size = 3, colour = "black") +
+    scale_fill_gradient(low = "#F0F9E8", high = "#7BCCC4", limits = c(0, 1)) +
+    facet_wrap(~setting, ncol = 2, scales = "free_y") +
+    labs(title = "Study II: frequencies of ordinal proxies",
+         subtitle = "Frozen replication 1; training observations",
+         x = "Ordinal category", y = "Proxy", fill = "Proportion") + frozen_theme
+  save_frozen_plot(p_categories, "proxy_frequencies", 11, 8)
+  p_latent <- ggplot(latent_data, aes(U1, U2)) +
+    geom_point(aes(colour = f), size = 2) +
+    geom_point(data = subset(latent_data, calibrated), shape = 1,
+               size = 3.3, colour = "black", stroke = 0.7) +
+    scale_colour_viridis_c(option = "C") + facet_wrap(~setting, ncol = 2) +
+    labs(title = "Study II: latent coordinates and saved response",
+         subtitle = "Black rings mark the saved calibration subset when available",
+         x = "Latent U1", y = "Latent U2", colour = "True f(X,U)",
+         caption = "X also varies: this scatterplot is not a fixed-X response-surface slice.") +
+    frozen_theme
+  save_frozen_plot(p_latent, "latent_response_and_calibration", 11, 8)
+  p_response <- ggplot(response_data, aes(x, y, colour = U1)) +
+    geom_point(size = 1.7, alpha = 0.8) + scale_colour_viridis_c() +
+    facet_grid(setting ~ input) +
+    labs(title = "Study II: responses versus observed inputs",
+         subtitle = "Latent U1 is shown for explanation, not supplied as uncalibrated training information",
+         x = "Observed input", y = "Response y", colour = "Latent U1") + frozen_theme
+  save_frozen_plot(p_response, "response_by_input", 11, max(5, 2 * length(frozen_examples)))
+}
 ```

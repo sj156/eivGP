@@ -1,45 +1,29 @@
 Package: eivGP
-Title: Errors-in-Variables Gaussian Processes for Ordinal Mixed Inputs
-Version: 0.1.0
-Authors@R: c(
-    person("Penghui", "Fu", role = "aut"),
-    person("Xinye", "Chen", role = "aut"),
-    person("Jianhua Z.", "Huang", role = "aut"),
-    person("Sheng", "Jiang", , "jiangsheng@cuhk.edu.cn", role = c("aut", "cre"))
-  )
-Author: Penghui Fu [aut], Xinye Chen [aut], Jianhua Z. Huang [aut], Sheng
-    Jiang [aut, cre]
-Maintainer: Sheng Jiang <jiangsheng@cuhk.edu.cn>
+Title: Gaussian Process Regression with Ordinal Mixed Inputs
+Version: 0.3.0
+Authors@R: c( person("Penghui", "Fu", role = "aut"), person("Xinye",
+        "Chen", role = "aut"), person("Jianhua Z.", "Huang", role =
+        "aut"), person("Sheng", "Jiang", , "jiangsheng@cuhk.edu.cn",
+        role = c("aut", "cre")) )
 Description: Fits errors-in-variables Gaussian process regressions with
-    numeric predictors, ordinal proxies for latent continuous inputs, and
-    sparse calibration measurements. Includes reproducible Study I and
-    Study II simulation workflows and audited mixed-input GP competitors.
+        numeric predictors, ordinal proxies, and optional calibration
+        measurements. Uses collapsed variance inference, a finite
+        latent-length dictionary, and no-thinning elliptical slice
+        sampling. Supports posterior prediction, latent-input
+        imputation, diagnostics, and continuation.
 License: MIT + file LICENSE
-Depends: 
-    R (>= 4.1.0)
-Imports: 
-    methods,
-    parallel,
-    posterior,
-    stats,
-    tools,
-    TruncatedNormal,
-    utils
-Suggests: 
-    dplyr,
-    EzGP,
-    ggplot2,
-    kergp,
-    knitr,
-    LVGP,
-    patchwork,
-    pkgload,
-    rmarkdown,
-    testthat,
-    tidyr
-Config/testthat/edition: 3
+Depends: R (>= 4.1.0)
+Imports: methods, parallel, posterior, stats, tools, TruncatedNormal,
+        utils
+Suggests: dplyr, EzGP, ggplot2, kergp, knitr, LVGP, patchwork,
+        testthat, tidyr
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 8.0.0
-LitrVersionUsed: 0.9.3
-LitrId: 0acf1e00407a9f96f21fa6bb76432eae
+Collate: '00_parallel_utils.R' '00_study1_functions.R'
+        '00_study2_functions.R' '00_sampler_v030.R'
+        '00_sampler_v030_api.R' '03_study2_published_competitors.R'
+        '00_public_api.R' '00_diagnostics.R' '00_mcmc_workflow.R'
+        'eivGP-package.R' 'global-variables.R'
+Config/litr/version: 0.9.3
+Config/litr/id: 2f940f39d0ec06c766be7d960d26892b

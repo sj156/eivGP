@@ -1,0 +1,139 @@
+---
+title: "Creating the eivGP R package"
+author: "EIV-GP authors"
+date: "Version 0.3.0"
+knit: litr::render
+output: litr::litr_html_document
+params:
+  package_name: "eivGP"
+  package_parent_dir: ".."
+---
+
+This is the sole active package build. The implementation is maintained in
+`../codes`; the generated installable package is `../eivGP`. Numerical-study
+designs, frozen data, and launchers remain in the repository experiment layer.
+
+## Package setup
+
+```{r package-setup, message=FALSE, results='hide'}
+usethis::create_package(
+  path = ".",
+  fields = list(
+    Package = params$package_name,
+    Version = "0.3.0",
+    Title = "Gaussian Process Regression with Ordinal Mixed Inputs",
+    Description = paste(
+      "Fits errors-in-variables Gaussian process regressions with numeric",
+      "predictors, ordinal proxies, and optional calibration measurements.",
+      "Uses collapsed variance inference, a finite latent-length dictionary,",
+      "and no-thinning elliptical slice sampling. Supports posterior",
+      "prediction, latent-input imputation, diagnostics, and continuation."
+    ),
+    `Authors@R` = c(
+      person(given = "Penghui", family = "Fu", role = "aut"),
+      person(given = "Xinye", family = "Chen", role = "aut"),
+      person(given = "Jianhua Z.", family = "Huang", role = "aut"),
+      person(given = "Sheng", family = "Jiang",
+             email = "jiangsheng@cuhk.edu.cn", role = c("aut", "cre"))
+    ),
+    License = "MIT + file LICENSE",
+    Encoding = "UTF-8",
+    Depends = "R (>= 4.1.0)",
+    Imports = "methods, parallel, posterior, stats, tools, TruncatedNormal, utils",
+    Suggests = "dplyr, EzGP, ggplot2, kergp, knitr, LVGP, patchwork, testthat, tidyr"
+  )
+)
+source_document <- knitr::current_input(dir = TRUE)
+repository_dir <- normalizePath(file.path(dirname(source_document), ".."),
+                                winslash = "/", mustWork = TRUE)
+canonical_dir <- file.path(repository_dir, "codes")
+package_dir <- usethis::proj_get()
+if (!file.exists(file.path(package_dir, ".Rbuildignore"))) {
+  writeLines(character(), file.path(package_dir, ".Rbuildignore"))
+}
+writeLines(c("YEAR: 2026", paste(
+  "COPYRIGHT HOLDER: Penghui Fu, Xinye Chen, Jianhua Z. Huang, and Sheng Jiang"
+)), file.path(package_dir, "LICENSE"))
+stopifnot(file.copy(file.path(repository_dir, "README.md"),
+                   file.path(package_dir, "README.md"), overwrite = TRUE))
+stopifnot(file.copy(file.path(repository_dir, "PACKAGE-UPDATE-0.3.0.md"),
+                   file.path(package_dir, "NEWS.md"), overwrite = TRUE))
+dir.create(file.path(package_dir, "inst"), showWarnings = FALSE)
+writeLines(c(
+  "bibentry(", "  bibtype = 'Unpublished',",
+  "  title = 'Ordinal Mixed-Input Gaussian Process Regression',",
+  "  author = c(person('Penghui', 'Fu'), person('Xinye', 'Chen'),",
+  "    person('Jianhua Z.', 'Huang'), person('Sheng', 'Jiang')),",
+  "  year = '2026',", "  note = 'Manuscript in preparation'", ")"
+), file.path(package_dir, "inst", "CITATION"))
+```
+
+```{package_doc package-documentation}
+#' eivGP: Gaussian process regression with ordinal mixed inputs
+#'
+#' @import stats
+#' @importFrom utils combn flush.console head tail
+```
+
+```{r global-variables, send_to="R/global-variables.R", eval=FALSE}
+utils::globalVariables(c(
+  "block", "chain", "ess", "global_u_accept_total", "global_u_eval_total",
+  "global_u_total", "ref", "rhat", "theta_eval_total",
+  "theta_update_total", "u_ess_accept_total", "u_ess_eval_total",
+  "u_ess_total", "value", "xintercept"
+))
+```
+
+## Canonical model modules and tests
+
+The two historical helper filenames contain reusable model and numerical
+functions. The current sampler modules follow them in a fixed load order.
+Synthetic-data and experiment-runner modules are intentionally excluded.
+
+```{r copy-canonical-modules, message=FALSE}
+canonical_modules <- c(
+  "00_parallel_utils.R",
+  "00_study1_functions.R",
+  "00_study2_functions.R",
+  "00_sampler_v030.R",
+  "00_sampler_v030_api.R",
+  "03_study2_published_competitors.R",
+  "00_public_api.R",
+  "00_diagnostics.R",
+  "00_mcmc_workflow.R"
+)
+dir.create(file.path(package_dir, "R"), showWarnings = FALSE)
+stopifnot(all(file.copy(file.path(canonical_dir, canonical_modules),
+  file.path(package_dir, "R", canonical_modules), overwrite = TRUE)))
+write_module_order <- function() {
+  description_path <- file.path(package_dir, "DESCRIPTION")
+  description <- as.list(read.dcf(description_path)[1L, , drop = TRUE])
+  other_modules <- setdiff(list.files(file.path(package_dir, "R"),
+                                     pattern = "\\.[Rr]$"), canonical_modules)
+  description$Collate <- paste(sprintf("'%s'", c(canonical_modules, other_modules)),
+                               collapse = "\n")
+  write.dcf(as.data.frame(description, check.names = FALSE), description_path)
+}
+write_module_order()
+test_dir <- file.path(package_dir, "tests", "testthat")
+dir.create(test_dir, recursive = TRUE, showWarnings = FALSE)
+writeLines(c("library(testthat)", "library(eivGP)", "test_check('eivGP')"),
+           file.path(package_dir, "tests", "testthat.R"))
+stopifnot(file.copy(file.path(repository_dir, "litr", "tests", "test-utilities.R"),
+                   file.path(test_dir, "test-utilities.R"), overwrite = TRUE))
+stopifnot(file.copy(file.path(canonical_dir, "tests", "test_v030_core.R"),
+                   file.path(test_dir, "test-v030-core.R"), overwrite = TRUE))
+stopifnot(file.copy(file.path(canonical_dir, "tests", "test_v030_workflow.R"),
+                   file.path(test_dir, "test-v030-workflow.R"), overwrite = TRUE))
+devtools::load_all(package_dir, quiet = TRUE)
+```
+
+## Documentation and checking
+
+Rendering creates the source package; it does not launch numerical studies.
+Run the package checks separately after rendering.
+
+```{r document-package}
+litr::document()
+write_module_order()
+```

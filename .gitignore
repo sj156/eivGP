@@ -13,3 +13,5 @@ applications/*_files/
 applications/*.html
 .Rproj.user/
 .Rhistory
+litr/create-eivGP.md
+litr/create-eivGP.knit.md

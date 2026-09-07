@@ -8,9 +8,9 @@
 ## the explicit archival switch STUDY1_REUSE_LOCKED_EIV=TRUE.
 ############################################################
 
-if (!exists("fit_eivgp_1d")) source("00_study1_functions.R")
+if (!exists("mixedgp_v030_fit")) source("load_mixedgp.R")
 if (!exists("load_mixedgp_synthetic_dataset")) source("00_synthetic_data.R")
-if (!exists("mixedgp_study1_raw_diagnostics")) {
+if (!exists("mixedgp_study1_raw_diagnostics") || !exists("mixedgp_simulation_diagnostic_advice")) {
   source_paths <- unlist(lapply(sys.frames(), function(frame) {
     get0("ofile", envir = frame, inherits = FALSE, ifnotfound = character(0))
   }))
@@ -333,7 +333,7 @@ STUDY1_DESIGN_TAG <- paste0(
   "_u", as.integer(isTRUE(STUDY1_EVALUATE_U))
 )
 STUDY1_CACHE_SPEC <- list(
-  schema = "s1v8_strict_target_gate",
+  schema = "s1v9_nonfatal_target_diagnostics",
   design_label = STUDY1_DESIGN_TAG,
   study1_config = STUDY1_CONFIG,
   scenario = STUDY1_SCENARIO,
@@ -748,7 +748,10 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
       diag_row$raw_gate_pass <- raw_gate_pass
       diag_row$target_gate_pass <- target_gate_pass
       mcmc_diagnostics[[as.character(n_calib)]] <- diag_row
-      if (isTRUE(STUDY1_REQUIRE_MCMC_GATE) && !isTRUE(gate_pass)) {
+      diag_row$diagnostic_warning <- !isTRUE(gate_pass)
+      diag_row$diagnostic_advice <- if (isTRUE(gate_pass)) "" else mixedgp_simulation_diagnostic_advice()
+      mcmc_diagnostics[[as.character(n_calib)]] <- diag_row
+      if (!isTRUE(gate_pass)) {
         failure_file <- tempfile(
           sprintf("mcmc_failure_rep%03d_cal%03d_", rep_id, n_calib),
           tmpdir = RES_DIR, fileext = ".rds"
@@ -756,11 +759,12 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
         saveRDS(list(fit = fit_eiv, diagnostics = parameter_diag,
                      diagnostic_panel_rows = panel, cache_spec = STUDY1_CACHE_SPEC),
                 failure_file)
-        stop(
-          "Study I MCMC gate failed for replication ", rep_id,
+        warning(
+          "Study I MCMC diagnostics flagged replication ", rep_id,
           ", |O|=", n_calib, ": max R-hat=", signif(max_rhat, 4),
           ", min ESS=", signif(min_ess, 5),
-          ". Failed fit and diagnostics saved to ", failure_file, "."
+          ". Fit retained and diagnostics saved to ", failure_file, ". ",
+          mixedgp_simulation_diagnostic_advice(), call. = FALSE
         )
       }
       draw_ids <- seq_len(nrow(fit_eiv$mcmc$samples_u))

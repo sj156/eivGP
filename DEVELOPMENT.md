@@ -1,7 +1,27 @@
-# Development experiments — eivmixgp 0.2.1
+# Repository development experiments with eivGP 0.3.0
+
+This document describes the separate numerical-experiment layer. Its study
+cells, replication counts, evaluation budgets, and output paths are not
+package defaults or installed package APIs. The current posterior engines
+come from the canonical `codes/` modules used to build `eivGP` 0.3.0.
+Existing older fits and caches require refitting under the new posterior.
 
 Development estimates are scientifically informative, but replication
 uncertainty and diagnostic warnings must accompany their interpretation.
+
+## Dataset sizes and replications
+
+Both development and publication configurations use 200 test observations per
+dataset, including Study II's q=6 setting. Training sizes remain 100 (Study I)
+and 120 (Study II). A replication is a newly simulated dataset under the same
+setting, with a distinct prespecified seed; all applicable methods share it.
+Development uses three replications per selected setting. Publication retains
+100 for primary settings and 50 for supplementary settings.
+
+Previously frozen larger test datasets are not overwritten or silently truncated.
+Their manifests may be incompatible with this revised design; select a new
+data directory or explicitly prepare and audit the revised data before running.
+Equal test sizes alone do not yet implement shared frozen data across modes.
 
 ## Core budget and iterations
 
@@ -38,7 +58,7 @@ the masters retain historical allocation.
 ## Package interface
 
 ```r
-library(eivmixgp)
+library(eivGP)
 settings <- eivgp_run_settings(core_budget = 12L, pending_datasets = 3L)
 settings
 # Inside each dataset worker:
@@ -49,25 +69,50 @@ settings
 # fit <- continue_eivgp(fit, n_iter = 1000L)
 ```
 
-This helper returns settings, not a running experiment. It does not change
-low-level sampler defaults. `MIXEDGP_DEV_DRAWS` overrides retained iterations
+This reusable helper returns an allocation and fitting arguments. The
+environment variables below are read by repository experiment scripts, not
+the package model API. `MIXEDGP_DEV_DRAWS` overrides retained iterations
 per chain, excluding warmup; `MIXEDGP_DEV_BURN` overrides warmup;
 `MIXEDGP_DEV_REPS` controls replications.
 
 ## Scope and remaining work
 
-This release implements iteration accounting and core-budgeted concurrency,
-not the complete earlier development brief. Current cells remain Study I
+The repository experiment layer retains iteration accounting and core-budgeted
+concurrency; the complete earlier development brief is not implemented. Current cells remain Study I
 eta0/eta1 with calibration 5/20 and Study II primary q2/q4 with calibration
 12 and 6/24, three replications and 200 test observations.
 
 Remaining work includes the ten-cell design and affine control, scheduling
 across settings, method-level time caps/recovery, fit/evaluation cache
-separation, and uniform nonfatal diagnostic handling. Publication still has
-its existing stricter gates; modes do not yet differ only in experiment scale.
+separation, and recovery from genuine fitting/evaluation exceptions.
+Diagnostic handling is now shared: convergence and completeness checks
+produce flags and warnings in both modes, never gate-triggered stops.
+Missing competitors are recorded and skipped by default.
 No claim is made that the full brief's acceptance tests pass. Development
 runs can still take substantial time and stop on failures.
 
+## Interpreting diagnostic flags
+
+Main MCMC tables retain pass/fail fields and add `diagnostic_warning` and
+`diagnostic_advice`. Flagged fitted objects are saved before proceeding.
+Study II measurement warnings no longer suppress PI-GP/CC-GP calculations;
+their status and measurement diagnostic tables identify the warning.
+Run-level `config/diagnostic_gates.csv` records unresolved checks and advice.
+
+Low ESS or high MCSE with otherwise stable mixing can justify more sampling.
+High R-hat, separated traces or unidentified coordinates need investigation;
+longer runs are not a guaranteed remedy. Use `continue_eivgp()` only on a
+compatible public `eivgp_fit`; raw simulation-engine fit bundles are not
+automatically converted to that interface. Continuation remains opt-in.
+
+Flags are not permission to present unreliable numbers as established results.
+Retain them alongside estimates, and report missing-method and uncertainty
+information. Corrupt input data, missing core runtime dependencies, disk errors
+and unhandled fitting/evaluation exceptions still stop rather than invent outputs.
+Changed cache schemas prevent silently reusing old gate-suppressed bundles;
+existing cache files are preserved, but a new run can require recomputation.
+
 No output is automatically copied into Overleaf or pushed to GitHub.
-The older `experiments/run_publication_study.R` is the legacy eivGP launcher,
-not the eivmixgp development entry point.
+`experiments/run_publication_study.R` resolves its study constructors from the
+same repository helper bundle. Package release validation does not run either
+development or publication studies.

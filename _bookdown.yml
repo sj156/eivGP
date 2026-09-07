@@ -1,3 +1,5 @@
+# Historical 0.1.x book configuration; not the current eivGP package build.
+# Use Rscript --vanilla litr/render-package.R for the canonical 0.3.0 package.
 book_filename: "eivGP-literate-source"
 delete_merged_file: true
 rmd_files:

@@ -9,8 +9,8 @@
 ## 03_study2_published_competitors.R, with failures recorded explicitly.
 ############################################################
 
-if (!exists("fit_eivgp_ordprobit_fb")) {
-  source("00_study2_functions.R")
+if (!exists("mixedgp_v030_fit")) {
+  source("load_mixedgp.R")
 }
 if (!exists("run_study2_published_competitors")) {
   source("03_study2_published_competitors.R")
@@ -196,7 +196,6 @@ for (n_calib in rep_fit_calibs) {
     thin = rep_thin,
     n_chains = rep_n_chains,
     preset = settings$preset,
-    sampler_strategy = "interwoven",
     store_scores = FALSE,
     seed = 500000L + n_calib,
     parallel_chains = parallel_chains,
@@ -716,7 +715,7 @@ manifest <- data.frame(
   burn = rep_burn,
   thin = rep_thin,
   n_chains = rep_n_chains,
-  sampler_strategy = "interwoven",
+  sampler_strategy = "collapsed_dictionary_ess",
   prospective_latent_sampler = switch(
     predictive_latent_sampler,
     minimax_tilting = paste(

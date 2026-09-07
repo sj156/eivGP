@@ -14,11 +14,11 @@
 ##   * published competitors only, with explicit availability records.
 ############################################################
 
-if (!exists("fit_eivgp_ordprobit_fb")) {
-  source("00_study2_functions.R")
+if (!exists("mixedgp_v030_fit")) {
+  source("load_mixedgp.R")
 }
 if (!exists("load_mixedgp_synthetic_dataset")) source("00_synthetic_data.R")
-if (!exists("mixedgp_study2_target_series")) {
+if (!exists("mixedgp_study2_target_series") || !exists("mixedgp_simulation_diagnostic_advice")) {
   source_paths <- unlist(lapply(sys.frames(), function(frame) {
     get0("ofile", envir = frame, inherits = FALSE, ifnotfound = character(0))
   }))
@@ -392,7 +392,7 @@ scenario_code <- c(
 )
 scenario_tag <- paste(unname(scenario_code[STUDY2_SCENARIOS]), collapse = "")
 CACHE_SPEC <- list(
-  schema = "s2v16_strict_diagnostic_targets",
+  schema = "s2v17_nonfatal_diagnostic_targets",
   design_tag = STUDY2_DESIGN_TAG,
   study2_config = STUDY2_CONFIG,
   scenario_code = scenario_tag,
@@ -816,7 +816,6 @@ run_one_study2_replication <- function(rep_id, scenario) {
       thin = mc_thin,
       n_chains = mc_n_chains,
       preset = mc_preset,
-      sampler_strategy = "interwoven",
       store_scores = FALSE,
       seed = fit_seed_base + 1000L + n_calib,
       parallel_chains = parallel_chains,
@@ -987,7 +986,17 @@ run_one_study2_replication <- function(rep_id, scenario) {
     diag_row$invariant_min_tail_ess <- study2_finite_min(invariant_diag$ess_tail)
     diag_row$mcmc_pass <- target_functional_pass && invariant_measurement_pass &&
       (n_calib == 0L || raw_coordinate_pass)
+    diag_row$diagnostic_warning <- !isTRUE(diag_row$mcmc_pass)
+    diag_row$diagnostic_advice <- if (isTRUE(diag_row$mcmc_pass)) "" else mixedgp_simulation_diagnostic_advice()
     diagnostics[[as.character(n_calib)]] <- diag_row
+    if (!isTRUE(diag_row$mcmc_pass)) {
+      saveRDS(list(fit = fit, diagnostics = diag_row),
+        file.path(RES_DIR, sprintf("flagged_fit_%s_rep%03d_cal%03d.rds",
+                                  scenario, rep_id, n_calib)))
+      warning("Study II MCMC diagnostics flagged replication ", rep_id,
+        ", calibration ", n_calib, ". ", mixedgp_simulation_diagnostic_advice(),
+        call. = FALSE)
+    }
 
     if (isTRUE(STUDY2_EVALUATE_U)) {
       imputation[[paste0("EIV_training_", n_calib)]] <-
@@ -1241,59 +1250,25 @@ run_one_study2_replication <- function(rep_id, scenario) {
         n_units = length(mean_eval_idx)
       )
 
-      if (!isTRUE(measurement_diag$convergence_pass)) {
-        msg <- paste0(
-          "Response-free measurement-model convergence gate failed: ",
-          "backend=", measurement_diag$diagnostic_backend,
-          ", max R-hat=", signif(study2_finite_max(c(
-            measurement_diag$max_rhat_A,
-            measurement_diag$max_rhat_tau,
-            measurement_diag$max_rhat_missing_U
-          )), 4),
-          ", min bulk/tail ESS=",
-          signif(measurement_diag$min_bulk_ess_all, 5), "/",
-          signif(measurement_diag$min_tail_ess_all, 5), "."
-        )
-        ablation_status[[paste0("measurement_", key)]] <-
-          study2_ablation_status(
-            "Response-free measurement model", n_calib,
-            "failed_convergence", msg, elapsed_measurement
-          )
-        ablation_status[[paste0("PI_", key)]] <-
-          study2_ablation_status(
-            "PI-GP", n_calib, "failed_convergence", msg, NA_real_
-          )
-        ablation_status[[paste0("CC_", key)]] <-
-          study2_ablation_status(
-            "CC-GP", n_calib,
-            if (n_calib == 0L) "not_applicable" else "failed_convergence",
-            if (n_calib == 0L) "No complete cases." else msg,
-            NA_real_
-          )
-        for (task_status in list(
-          measurement_training_status,
-          measurement_prospective_status
-        )) {
-          if (isTRUE(task_status$task_eligible)) {
-            task_status$status <- "failed_convergence"
-            task_status$task_eligible <- FALSE
-            task_status$reason <- msg
-          }
-          imputation_status[[paste0(
-            "measurement_", task_status$target, "_", key
-          )]] <- task_status
-        }
-        next
+      measurement_warning <- !isTRUE(measurement_diag$convergence_pass)
+      measurement_advice <- if (measurement_warning) mixedgp_simulation_diagnostic_advice() else ""
+      if (measurement_warning) {
+        saveRDS(list(fit = measurement_fit, diagnostics = measurement_diag),
+          file.path(RES_DIR, sprintf("flagged_measurement_%s_rep%03d_cal%03d.rds",
+                                    scenario, rep_id, n_calib)))
+        warning("Response-free measurement model has diagnostic warnings. ",
+                measurement_advice, call. = FALSE)
       }
-      imputation_status[[paste0("measurement_training_", key)]] <-
-        measurement_training_status
-      imputation_status[[paste0("measurement_prospective_", key)]] <-
-        measurement_prospective_status
+      measurement_training_status$diagnostic_warning <- measurement_warning
+      measurement_training_status$diagnostic_advice <- measurement_advice
+      measurement_prospective_status$diagnostic_warning <- measurement_warning
+      measurement_prospective_status$diagnostic_advice <- measurement_advice
+      imputation_status[[paste0("measurement_training_", key)]] <- measurement_training_status
+      imputation_status[[paste0("measurement_prospective_", key)]] <- measurement_prospective_status
       ablation_status[[paste0("measurement_", key)]] <-
-        study2_ablation_status(
-          "Response-free measurement model", n_calib, "success", "",
-          elapsed_measurement
-        )
+        study2_ablation_status("Response-free measurement model", n_calib,
+          if (measurement_warning) "completed_with_diagnostic_warnings" else "success",
+          measurement_advice, elapsed_measurement)
 
       ablation_imputation[[paste0("measurement_training_", key)]] <-
         study2_measurement_training_imputation_metrics(
@@ -1377,7 +1352,9 @@ run_one_study2_replication <- function(rep_id, scenario) {
       } else {
         ablation_status[[paste0("PI_", key)]] <-
           study2_ablation_status(
-            "PI-GP", n_calib, "success", "", elapsed_pi
+            "PI-GP", n_calib,
+            if (measurement_warning) "completed_with_diagnostic_warnings" else "success",
+            measurement_advice, elapsed_pi
           )
         ablation_metrics[[paste0("PI_", key)]] <-
           summarize_predictive_samples_by_pattern(
@@ -1469,7 +1446,9 @@ run_one_study2_replication <- function(rep_id, scenario) {
         } else {
           ablation_status[[paste0("CC_", key)]] <-
             study2_ablation_status(
-              "CC-GP", n_calib, "success", "", elapsed_cc
+              "CC-GP", n_calib,
+              if (measurement_warning) "completed_with_diagnostic_warnings" else "success",
+              measurement_advice, elapsed_cc
             )
           ablation_metrics[[paste0("CC_", key)]] <-
             summarize_predictive_samples_by_pattern(
@@ -1805,7 +1784,7 @@ design_manifest <- bind_rows(lapply(STUDY2_SCENARIOS, function(scenario) {
     } else {
       "shared X, U, score innovations, and response innovations"
     },
-    sampler_strategy = "interwoven",
+    sampler_strategy = "collapsed_dictionary_ess",
     prospective_latent_sampler = switch(
       predictive_latent_sampler,
       minimax_tilting = paste(
@@ -2618,11 +2597,9 @@ if (nrow(mc_diagnostics) > 0L) {
     )
   write.csv(mcmc_gate, file.path(TAB_DIR, paste0("study2_mcmc_gate_", CACHE_TAG, ".csv")), row.names = FALSE)
 
-  if (isTRUE(STUDY2_ENFORCE_MCMC_GATE) && !all(mc_diagnostics$mcmc_pass)) {
-    stop(
-      "The publication MCMC gate failed. Results were saved, but no run should ",
-      "be reported until every failed fit is diagnosed and rerun."
-    )
+  if (!all(mc_diagnostics$mcmc_pass)) {
+    warning("MCMC results include diagnostic warnings; finite estimates are retained. ",
+            mixedgp_simulation_diagnostic_advice(), call. = FALSE)
   }
 }
 

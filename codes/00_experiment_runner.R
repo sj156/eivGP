@@ -12,19 +12,10 @@ mixedgp_find_code_dir <- function(code_dir = NULL) {
     return(code_dir)
   }
 
-  installed_dir <- system.file("experiments", package = "eivmixgp")
-  in_package <- isNamespace(environment(mixedgp_find_code_dir))
-  if (in_package) {
-    if (!nzchar(installed_dir) ||
-        !file.exists(file.path(installed_dir, marker))) {
-      stop("The installed eivmixgp experiment scripts are unavailable.")
-    }
-    return(normalizePath(installed_dir, winslash = "/", mustWork = TRUE))
-  }
-
+  ## Numerical studies belong to the repository, not the installed package.
   candidates <- c(
     getwd(), file.path(getwd(), "codes"),
-    file.path(getwd(), "revision", "codes"), installed_dir
+    file.path(getwd(), "revision", "codes")
   )
   candidates <- candidates[nzchar(candidates)]
   hit <- candidates[file.exists(file.path(candidates, marker))]
@@ -205,7 +196,7 @@ mixedgp_experiment_spec <- function(
   use_cache <- mixedgp_validate_flag(use_cache, "use_cache")
   run_ablations <- mixedgp_validate_flag(run_ablations, "run_ablations")
   if (is.null(strict_competitors)) {
-    strict_competitors <- identical(config, "thorough")
+    strict_competitors <- FALSE
   } else {
     strict_competitors <- mixedgp_validate_flag(
       strict_competitors, "strict_competitors"
@@ -494,8 +485,8 @@ mixedgp_generate_experiment_data <- function(spec) {
 #' @param use_cache Whether validated fitted-result caches may be reused.
 #' @param run_ablations Whether to run the appendix ablations.
 #' @param strict_competitors Whether missing or failed competitor packages stop.
-#'   `NULL` (the default) enables strictness for `config="thorough"` and
-#'   disables it otherwise.
+#'   `NULL` (the default) disables strictness at every experiment scale.
+#'   Explicit TRUE remains an opt-in for callers requiring all competitors.
 #' @param code_dir Location of the manuscript experiment scripts.
 #' @param study_options Named study-prefixed overrides, such as
 #'   `list(STUDY2_MC_N_REP = 2L)`.

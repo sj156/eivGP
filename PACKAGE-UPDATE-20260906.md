@@ -1,5 +1,8 @@
 # eivmixgp 0.2.0: diagnostic and continuation workflow
 
+Historical release notes only. The current package is `eivGP` 0.3.0; use
+`README.md` and `litr/render-package.R`. Earlier fits require refitting.
+
 The EIV-GP implementation is distributed under the R package name `eivmixgp`.
 The new archive is `package-release/eivmixgp_0.2.0.tar.gz`; it supersedes the
 older 0.1.0 archive, which is preserved rather than overwritten. This is a

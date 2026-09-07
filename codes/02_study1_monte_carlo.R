@@ -64,7 +64,7 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
   sampler_controls <- list()
   sampler_control_manifest <- list()
 
-  competitor_result <- run_study1_published_competitors(
+  competitor_result <- mixedgp_cached_competitors(
     X_train = matrix(train$x, ncol = 1L),
     y_train = train$y,
     C_train = matrix(train$c, ncol = 1L),

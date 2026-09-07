@@ -229,14 +229,14 @@ if (length(frozen_examples)) {
 
 Colour shows the saved noise-free response `f`, not a GP fit. Black rings
 identify the saved calibration observations. Only the requested grids
-`0, 10, 50` already present in a dataset are shown; no new subsets are sampled.
+`0, 20, 50` already present in a dataset are shown; no new subsets are sampled.
 
 ```{r study1-frozen-calibration, fig.width=12, fig.height=9}
 if (length(frozen_examples)) {
   calibration_rows <- list()
   for (setting in names(frozen_examples)) {
     frozen <- frozen_examples[[setting]]
-    grids <- intersect(c("0", "10", "50"), names(frozen$calibration_sets))
+    grids <- intersect(c("0", "20", "50"), names(frozen$calibration_sets))
     if (!length(grids)) {
       message("No requested saved calibration sizes for ", setting)
       next

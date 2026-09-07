@@ -98,28 +98,8 @@ if (!exists("STUDY2_DATA_DIR")) {
 }
 
 settings <- study2_config_settings(STUDY2_CONFIG)
-if (!exists("STUDY2_LVGP_MAX_ELAPSED")) {
-  STUDY2_LVGP_MAX_ELAPSED <- if (STUDY2_CONFIG == "quick") 180 else 1800
-}
-
-study2_competitor_controls <- list(
-  `UC-GP` = list(n_starts = if (STUDY2_CONFIG == "quick") 2L else 8L),
-  LVGP = list(
-    n_starts = if (STUDY2_CONFIG == "quick") 2L else 8L,
-    max_retries = if (STUDY2_CONFIG == "quick") 1L else 3L,
-    max_iter_ini = if (STUDY2_CONFIG == "quick") 30L else 100L,
-    max_iter_lat = if (STUDY2_CONFIG == "quick") 8L else 20L,
-    rescue_iter_ini = 300L,
-    rescue_iter_lat = 100L,
-    max_elapsed_seconds = STUDY2_LVGP_MAX_ELAPSED,
-    parallel = FALSE
-  ),
-  EzGP = list(
-    tau_fractions = c(1e-6, 0.0025, 0.01, 0.04, 0.16),
-    cv_folds = 3L,
-    maxeval = if (STUDY2_CONFIG == "quick") 30L else 100L
-  )
-)
+if (!exists("mixedgp_cached_competitors")) source("load_mixedgp.R")
+study2_competitor_controls <- mixedgp_competitor_protocol("study2")
 
 allowed_scenarios <- c(
   "primary",

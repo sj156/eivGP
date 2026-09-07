@@ -114,12 +114,92 @@ Rscript --vanilla experiments/run_development_study.R study2 plan
 Check the plans against [NUMERICAL_DESIGN.md](NUMERICAL_DESIGN.md):
 
 - Both studies: 100 training and 100 test observations, three replications per setting.
-- Study I: balanced/imbalanced categories crossed with eta = 0/1; calibration 0, 10, 50 in each setting.
+- Study I: balanced/imbalanced categories crossed with eta = 0/1; calibration 0, 20, 50 in each setting.
 - Study II: primary q = 2 at calibration 50; primary q = 4 at 0, 20, 50, 80; logistic misspecification q = 4 at 50.
 
 A replication is a separately generated synthetic dataset, not an MCMC chain.
 Calibration observations are part of the 100 training observations, not extra
 training units.
+
+### 4b. Prepare reusable competitor results (no MCMC)
+
+After installing dependencies, run competitors as a separate experiment stage.
+This stage loads frozen data, fits UC-GP/LVGP/EzGP, saves each method separately,
+and exports paper-facing tables. It never installs packages or runs EIV-GP.
+
+Use the publication frozen collection in `reproduction/data/synthetic/study1`
+and `study2`. If you have not obtained those data, generate them once using:
+
+```sh
+Rscript --vanilla experiments/run_publication_study.R study1-data
+Rscript --vanilla experiments/run_publication_study.R study2-data
+```
+
+Existing incompatible datasets must be inspected and preserved, not overwritten.
+For exact reproduction, obtain the matching frozen collection and code revision;
+generated data and caches under `reproduction/` are Git-ignored, not automatically
+distributed by cloning the repository.
+
+Set an existing paper project folder (your local Overleaf/Dropbox folder is fine):
+
+```sh
+export EIVGP_OVERLEAF_ROOT="/absolute/path/to/your/paper"
+export EIVGP_WORKERS=10
+Rscript --vanilla experiments/run_competitors.R study1 plan publication
+Rscript --vanilla experiments/run_competitors.R study1 run publication
+Rscript --vanilla experiments/run_competitors.R study2 plan publication
+Rscript --vanilla experiments/run_competitors.R study2 run publication
+```
+
+`plan` only inspects the setup. `run publication` processes 100 datasets per
+setting, one dataset per worker, with its methods run serially. Keep the BLAS
+thread limits above; use fewer workers if memory is tight. The entire selected
+frozen collection is verified before fitting. Progress identifies each dataset
+and method; successful fits and failed attempts are checkpointed separately.
+
+Both modes use the same competitor optimization settings and publication data
+root. To extract the first three datasets per setting without fitting anything:
+
+```sh
+Rscript --vanilla experiments/run_competitors.R study1 export development
+Rscript --vanilla experiments/run_competitors.R study2 export development
+```
+
+Alternatively, `run development` prepares only that subset using the same fit
+protocol. A later publication run reuses those fits. `retry publication` retries
+failed or missing fits, preserving successful fits and previous failed attempts.
+Ordinary `run` does not repeatedly retry a saved failure.
+
+Outputs:
+
+- `reproduction/competitor-cache/`: fitted objects, predictive moments, status,
+  settings and provenance, saved per method/dataset.
+- `reproduction/competitor-reports/<study>/<mode>/`: status, prediction and
+  per-replication metric CSVs, plus means/Monte Carlo standard errors and provenance.
+- `$EIVGP_OVERLEAF_ROOT/tables/competitors/<study>/<mode>/`: exported tables,
+  including `predictive_summary.tex`. Check `statuses.csv` and `n_success`
+  before using any summary; unsuccessful fits are not silently scored as zero.
+
+These are prediction comparisons for `Y* | X*, C*`, not physical latent-input
+recovery. Competitors do not use calibration measurements, so a fitted predictor
+is reused across calibration sizes. Cache identity checks training/prediction
+inputs, seed, method settings, adapter source, R/platform and package version;
+it does not depend on mode, calibration size or number of predictive draws.
+Changed identities require a new fit. Current publication optimization budgets
+are retained, not newly certified as final: LVGP's limit is **per attempt**
+(1,800 seconds in Study I, 3,600 in Study II, up to three attempts).
+
+`EIVGP_DATA_ROOT` can select another matching frozen collection;
+`EIVGP_COMPETITOR_CACHE` can select a shared/copied cache directory;
+`EIVGP_COMPETITOR_METHODS` can select methods, e.g. `UC-GP,EzGP`.
+Cache reuse on another machine requires matching recorded runtime/package
+identities. Unset a study-specific `EIVGP_DATA_ROOT` before switching studies.
+
+The normal Study I/II simulation drivers now **read** this cache; they never
+launch competitor optimization on a cache miss. Missing results are flagged.
+Preparing the cache does not rewrite old MCMC replication bundles or their
+reports. Use the standalone exports for completed historical runs; do not
+restart expensive MCMC merely to obtain competitor tables.
 
 ### 5. Run one study at a time
 

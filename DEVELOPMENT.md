@@ -95,7 +95,7 @@ experiment-layer change, not a change to the installed posterior sampler.
 
 The repository experiment layer retains iteration accounting and core-budgeted
 concurrency. Study I crosses balanced/imbalanced categories with eta=0/1,
-each with calibration 0/10/50. Study II uses primary q=2 (calibration 50),
+each with calibration 0/20/50. Study II uses primary q=2 (calibration 50),
 primary q=4 (0/20/50/80), and logistic misspecification q=4 (50).
 See NUMERICAL_DESIGN.md for the agreed design.
 
@@ -104,7 +104,31 @@ across settings, method-level time caps/recovery, fit/evaluation cache
 separation, and recovery from genuine fitting/evaluation exceptions.
 Diagnostic handling is now shared: convergence and completeness checks
 produce flags and warnings in both modes, never gate-triggered stops.
-Missing competitors are recorded and skipped by default.
+Missing competitors are recorded and skipped by default. Competitor fitting is
+now a standalone experiment stage: run `experiments/install_eivgp_dependencies.R`
+first, then `experiments/run_competitors.R study1 plan publication` (or `study2`).
+Use `run` to prepare missing fits, `retry` to retry failed fits, and `export
+development` to extract the first three publication datasets without fitting.
+Set `EIVGP_OVERLEAF_ROOT` to the existing paper folder for run/export actions.
+
+`codes/competitor_cache.R` owns the shared optimization protocol and per-method
+cache. The two Monte Carlo drivers consume it read-only; neither contains an
+independent competitor optimizer configuration. Calibration and mode are not
+cache keys because these competitors use the same observed training data and
+no calibration measurements. Inputs, method settings, seeds, package/R identity
+and adapter source are checked before reuse. The cache is experiment-only and
+does not change the installed MCMC package or migrate old simulation bundles.
+
+Regression checks (run from repository root):
+
+```sh
+Rscript --vanilla codes/tests/test_competitor_cache.R
+Rscript --vanilla codes/tests/test_competitor_export.R
+Rscript --vanilla codes/tests/test_reporting_separation.R
+```
+
+The export test uses fixture fits and temporary data/paper directories, not
+publication results. Real full-grid competitor runs must be launched explicitly.
 No claim is made that the full brief's acceptance tests pass. Development
 runs can still take substantial time and stop on failures.
 

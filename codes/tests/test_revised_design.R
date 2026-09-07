@@ -10,7 +10,7 @@ for (study in names(expected_ids)) {
   publication <- ctor("publication", code_dir = code_dir)
   development <- ctor("development", code_dir = code_dir)
   stopifnot(identical(vapply(publication$cells, `[[`, "", "id"), expected_ids[[study]]))
-  expected_grids <- if (study == "study1") rep(list(c(0L, 10L, 50L)), 4L) else
+  expected_grids <- if (study == "study1") rep(list(c(0L, 20L, 50L)), 4L) else
     list(50L, c(0L, 20L, 50L, 80L), 50L)
   for (i in seq_along(publication$cells)) {
     p <- publication$cells[[i]]

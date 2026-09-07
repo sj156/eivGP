@@ -51,3 +51,6 @@ if (!length(missing)) {
 print(data.frame(package = required,
   version = vapply(required, function(p) as.character(utils::packageVersion(p)), ""),
   library = vapply(required, function(p) dirname(find.package(p)), "")), row.names = FALSE)
+cat("\nNext, inspect the standalone competitor plan (no fitting):\n",
+    "  Rscript --vanilla experiments/run_competitors.R study1 plan publication\n",
+    "Use study2 for Study II. See README for frozen-data and Overleaf setup.\n", sep = "")

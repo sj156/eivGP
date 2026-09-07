@@ -7,10 +7,10 @@ calibration grids, not a selectively smaller scientific design.
 
 | Study | Setting | Calibration sizes |
 |---|---|---|
-| I | Balanced, eta=0 | 0, 10, 50 |
-| I | Balanced, eta=1 | 0, 10, 50 |
-| I | Imbalanced, eta=0 | 0, 10, 50 |
-| I | Imbalanced, eta=1 | 0, 10, 50 |
+| I | Balanced, eta=0 | 0, 20, 50 |
+| I | Balanced, eta=1 | 0, 20, 50 |
+| I | Imbalanced, eta=0 | 0, 20, 50 |
+| I | Imbalanced, eta=1 | 0, 20, 50 |
 | II | Primary q=2 | 50 |
 | II | Primary q=4 | 0, 20, 50, 80 |
 | II | Logistic misspecification q=4 | 50 |

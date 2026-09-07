@@ -60,6 +60,7 @@ mixedgp_simulation_modules <- function() {
     "00_diagnostics.R",
     "00_mcmc_workflow.R",
     "03_study2_published_competitors.R",
+    "competitor_cache.R",
     "00_synthetic_data.R",
     "04_study1_ablations.R",
     "04_study2_ablations.R"
@@ -84,6 +85,9 @@ mixedgp_simulation_engine <- function(code_dir) {
     )))
   }
   engine <- new.env(parent = .GlobalEnv)
+  engine$.mixedgp_competitor_code_dir <- code_dir
+  engine$.mixedgp_competitor_cache_root <- Sys.getenv("EIVGP_COMPETITOR_CACHE",
+    file.path(dirname(code_dir), "reproduction", "competitor-cache"))
   for (module in mixedgp_simulation_modules()) {
     path <- file.path(code_dir, module)
     if (!file.exists(path)) stop("Missing simulation module: ", path)
@@ -290,7 +294,7 @@ mixedgp_study1_cells <- function(mode) {
         min_class_count = if (threshold_design == "imbalanced") 3L else 0L,
         n = 100L, n_test = if (smoke) 80L else 100L,
         n_rep = if (smoke) 1L else 100L, m = 6L,
-        calibration_grid = if (smoke) c(0L, 5L) else c(0L, 10L, 50L),
+        calibration_grid = if (smoke) c(0L, 5L) else c(0L, 20L, 50L),
         evaluate_f = identical(eta, 1), evaluate_u = TRUE,
         run_ablations = TRUE)
     }
@@ -1220,8 +1224,7 @@ mixedgp_cell_controls_study1 <- function(config, cell, cell_output) {
     STUDY1_REQUIRE_MCMC_GATE = config$mcmc$require_gate,
     STUDY1_MAX_RHAT = config$mcmc$rhat_limit,
     STUDY1_MIN_ESS = config$mcmc$ess_limit,
-    STUDY1_MECHANISM_CALIB = mechanism_calib,
-    STUDY1_LVGP_MAX_ELAPSED = if (config$mode %in% c("smoke", "development")) 60 else 1800
+    STUDY1_MECHANISM_CALIB = mechanism_calib
   )
 }
 
@@ -1297,8 +1300,7 @@ mixedgp_cell_controls_study2 <- function(config, cell, cell_output) {
       config$mcmc$target_tail_ess_limit
     },
     STUDY2_SAVE_PDF = config$mode %in% c("publication", "development"),
-    STUDY2_SAVE_PNG = FALSE,
-    STUDY2_LVGP_MAX_ELAPSED = if (config$mode %in% c("smoke", "development")) 60 else 3600
+    STUDY2_SAVE_PNG = FALSE
   )
 }
 

@@ -3,7 +3,7 @@
 ##
 ## Publication comparison for Study I.
 ##
-## The publication path refits every method, including EIV-GP, with the current
+## Competitors are read from the standalone cache; EIV-GP uses the current
 ## audited sampler. The historical July 27 rows remain available only through
 ## the explicit archival switch STUDY1_REUSE_LOCKED_EIV=TRUE.
 ############################################################
@@ -179,7 +179,7 @@ n_rep <- settings$n_rep
 m <- study1_setting_override("STUDY1_MC_M", 6L, minimum = 2L)
 calib_grid <- as.integer(get0(
   "STUDY1_CALIB_GRID", inherits = TRUE,
-  ifnotfound = c(0L, 5L, 10L, 20L, 50L)
+  ifnotfound = c(0L, 20L, 50L)
 ))
 if (length(calib_grid) < 1L || anyNA(calib_grid) ||
     any(calib_grid < 0L | calib_grid > n_train) || anyDuplicated(calib_grid)) {
@@ -282,27 +282,8 @@ study1_sampler_control_rows <- function(fit, rep_id, n_calib) {
   )
 }
 
-if (!exists("STUDY1_LVGP_MAX_ELAPSED")) {
-  STUDY1_LVGP_MAX_ELAPSED <- if (STUDY1_QUICK) 180 else 900
-}
-competitor_controls <- list(
-  `UC-GP` = list(n_starts = if (STUDY1_QUICK) 2L else 8L),
-  LVGP = list(
-    n_starts = if (STUDY1_QUICK) 2L else 8L,
-    max_retries = if (STUDY1_QUICK) 1L else 3L,
-    max_iter_ini = if (STUDY1_QUICK) 30L else 100L,
-    max_iter_lat = if (STUDY1_QUICK) 8L else 20L,
-    rescue_iter_ini = 300L,
-    rescue_iter_lat = 100L,
-    max_elapsed_seconds = STUDY1_LVGP_MAX_ELAPSED,
-    parallel = FALSE
-  ),
-  EzGP = list(
-    tau_fractions = c(1e-6, 0.0025, 0.01, 0.04, 0.16),
-    cv_folds = 3L,
-    maxeval = if (STUDY1_QUICK) 30L else 100L
-  )
-)
+if (!exists("mixedgp_cached_competitors")) source("load_mixedgp.R")
+competitor_controls <- mixedgp_competitor_protocol("study1")
 
 measurement_n_iter <- if (STUDY1_QUICK) 500L else if (
   STUDY1_CONFIG == "balanced"

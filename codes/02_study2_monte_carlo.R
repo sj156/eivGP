@@ -61,7 +61,7 @@ run_one_study2_replication <- function(rep_id, scenario) {
     seed = fit_seed_base + 4L
   )
 
-  competitor_result <- run_study2_published_competitors(
+  competitor_result <- mixedgp_cached_competitors(
     X_train = train$X,
     y_train = train$y,
     C_train = train$C,

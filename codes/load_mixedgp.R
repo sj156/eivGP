@@ -23,7 +23,10 @@ mixedgp_source_core <- function(code_dir = mixedgp_code_dir(),
     "00_sampler_v030_api.R"
   )
   if (isTRUE(include_competitors)) {
-    modules <- c(modules, "03_study2_published_competitors.R")
+    modules <- c(modules, "03_study2_published_competitors.R", "competitor_cache.R")
+    assign(".mixedgp_competitor_code_dir", normalizePath(code_dir), envir = .GlobalEnv)
+    assign(".mixedgp_competitor_cache_root", Sys.getenv("EIVGP_COMPETITOR_CACHE",
+      file.path(dirname(normalizePath(code_dir)), "reproduction", "competitor-cache")), envir = .GlobalEnv)
   }
   if (isTRUE(include_synthetic)) {
     modules <- c(modules, "00_synthetic_data.R")

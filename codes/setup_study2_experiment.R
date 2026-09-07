@@ -84,9 +84,7 @@ if (!exists("STUDY2_SCENARIOS")) {
   )
 }
 
-if (!exists("STUDY2_PUBLISHED_COMPETITORS")) {
-  STUDY2_PUBLISHED_COMPETITORS <- c("UC-GP", "LVGP", "EzGP")
-}
+STUDY2_PUBLISHED_COMPETITORS <- character() # Fitted only by the standalone runner.
 
 if (!exists("STUDY2_PRIMARY_CALIB_GRID")) {
   STUDY2_PRIMARY_CALIB_GRID <- c(0L, 10L, 25L, 50L, 80L)
@@ -98,8 +96,7 @@ if (!exists("STUDY2_DATA_DIR")) {
 }
 
 settings <- study2_config_settings(STUDY2_CONFIG)
-if (!exists("mixedgp_cached_competitors")) source("load_mixedgp.R")
-study2_competitor_controls <- mixedgp_competitor_protocol("study2")
+study2_competitor_controls <- NULL
 
 allowed_scenarios <- c(
   "primary",

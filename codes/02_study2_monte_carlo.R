@@ -61,27 +61,7 @@ run_one_study2_replication <- function(rep_id, scenario) {
     seed = fit_seed_base + 4L
   )
 
-  competitor_result <- mixedgp_cached_competitors(
-    X_train = train$X,
-    y_train = train$y,
-    C_train = train$C,
-    X_test = test$X,
-    C_test = test$C,
-    n_draw = n_pred_draw,
-    seed = fit_seed_base + 100L,
-    m_vec = m_vec,
-    methods = STUDY2_PUBLISHED_COMPETITORS,
-    strict = STUDY2_STRICT_COMPETITORS,
-    controls = study2_competitor_controls
-  )
-  competitor_status <- competitor_result$status
-  if (nrow(competitor_status) > 0L) {
-    competitor_status$rep <- rep_id
-    competitor_status$scenario <- scenario
-  } else {
-    competitor_status$rep <- integer(0)
-    competitor_status$scenario <- character(0)
-  }
+  competitor_status <- data.frame(method=character(),status=character(),rep=integer(),scenario=character())
 
   set.seed(data_seed_base + 150L)
   mean_eval_idx <- sort(sample(
@@ -120,29 +100,6 @@ run_one_study2_replication <- function(rep_id, scenario) {
     )
   )
 
-  for (method in names(competitor_result$draws)) {
-    metrics[[method]] <- summarize_predictive_samples_by_pattern(
-      draw_mat = competitor_result$draws[[method]],
-      y_true = test$y,
-      pattern_stratum = pattern_info$pattern_stratum,
-      method = method,
-      rep_id = rep_id,
-      n_calib = NA_integer_,
-      scenario = scenario
-    )
-    mean_recovery[[method]] <- summarize_mean_recovery_2d(
-      matrix(
-        competitor_result$latent_means[[method]][mean_eval_idx],
-        nrow = 1L
-      ),
-      m_true = mean_truth,
-      method = method,
-      rep_id = rep_id,
-      n_calib = NA_integer_,
-      scenario = scenario,
-      valid_function_draws = FALSE
-    )
-  }
 
   diagnostics <- list()
   target_diagnostics <- list()
@@ -864,6 +821,7 @@ run_one_study2_replication <- function(rep_id, scenario) {
   }
 
   list(
+    dataset_identity = data.frame(rep=rep_id, dataset_md5=mixedgp_dataset_identity(frozen$data)),
     metrics = bind_rows(metrics),
     mean_recovery = bind_rows(mean_recovery),
     mean_truth_rejection = mean_truth_rejection,
@@ -984,6 +942,9 @@ rep_objects <- mixedgp_run_replications(
   parallel_map = mixedgp_parallel_lapply,
   mc.preschedule = FALSE
 )
+
+dataset_identity <- bind_rows(lapply(rep_objects, `[[`, "dataset_identity"))
+write.csv(dataset_identity, file.path(STUDY2_OUT_PREFIX, "dataset_identity.csv"), row.names=FALSE)
 
 mc_results <- bind_rows(lapply(rep_objects, `[[`, "metrics"))
 mc_mean_recovery <- bind_rows(lapply(rep_objects, `[[`, "mean_recovery"))

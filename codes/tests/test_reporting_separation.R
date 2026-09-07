@@ -15,14 +15,14 @@ config$mcmc$n_iter <- 12L; config$mcmc$burn <- 4L; config$mcmc$n_chains <- 2L
 config$evaluation <- list(n_pred_draw=4L, n_m_eval=2L, n_m_draw=4L, n_m_latent=4L)
 engine <- mixedgp_simulation_engine(config$code_dir)
 ## Avoid competitor optimization in this narrow reporting test.
-engine$mixedgp_cached_competitors <- function(...) list(draws=list(), latent_means=list(),
-  status=data.frame(method="EzGP", status="unavailable", message="test fixture", elapsed_seconds=0))
+engine$mixedgp_cached_competitors <- function(...) stop("MCMC tried to read competitor cache")
 mixedgp_generate_cell_data(config, config$cells[[1]], engine)
 dir.create(file.path(root,"config")); saveRDS(config,file.path(root,"config","resolved_config.rds"))
 mixedgp_run_study1_cell(config, config$cells[[1]], engine, root)
 stopifnot(!length(list.files(root, pattern="[.](pdf|png)$", recursive=TRUE)))
 checkpoint <- file.path(root,"cells",config$cells[[1]]$id,"report_inputs.rds")
 stopifnot(file.exists(checkpoint))
+stopifnot(file.exists(file.path(dirname(checkpoint),"dataset_identity.csv")))
 hash <- tools::md5sum(checkpoint)
 ## Trap fitting entry points in every reporting engine: any call fails the test.
 original_engine <- mixedgp_simulation_engine

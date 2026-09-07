@@ -104,7 +104,7 @@ across settings, method-level time caps/recovery, fit/evaluation cache
 separation, and recovery from genuine fitting/evaluation exceptions.
 Diagnostic handling is now shared: convergence and completeness checks
 produce flags and warnings in both modes, never gate-triggered stops.
-Missing competitors are recorded and skipped by default. Competitor fitting is
+Competitor availability is not checked by the MCMC fitting stage. Competitor fitting is
 now a standalone experiment stage: run `experiments/install_eivgp_dependencies.R`
 first, then `experiments/run_competitors.R study1 plan publication` (or `study2`).
 Use `run` to prepare missing fits, `retry` to retry failed fits, and `export
@@ -112,8 +112,8 @@ development` to extract the first three publication datasets without fitting.
 Set `EIVGP_OVERLEAF_ROOT` to the existing paper folder for run/export actions.
 
 `codes/competitor_cache.R` owns the shared optimization protocol and per-method
-cache. The two Monte Carlo drivers consume it read-only; neither contains an
-independent competitor optimizer configuration. Calibration and mode are not
+cache. The two Monte Carlo drivers do not consume competitor fits or caches.
+The standalone runner alone owns competitor fitting. Calibration and mode are not
 cache keys because these competitors use the same observed training data and
 no calibration measurements. Inputs, method settings, seeds, package/R identity
 and adapter source are checked before reuse. The cache is experiment-only and
@@ -153,7 +153,22 @@ and unhandled fitting/evaluation exceptions still stop rather than invent output
 Changed cache schemas prevent silently reusing old gate-suppressed bundles;
 existing cache files are preserved, but a new run can require recomputation.
 
-No output is automatically copied into Overleaf or pushed to GitHub.
+Competitor exports can copy tables into the chosen Overleaf folder. Independent
+results are combined by `experiments/combine_results.R`; MCMC never waits for
+competitor synchronization. Nothing is automatically pushed to GitHub.
 `experiments/run_publication_study.R` resolves its study constructors from the
 same repository helper bundle. Package release validation does not run either
 development or publication studies.
+
+## Independent fitting and combined reporting
+
+The reusable model/MCMC layer is unchanged. Experiment drivers now save their
+own metrics and dataset checksums without competitor cache reads. Run
+`experiments/combine_results.R MCMC_RUN COMPETITOR_REPORT OUTPUT_DIR` only after
+copying the independent outputs to the reporting machine. It verifies shared
+dataset identities and combines overall predictive metrics and paired differences;
+other evaluation tasks remain in the study-specific reports. Old runs lacking
+identity evidence require audit rather than assumed matching.
+
+Tests: `codes/tests/test_combine_experiment_results.R` and
+`codes/tests/test_study2_independent_fit.R`, in addition to reporting separation.

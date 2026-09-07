@@ -3,7 +3,7 @@
 ##
 ## Publication comparison for Study I.
 ##
-## Competitors are read from the standalone cache; EIV-GP uses the current
+## Competitors run independently; EIV-GP uses the current
 ## audited sampler. The historical July 27 rows remain available only through
 ## the explicit archival switch STUDY1_REUSE_LOCKED_EIV=TRUE.
 ############################################################
@@ -75,9 +75,7 @@ if (!exists("STUDY1_DIAGNOSTIC_N_POINTS")) STUDY1_DIAGNOSTIC_N_POINTS <- 5L
 if (!exists("STUDY1_STRICT_COMPETITORS")) {
   STUDY1_STRICT_COMPETITORS <- identical(STUDY1_CONFIG, "thorough")
 }
-if (!exists("STUDY1_PUBLISHED_COMPETITORS")) {
-  STUDY1_PUBLISHED_COMPETITORS <- c("UC-GP", "LVGP", "EzGP")
-}
+STUDY1_PUBLISHED_COMPETITORS <- character() # Fitted only by the standalone runner.
 if (!exists("STUDY1_MECHANISM_CALIB")) STUDY1_MECHANISM_CALIB <- 20L
 if (!exists("STUDY1_DATA_DIR")) {
   STUDY1_DATA_DIR <- file.path("..", "data-synthetic", "study1")
@@ -282,8 +280,7 @@ study1_sampler_control_rows <- function(fit, rep_id, n_calib) {
   )
 }
 
-if (!exists("mixedgp_cached_competitors")) source("load_mixedgp.R")
-competitor_controls <- mixedgp_competitor_protocol("study1")
+competitor_controls <- NULL
 
 measurement_n_iter <- if (STUDY1_QUICK) 500L else if (
   STUDY1_CONFIG == "balanced"

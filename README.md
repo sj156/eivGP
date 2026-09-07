@@ -215,11 +215,43 @@ are retained, not newly certified as final: LVGP's limit is **per attempt**
 Cache reuse on another machine requires matching recorded runtime/package
 identities. Unset a study-specific `EIVGP_DATA_ROOT` before switching studies.
 
-The normal Study I/II simulation drivers now **read** this cache; they never
-launch competitor optimization on a cache miss. Missing results are flagged.
-Preparing the cache does not rewrite old MCMC replication bundles or their
-reports. Use the standalone exports for completed historical runs; do not
-restart expensive MCMC merely to obtain competitor tables.
+The Study I/II MCMC experiment drivers neither fit competitors nor read their
+caches. They save dataset identities alongside their own metrics and diagnostics.
+Competitors run independently, using the same frozen datasets, on another machine
+if desired. Only reporting needs access to both sets of outputs.
+
+### Combine independent results for the paper
+
+After fitting, copy/sync the MCMC run folder and competitor report folder to one
+machine. No competitor model cache is needed for this step. For example:
+
+```sh
+Rscript --vanilla experiments/combine_results.R \\
+  "/path/to/mcmc-run" \\
+  "/path/to/competitor-reports/study1/publication" \\
+  "$EIVGP_OVERLEAF_ROOT/tables/combined/study1"
+```
+
+Use the exact run directory containing `config/resolved_config.rds` and `cells/`.
+The competitor directory must contain `metrics.csv`, `statuses.csv` and
+`provenance.rds`. The merger checks study and per-dataset content checksums,
+selects the MCMC run's settings/replications, and rejects mismatched data or
+duplicate metric rows. Publication competitor results can therefore serve a
+three-replication development MCMC run without refitting.
+
+This command writes overall response-prediction summaries, matched-replication
+EIV-minus-competitor differences and MCSEs, availability/status records, and
+MCMC diagnostics. Baselines retain `n_calib=NA`: they are not independent fits
+at each calibration size. Coverage/width differences are descriptive, not
+universally lower-is-better. Missing results remain explicit, never zero-filled.
+Other tasks (latent recovery, response surfaces and ablations) retain their
+existing study-specific reporting; this merger does not fabricate competitor
+results for those tasks or combine incompatible evaluation strata.
+
+New MCMC runs save `dataset_identity.csv`. Older runs without that evidence
+are deliberately rejected by the merger; they require a separate provenance
+audit, not automatic relabeling or a forced MCMC restart. Reporting does not
+change the original fits, and fitting jobs do not wait for synchronization.
 
 ### 5. Run one study at a time
 

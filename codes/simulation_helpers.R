@@ -211,6 +211,7 @@ mixedgp_config_fingerprint <- function(config) {
     "setup_study1_experiment.R", "setup_study2_experiment.R",
     "run_study1_simulation.R", "run_study2_simulation.R"
   ))
+  code_files <- setdiff(code_files, c("03_study2_published_competitors.R", "competitor_cache.R"))
   code_paths <- file.path(config$code_dir, code_files)
   payload$source_identity <- setNames(
     ifelse(
@@ -221,14 +222,13 @@ mixedgp_config_fingerprint <- function(config) {
     code_files
   )
   package_names <- c(
-    kergp = "kergp", LVGP = "LVGP", EzGP = "EzGP",
     ggplot2 = "ggplot2", dplyr = "dplyr", tidyr = "tidyr",
     knitr = "knitr", posterior = "posterior"
   )
   if (identical(config$study, "study2")) {
     package_names <- c(package_names, TruncatedNormal = "TruncatedNormal")
   }
-  payload$competitor_package_identity <- vapply(
+  payload$runtime_package_identity <- vapply(
     package_names,
     function(package) {
       if (requireNamespace(package, quietly = TRUE)) {
@@ -360,7 +360,7 @@ study1_simulation_config <- function(
       publication = c("data", "fit", "aggregate")
     ),
     cells = mixedgp_study1_cells(mode),
-    published_methods = MIXEDGP_PUBLISHED_METHODS,
+    published_methods = character(),
     strict_competitors = identical(mode, "publication"),
     fail_closed = identical(mode, "publication"),
     use_cache = TRUE,
@@ -430,7 +430,7 @@ study2_simulation_config <- function(
       publication = c("data", "fit", "aggregate")
     ),
     cells = mixedgp_study2_cells(mode),
-    published_methods = MIXEDGP_PUBLISHED_METHODS,
+    published_methods = character(),
     strict_competitors = identical(mode, "publication"),
     fail_closed = identical(mode, "publication"),
     use_cache = TRUE,
@@ -546,7 +546,7 @@ validate_simulation_config <- function(config) {
       if (cell$d != 2L) stop("The Study II DGM currently requires d=2.")
     }
   }
-  if (!identical(config$published_methods, MIXEDGP_PUBLISHED_METHODS)) {
+  if (length(config$published_methods) && !identical(config$published_methods, MIXEDGP_PUBLISHED_METHODS)) {
     stop(
       "The publication competitor set is frozen as: ",
       paste(MIXEDGP_PUBLISHED_METHODS, collapse = ", "), "."
@@ -1409,6 +1409,7 @@ mixedgp_run_study2_cell <- function(config, cell, engine, run_dir) {
 }
 
 mixedgp_competitor_gate <- function(result, config) {
+  if (!length(config$published_methods)) return(data.frame())
   status <- result$outputs$competitor_status
   expected <- result$cell$n_rep * length(config$published_methods)
   if (!is.data.frame(status) || nrow(status) == 0L) {
@@ -2451,4 +2452,11 @@ run_study1_simulation <- function(config = study1_simulation_config()) {
 run_study2_simulation <- function(config = study2_simulation_config()) {
   if (!identical(config$study, "study2")) stop("Expected a Study II config.")
   mixedgp_run_simulation(config)
+}
+
+## Stable content identity shared by independent fitting/reporting layers.
+mixedgp_dataset_identity <- function(data) {
+  path <- tempfile(); on.exit(unlink(path), add=TRUE)
+  saveRDS(data,path,version=3L,compress=FALSE)
+  unname(tools::md5sum(path))
 }

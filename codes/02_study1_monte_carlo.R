@@ -64,38 +64,6 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
   sampler_controls <- list()
   sampler_control_manifest <- list()
 
-  competitor_result <- mixedgp_cached_competitors(
-    X_train = matrix(train$x, ncol = 1L),
-    y_train = train$y,
-    C_train = matrix(train$c, ncol = 1L),
-    X_test = matrix(test$x, ncol = 1L),
-    C_test = matrix(test$c, ncol = 1L),
-    m_vec = m,
-    n_draw = n_pred_draw,
-    seed = 250000L + 1000L * rep_id,
-    methods = STUDY1_PUBLISHED_COMPETITORS,
-    strict = STUDY1_STRICT_COMPETITORS,
-    controls = competitor_controls
-  )
-  for (method in names(competitor_result$draws)) {
-    metrics[[method]] <- summarize_predictive_samples_1d(
-      competitor_result$draws[[method]], test$y,
-      method = method, rep_id = rep_id,
-      n_calib = NA_integer_, scenario = STUDY1_SCENARIO
-    )
-    mean_metrics[[method]] <- summarize_mean_recovery_1d(
-      matrix(
-        competitor_result$latent_means[[method]][mean_eval_idx],
-        nrow = 1L
-      ),
-      m_true = m_true,
-      method = method,
-      rep_id = rep_id,
-      n_calib = NA_integer_,
-      scenario = STUDY1_SCENARIO,
-      valid_function_draws = FALSE
-    )
-  }
 
   if (isTRUE(STUDY1_RUN_ABLATIONS)) {
     if (isTRUE(STUDY1_EVALUATE_F)) {
@@ -444,15 +412,14 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
     }
   }
 
-  status <- competitor_result$status
-  status$rep <- rep_id
-  status$scenario <- STUDY1_SCENARIO
+  status <- data.frame(method=character(),status=character(),rep=integer(),scenario=character())
   ablation_status_df <- bind_rows(ablation_status)
   if (nrow(ablation_status_df) > 0L) {
     ablation_status_df$rep <- rep_id
     ablation_status_df$scenario <- STUDY1_SCENARIO
   }
   list(
+    dataset_identity = data.frame(rep=rep_id, dataset_md5=mixedgp_dataset_identity(frozen$data)),
     metrics = bind_rows(metrics),
     competitor_status = status,
     ablation_metrics = bind_rows(ablation_metrics),
@@ -521,6 +488,9 @@ rep_objects <- mixedgp_run_replications(
   parallel_map = mixedgp_parallel_lapply,
   mc.preschedule = FALSE
 )
+
+dataset_identity <- bind_rows(lapply(rep_objects, `[[`, "dataset_identity"))
+write.csv(dataset_identity, file.path(STUDY1_OUT_PREFIX, "dataset_identity.csv"), row.names=FALSE)
 
 new_results <- bind_rows(lapply(rep_objects, `[[`, "metrics"))
 competitor_status <- bind_rows(

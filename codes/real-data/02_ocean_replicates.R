@@ -15,9 +15,8 @@ if (!exists("OCEAN_REALDATA_DIR")) {
   }
   OCEAN_REALDATA_DIR <- dirname(script_file)
 }
-if (!exists("fit_eivgp_1d")) {
-  source(file.path(OCEAN_REALDATA_DIR, "..", "00_study1_functions.R"))
-}
+source(file.path(OCEAN_REALDATA_DIR, "shared", "require_eivgp.R"))
+source(file.path(OCEAN_REALDATA_DIR, "shared", "00_study1_functions.R"))
 if (!exists("load_ocean_prepared")) {
   source(file.path(OCEAN_REALDATA_DIR, "ocean_data_helpers.R"))
 }
@@ -25,11 +24,11 @@ if (!exists("load_ocean_prepared")) {
 if (!exists("OCEAN_QUICK")) OCEAN_QUICK <- FALSE
 if (!exists("OCEAN_USE_CACHE")) OCEAN_USE_CACHE <- TRUE
 if (!exists("OCEAN_OUT_PREFIX")) {
-  OCEAN_OUT_PREFIX <- file.path(OCEAN_REALDATA_DIR, "..", "..")
+  OCEAN_OUT_PREFIX <- file.path(OCEAN_REALDATA_DIR, "outputs")
 }
 if (!exists("OCEAN_KERNEL")) OCEAN_KERNEL <- "se"
 if (!exists("OCEAN_MATERN_NU")) OCEAN_MATERN_NU <- 2.5
-if (!exists("OCEAN_CACHE_VERSION")) OCEAN_CACHE_VERSION <- "v2_same-target"
+if (!exists("OCEAN_CACHE_VERSION")) OCEAN_CACHE_VERSION <- "v3_eivGP031"
 require_study1_reporting_packages(
   c("ggplot2", "dplyr", "tidyr", "knitr"),
   "ocean calibration-redraw analysis"
@@ -186,24 +185,22 @@ run_one_ocean_replication <- function(rep_id,
     calib_idx <- calib_sets[[as.character(n_calib)]]
     u_obs <- rep(NA_real_, length(ocean$u_train))
     u_obs[calib_idx] <- ocean$u_train[calib_idx]
-    fit_eiv <- fit_eivgp_1d(
-      x_raw = ocean$X_train,
-      y_raw = ocean$y_train,
-      c_ord = ocean$c_train,
-      calib_idx = calib_idx,
-      m = ocean$m,
-      tau_true = ocean$tau_reference,
+    fit_eiv <- eivGP::fit_eivgp(
+      engine = "univariate", standardize_U = FALSE,
+      X = ocean$X_train,
+      y = ocean$y_train,
+      C = ocean$c_train,
+      m_vec = ocean$m,
       n_iter = eiv_n_iter,
       burn = eiv_burn,
       thin = 1L,
       n_chains = eiv_n_chains,
-      preset = eiv_preset,
       seed = mcmc_seed + n_calib,
-      parallel_chains = parallel_chains,
+      parallel = parallel_chains,
       verbose = FALSE,
       kernel = kernel,
       matern_nu = matern_nu,
-      u_obs = u_obs
+      U_obs = u_obs
     )
 
     draw_ids <- seq_len(nrow(fit_eiv$mcmc$samples_u))
@@ -211,10 +208,10 @@ run_one_ocean_replication <- function(rep_id,
       set.seed(mcmc_seed + 2000L + n_calib)
       draw_ids <- sort(sample(draw_ids, n_pred_draw))
     }
-    eiv_draws <- sample_eiv_test_y(
-      x_test_raw = ocean$X_test,
-      c_test = ocean$c_test,
-      fit_obj = fit_eiv,
+    eiv_draws <- eivGP::predict_eivgp(
+      new_X = ocean$X_test,
+      new_C = ocean$c_test,
+      object = fit_eiv,
       draw_ids = draw_ids,
       n_per_draw = 1L
     )

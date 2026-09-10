@@ -1,0 +1,185 @@
+---
+title: "Raw-data provenance, preprocessing, and prepared-data checks"
+output:
+  html_document:
+    toc: true
+---
+
+## Reproducibility status
+
+**The original raw-to-prepared scripts are not yet available.** This document
+records the recoverable processing specification and validates prepared inputs;
+it does not reconstruct the frozen datasets. No cohort selection, cutoff,
+record matching, or random split is invented to fill a gap.
+
+Run the checks from the repository root with:
+
+```sh
+Rscript codes/real-data/run_application.R data
+```
+
+This executes the R chunks without fitting a model. It prints aggregate checks
+only. Missing datasets are reported as unavailable; existing invalid datasets
+stop with an error. Successful checks establish prepared-data consistency,
+not reproduction from raw source data. Use `ADNI_DATA_DIR` and `OCEAN_DATA_DIR`
+for data stored outside the repository. Raw participant-level data should remain
+in authorized local storage; the shareable artifacts are processing code and
+non-participant-level documentation.
+
+```{r setup}
+if (!exists("DATA_WORKFLOW_DIR")) {
+  input <- knitr::current_input(dir = TRUE)
+  if (length(input) != 1L || !nzchar(input)) stop("Use run_application.R data or knit this notebook.")
+  DATA_WORKFLOW_DIR <- dirname(normalizePath(input))
+}
+```
+
+## ADNI: raw exports to the frozen observational cohort
+
+The current analysis and `ADNI-toledo/DATA_MANIFEST.txt` establish the output
+contract below. They do not establish how raw exports were joined or filtered.
+
+| Model role | Prepared variable | Analysis treatment |
+|---|---|---|
+| Response | `y_centiloid` | PET outcome supplied to the GP |
+| Continuous input U | `u_csf_abeta42` | Observed when R=1; masked to NA when R=0 |
+| X | `x_age_years`, `x_female`, `x_apoe4_dose` | Three predictors |
+| Ordinal C | `c_ab42_ab40_3`, `c_gfap_3` | Ordered codes with levels 1, 2, 3 |
+| Participant key | `RID` | Joins frozen folds to the cohort |
+
+The final cohort has 495 participants, 133 with observed U and 362 with
+naturally missing U. Three repeats each assign every participant to one of
+three folds; each fold has 165 test and 330 training participants. The supplied
+analysis runs repeats 2 and 3. Preserve the frozen assignments until their
+original generator is recovered.
+
+Within each fold, the current notebook sorts training and test rows by RID,
+sets U to NA for R=0, constructs ordered C, and fits eivGP 0.3.1 with
+`standardize_U=TRUE`. This model-time standardization uses training information;
+it is separate from upstream cohort construction. At prediction, observed test
+CSF is supplied for R=1 and missing CSF is integrated for R=0. Do not replace
+raw CSF with the available log-CSF column: the frozen model selects the raw
+`u_csf_abeta42` field.
+
+### Original processing details still required
+
+1. Names, release dates, checksums, and dictionaries of each raw ADNI export.
+2. Participant/visit join keys; anchor-visit choice; PET, plasma, and CSF date
+   windows; duplicate and tie resolution; reasons for exclusions at each step.
+3. PET tracer handling and exact Centiloid conversion, including whether values
+   were taken from a supplied field or computed; assay units, batches, quality
+   flags, detection limits, and any biomarker transformations.
+4. Coding rules for sex, APOE4 dose, and diagnosis; R definition; treatment of
+   missing predictors and outcome.
+5. Exact plasma ratio and GFAP cutoffs, interval boundary conventions, and the
+   population used to compute any data-derived cutoffs. In particular, determine
+   whether any thresholds used held-out data.
+6. Frozen fold-generation code: balancing variables, algorithm, row order,
+   random seed, and RNG settings. File names alone do not establish these rules.
+
+Once recovered, the script should write the two frozen CSVs and an aggregate
+exclusion flow. Reproduction should match the existing hashes when using the
+same source snapshots and serialization. A deliberate revised dataset needs a
+new version and separate results, rather than silently replacing the freeze.
+
+```{r check-adni}
+adni_dir <- Sys.getenv("ADNI_DATA_DIR", file.path(DATA_WORKFLOW_DIR, "ADNI-toledo", "data"))
+adni_paths <- file.path(adni_dir, c("toledo_adni_cohort_n495.csv", "toledo_adni_balanced_repeated_3fold.csv"))
+if (!all(file.exists(adni_paths))) {
+  cat("ADNI unavailable: supply both frozen CSVs through ADNI_DATA_DIR.\n")
+} else {
+  expected <- c("d10b980253304620efea9f2a013166a9", "895a5759c7baf22e1771516c0aa84d70")
+  stopifnot(identical(unname(tools::md5sum(adni_paths)), expected))
+  cohort <- read.csv(adni_paths[1L], check.names = FALSE)
+  folds <- read.csv(adni_paths[2L], check.names = FALSE)
+  required <- c("RID", "R", "y_centiloid", "u_csf_abeta42", "x_age_years",
+                "x_female", "x_apoe4_dose", "c_ab42_ab40_3", "c_gfap_3")
+  stopifnot(all(required %in% names(cohort)), nrow(cohort) == 495L,
+            ncol(cohort) == 29L, !anyNA(cohort$RID), !anyDuplicated(cohort$RID),
+            all(cohort$R %in% 0:1), sum(cohort$R == 1L) == 133L,
+            all(is.finite(cohort$u_csf_abeta42[cohort$R == 1L])))
+  for (v in c("y_centiloid", "x_age_years", "x_female", "x_apoe4_dose"))
+    stopifnot(is.numeric(cohort[[v]]), all(is.finite(cohort[[v]])))
+  for (v in c("c_ab42_ab40_3", "c_gfap_3")) stopifnot(all(cohort[[v]] %in% 1:3))
+  stopifnot(nrow(folds) == 1485L, all(c("RID", "repeat_id", "fold") %in% names(folds)),
+            setequal(folds$repeat_id, 1:3))
+  for (r in 1:3) {
+    f <- folds[folds$repeat_id == r, ]
+    stopifnot(nrow(f) == 495L, !anyDuplicated(f$RID), setequal(f$RID, cohort$RID),
+              setequal(f$fold, 1:3), all(table(f$fold) == 165L))
+  }
+  cat("PASS: ADNI frozen hashes, 495 participants, 133 observed U, all repeated folds.\n")
+  rm(cohort, folds)
+}
+```
+
+## Ocean: source records to controlled-hiding validation
+
+The following describes the **existing manuscript**, not an independently
+reproduced pipeline. Evidence: `appendix-real-ocean.tex`, sections "Eligibility
+and variable roles" and "Ordinal coarsening and calibration design", inspected
+in the local manuscript snapshot `study2-design-prose/project/paper-ordinal/`
+on 2026-09-10. Current loader and allocation code corroborate the input schema
+and training allocation, but the raw and prepared ocean files are missing.
+
+1. Start from BCO-DMO's AllBottle data for ECOHAB-PNW. The manuscript identifies
+   `NO3_NO2` as combined nitrate plus nitrite (response) and `H2PO4` as reported
+   orthophosphate (latent continuous input), with temperature and salinity as X.
+2. Restrict to depth <=10 m, valid temperature/salinity, and strictly positive
+   concentrations of both nutrients. The manuscript reports deduplication by
+   cruise and depth identifier and 1,393 eligible records. Exact keys and tie
+   handling still require the source code.
+3. Compute log phosphate, centered and scaled over the eligible pool according
+   to the manuscript. Preserve its center and scale in metadata. This is a
+   documented pool-based construction, not a claim of training-only preprocessing.
+4. Use type-1 empirical phosphate quintiles, then split the lowest quintile at
+   standardized log phosphate -1.5 to produce six ordered classes. The recorded
+   raw cutoffs are approximately 0.287, 0.44, 0.72, 1.22, and 1.70. Class r uses
+   `(tau[r-1], tau[r]]`. Rounded values are descriptive, not regeneration inputs.
+5. Freeze 100 training and 300 test rows. Recover the original selection seed,
+   row identifiers/order, and sampling algorithm before regenerating this split.
+6. In training, reveal exact U in nested calibration subsets of sizes 10, 25,
+   and 50. The included allocation CSV has training counts (6,20,13,24,15,22).
+   The existing `make_ocean_nested_calibration()` implements this downstream
+   selection. Original construction thresholds do not enter the current fit.
+7. Retain true U for validation, but pass only calibrated training U to fitting;
+   predict held-out response given X and ordinal C without supplying test U.
+
+### Original processing details still required
+
+Recover the exact source accession/version and download recipe; raw-file hash,
+units, missing-value sentinels and QC rules; deduplication keys/tie rule; complete
+selection code and seed; unrounded cutoffs and scale constants; and prepared
+CSV/metadata. Verify redistribution terms before distributing ocean package data.
+The metadata must include `x_columns`, `m`, `log_tau_reference`, `log_center`,
+and `log_scale`. The CSV must include `split`, `y`, `u_log_std`, `c`, and all X
+columns. Preserve source row identifiers to audit selection and train/test
+separation; these cannot be reconstructed from current metadata alone.
+
+```{r check-ocean}
+OCEAN_REALDATA_DIR <- DATA_WORKFLOW_DIR
+source(file.path(DATA_WORKFLOW_DIR, "ocean_data_helpers.R"), local = TRUE)
+ocean_dir <- Sys.getenv("OCEAN_DATA_DIR", file.path(DATA_WORKFLOW_DIR, "data", "prepared"))
+if (!all(file.exists(file.path(ocean_dir, c("study1_data.csv", "meta.json"))))) {
+  cat("Ocean unavailable: supply study1_data.csv and meta.json through OCEAN_DATA_DIR.\n")
+} else {
+  ocean <- load_ocean_prepared(ocean_dir)
+  stopifnot(nrow(ocean$train) == 100L, nrow(ocean$test) == 300L,
+            is.finite(ocean$log_center), is.finite(ocean$log_scale), ocean$log_scale > 0)
+  allocation <- read_ocean_class_allocation(file.path(DATA_WORKFLOW_DIR, "data", "class6_proportional_calibration_allocation.csv"))
+  calibration <- make_ocean_nested_calibration(ocean$c_train, allocation,
+                                              c(10L, 25L, 50L), seed = 20260805L)
+  stopifnot(all(calibration[["10"]] %in% calibration[["25"]]),
+            all(calibration[["25"]] %in% calibration[["50"]]))
+  cat("PASS: ocean loader, manuscript split sizes, scale, and nested calibration allocation.\n")
+}
+```
+
+## What a complete raw-data release must contain
+
+For each study, preserve an acquisition README, preprocessing R script with
+explicit configuration, input checksums, aggregate inclusion/exclusion counts,
+transformation constants, split-generation settings, prepared-output checksums,
+and R session information. Run preprocessing separately from inference; an
+analysis rerun should not silently rebuild cohorts or folds. Once the original
+scripts are supplied, integrate them here and verify outputs against the freeze.

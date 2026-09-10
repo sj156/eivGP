@@ -19,22 +19,8 @@ if (!exists("OCEAN_REALDATA_DIR")) {
 }
 
 default_ocean_profile_dir <- function() {
-  candidates <- c(
-    Sys.getenv("OCEAN_DATA_DIR", unset = ""),
-    if (exists("OCEAN_DATA_DIR")) OCEAN_DATA_DIR else "",
-    file.path(OCEAN_REALDATA_DIR, "data", "prepared"),
-    file.path(
-      OCEAN_REALDATA_DIR, "..", "..",
-      "code", "New-version", "ocean_new",
-      "bcodmo_np_role_swap_class6_split_2026-08-05",
-      "data", "derived", "positive_primary_np_swap_class6"
-    ),
-    file.path(
-      "code", "New-version", "ocean_new",
-      "bcodmo_np_role_swap_class6_split_2026-08-05",
-      "data", "derived", "positive_primary_np_swap_class6"
-    )
-  )
+  explicit <- Sys.getenv("OCEAN_DATA_DIR", "")
+  candidates <- if (nzchar(explicit)) explicit else file.path(OCEAN_REALDATA_DIR, "data", "prepared")
   candidates <- candidates[nzchar(candidates)]
   for (p in candidates) {
     if (file.exists(file.path(p, "study1_data.csv"))) {

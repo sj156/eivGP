@@ -7,8 +7,54 @@ output:
 date: "2026-09-10"
 ---
 
-This notebook fits only the final EIV-GP experiment. The cohort and repeated
-folds are frozen; the earlier screening gates are intentionally not rerun.
+This notebook evaluates a frozen observational ADNI application using eivGP
+0.3.1 and the computation section's published UC-GP, LVGP, and EzGP competitors.
+Cohort construction and frozen fold generation are the collaborator's separate
+preprocessing task. Model comparisons use identical held-out participants.
+
+## Scientific motivation and main-text plan
+
+Amyloid PET measures brain amyloid burden, while CSF and plasma assays provide
+related fluid biomarkers. Their relationship matters for learning about amyloid
+burden when measurements are incomplete. A head-to-head ADNI biomarker study describes paired plasma, CSF, and amyloid-PET
+measurements and evaluates blood tests against Alzheimer pathology
+([Head-to-head comparison of leading blood tests, 2024](https://pmc.ncbi.nlm.nih.gov/articles/PMC11567821/)).
+These motivate the relationship; this frozen cohort is not asserted to reproduce
+those papers' cohorts or establish clinical diagnostic validity.
+
+Here Y is PET Centiloid, U is CSF Aβ42, X comprises age, sex, and APOE4 dose,
+and C contains three-level plasma Aβ42/40 and GFAP. CSF is naturally missing
+for 362 of 495 participants. The ordinal inputs are constructed from continuous
+assays; this study does not claim the assays are intrinsically ordinal.
+
+The compact main text uses `main/fig1_exploration.pdf`,
+`main/table1_prediction.md` (plus CSV), and `main/fig2_CSF_inference.pdf`.
+All detailed fold scores, failures, paired contrasts, and validation summaries
+are in `appendix/`; fold-specific diagnostics and checkpoints remain in fold
+folders. The reporting script never selects the best fold, filters poor scores,
+or writes an automatic claim of superiority.
+
+The primary shared task predicts Y from test X,C with test CSF withheld for all
+methods, reporting the full cohort and the naturally missing-CSF subgroup.
+EIV-GP can also exploit observed *training* CSF, whereas the literature methods
+use training X,C,Y. This is an explicit difference in information use, not a
+controlled isolation of joint inference. Available-test-CSF prediction is an
+appendix deployment scenario: EIV-GP can use it and the categorical competitors
+retain their X,C predictions. The unique-to-this-comparison outputs are a
+physical-CSF posterior and a CSF-coordinate response surface, not a claim that
+all other statistical models lack these capabilities.
+
+No truth is available for naturally missing CSF or the response surface. CSF
+recovery is checked by hiding measured CSF in held-out participants, with neither
+their U nor Y passed to the prospective imputer. A response-free LM-CSF benchmark
+is reported in the appendix. This check cannot establish recovery for naturally
+missing CSF. The surface figure uses prespecified fold 1, the training observed-U
+10th–90th percentile range, median training age, female=0, and APOE4 dose=1;
+its pointwise intervals describe association and do not imply a causal effect.
+
+The study retains repeats 2 and 3 until the collaborator clarifies repeat 1's
+role in development. Data-driven preprocessing and screening history remain
+necessary qualifications; freezing data does not itself exclude leakage.
 
 ```{r setup, include=TRUE}
 knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = TRUE)
@@ -19,7 +65,9 @@ DEFAULT_REPEAT_ID <- 2L
 ## Environment variables override the notebook defaults without editing it:
 ## ADNI_REPEAT_ID=3, EIVGP_N_CORES=4, or EIVGP_SMOKE_TEST=1.
 env_int <- function(name, default, minimum = 0L) {
-  x <- suppressWarnings(as.integer(Sys.getenv(name, unset = as.character(default))))
+  raw <- Sys.getenv(name, unset = as.character(default))
+  if (!grepl("^[0-9]+$", raw)) stop(name, " must be an integer.")
+  x <- suppressWarnings(as.integer(raw))
   if (length(x) != 1L || is.na(x) || x < minimum) stop(name, " is invalid.")
   x
 }
@@ -41,7 +89,7 @@ if (SMOKE_TEST) {
 } else {
   N_CHAINS <- 4L; BURN <- 4000L; INITIAL_ITER <- 20000L
   EXTENSION_ITER <- 10000L; CHECKPOINT_EVERY <- 2000L
-  FOLDS_TO_RUN <- 1:3; PREDICTION_DRAWS <- 500L
+  FOLDS_TO_RUN <- 1:3; PREDICTION_DRAWS <- 1000L
 }
 
 ## Frozen sampler choice. A matched ADNI pilot found that block sizes 16 and
@@ -64,28 +112,44 @@ TAIL_ESS_LIMIT <- 400
 MCSE_SD_RATIO_LIMIT <- 0.10
 
 input_path <- tryCatch(knitr::current_input(dir = TRUE), error = function(e) "")
-PROJECT_DIR <- if (nzchar(input_path)) dirname(normalizePath(input_path)) else normalizePath(getwd())
-DATA_FILE <- file.path(PROJECT_DIR, "data", "toledo_adni_cohort_n495.csv")
-FOLD_FILE <- file.path(PROJECT_DIR, "data", "toledo_adni_balanced_repeated_3fold.csv")
-OUTPUT_ROOT <- file.path(PROJECT_DIR, "outputs", paste0(
+if (length(input_path) != 1L || is.na(input_path)) input_path <- ""
+PROJECT_DIR <- Sys.getenv("ADNI_PROJECT_DIR", if (nzchar(input_path)) dirname(normalizePath(input_path)) else normalizePath(getwd()))
+DATA_DIR <- Sys.getenv("ADNI_DATA_DIR", file.path(PROJECT_DIR, "data"))
+DATA_FILE <- file.path(DATA_DIR, "toledo_adni_cohort_n495.csv")
+FOLD_FILE <- file.path(DATA_DIR, "toledo_adni_balanced_repeated_3fold.csv")
+OUTPUT_ROOT <- file.path(Sys.getenv("ADNI_OUTPUT_DIR", file.path(PROJECT_DIR, "outputs")), paste0(
   if (SMOKE_TEST) "smoke_" else "", "repeat", REPEAT_ID
 ))
 dir.create(OUTPUT_ROOT, recursive = TRUE, showWarnings = FALSE)
+RUN_LOCK <- file.path(OUTPUT_ROOT, ".run-lock")
+LOCK_OWNED <- FALSE
+if (!dir.create(RUN_LOCK, showWarnings = FALSE)) stop("Run already locked: ", RUN_LOCK,
+  ". If a job was killed, verify it has stopped before removing this directory.")
+LOCK_OWNED <- TRUE
+writeLines(paste(Sys.info()[["nodename"]], Sys.getpid()), file.path(RUN_LOCK, "owner"))
 
-## Install the tested GitHub revision if eivGP is missing. Pinning the commit
-## makes the teacher's run reproducible even if GitHub HEAD later changes.
+
+## Dependency installation is a separate, explicit setup step.
 EIVGP_TESTED_COMMIT <- "a3aa0f697f97d4bdf027507ac3c9b952644affb9"
-if (!requireNamespace("eivGP", quietly = TRUE)) {
-  if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
-  remotes::install_github(
-    "sj156/eivGP", subdir = "eivGP", ref = EIVGP_TESTED_COMMIT,
-    upgrade = "never", dependencies = TRUE
-  )
+if (!requireNamespace("eivGP", quietly = TRUE)) stop("Run setup.R before analysis.")
+pkg <- utils::packageDescription("eivGP")
+if (!identical(pkg$Version, "0.3.1")) {
+  stop("eivGP version 0.3.1 is required. Run setup.R.")
 }
 suppressPackageStartupMessages(library(eivGP))
-if (utils::compareVersion(as.character(utils::packageVersion("eivGP")), "0.3.1") < 0L) {
-  stop("eivGP >= 0.3.1 is required; found ", utils::packageVersion("eivGP"), ".")
-}
+
+source(file.path(PROJECT_DIR, "adni_case_study_helpers.R"), local = TRUE)
+for (d in c("main", "appendix")) dir.create(file.path(OUTPUT_ROOT, d), showWarnings = FALSE)
+case_packages <- adni_case_preflight(SMOKE_TEST)
+package_files <- list.files(system.file("R", package = "eivGP"), full.names = TRUE)
+adni_write_csv(data.frame(file = basename(package_files), md5 = unname(tools::md5sum(package_files))),
+  file.path(OUTPUT_ROOT, "appendix", "eivGP_code_fingerprints.csv"))
+adni_write_csv(case_packages, file.path(OUTPUT_ROOT, "appendix", "package_versions.csv"))
+adni_write_csv(data.frame(schema = ADNI_CASE_SCHEMA, smoke = SMOKE_TEST,
+  prediction_draws = PREDICTION_DRAWS, repeat_id = REPEAT_ID,
+  primary_target = "Y | test X,C (no test CSF)",
+  competitors = paste(ADNI_METHODS, collapse = ";")),
+  file.path(OUTPUT_ROOT, "appendix", "case_config.csv"))
 
 cat("Project:", PROJECT_DIR, "\n")
 cat("Repeat:", REPEAT_ID, " | folds:", paste(FOLDS_TO_RUN, collapse = ","), "\n")
@@ -126,6 +190,17 @@ make_C <- function(z) {
   names(out) <- C_COLUMNS
   out
 }
+```
+
+## Exploratory overview
+
+These descriptive plots illustrate data availability and within-pattern outcome
+variation. They are not model-selection criteria or evidence that a particular
+method will win.
+
+```{r exploration, fig.width=12, fig.height=4}
+adni_eda(dat, OUTPUT_ROOT, SMOKE_TEST)
+knitr::include_graphics(file.path(OUTPUT_ROOT, "main", "fig1_exploration.pdf"))
 ```
 
 ## Lightweight workflow helpers
@@ -303,6 +378,7 @@ all_metrics <- list()
 for (fold in FOLDS_TO_RUN) {
   fold_dir <- file.path(OUTPUT_ROOT, paste0("fold_", fold))
   dir.create(fold_dir, recursive = TRUE, showWarnings = FALSE)
+  unlink(file.path(fold_dir, "CASE_STUDY_COMPLETED.txt"))
   set_status(fold_dir, fold, "prepare", "Preparing frozen train/test data.")
 
   test_ids <- folds$RID[folds$fold == fold]
@@ -333,11 +409,22 @@ for (fold in FOLDS_TO_RUN) {
     cross_every = SAMPLER_CONTROL$cross_every,
     gp_block_schur = SAMPLER_CONTROL$gp_block_schur,
     dictionary_mode = SAMPLER_CONTROL$dictionary_mode,
+    max_dictionary_size = SAMPLER_CONTROL$max_dictionary_size,
+    ess_max_steps = SAMPLER_CONTROL$ess_max_steps,
+    threshold_update = SAMPLER_CONTROL$threshold_update,
     eivgp_version = as.character(utils::packageVersion("eivGP")),
     tested_commit = EIVGP_TESTED_COMMIT,
+    installed_commit = if (is.null(pkg$RemoteSha)) "unrecorded" else pkg$RemoteSha,
     stringsAsFactors = FALSE
   )
-  write.csv(config, file.path(fold_dir, "run_config.csv"), row.names = FALSE)
+  config_path <- file.path(fold_dir, "run_config.csv")
+  if (file.exists(file.path(fold_dir, "fit_latest.rds"))) {
+    if (!file.exists(config_path)) stop("Checkpoint has no run configuration.")
+    old_config <- read.csv(config_path, stringsAsFactors = FALSE)
+    if (!isTRUE(all.equal(old_config, config, check.attributes = FALSE)))
+      stop("Checkpoint configuration mismatch; use a separate output directory.")
+  }
+  write.csv(config, config_path, row.names = FALSE)
 
   fit_path <- file.path(fold_dir, "fit_latest.rds")
   if (file.exists(fit_path)) {
@@ -391,26 +478,17 @@ for (fold in FOLDS_TO_RUN) {
   }
 
   fit <- extend_to(fit, INITIAL_ITER)
-  d20 <- light_diagnostics(fit, fold_dir, "20k")
-  draw_convergence_plots(fit, d20, fold_dir, "20k")
-  stamp(fold_dir, sprintf(
-    "20k light gate=%s; max Rhat=%.4f, min bulk ESS=%.1f, min tail ESS=%.1f.",
-    d20$passed, d20$summary$max_rhat,
-    d20$summary$min_bulk_ess, d20$summary$min_tail_ess
-  ))
-
-  final_stage <- "20k"
-  if (!d20$passed) {
+  current_iter <- fit$diagnostics$summary$n_iter
+  final_stage <- paste0("iter", current_iter)
+  diagnostic <- light_diagnostics(fit, fold_dir, final_stage)
+  draw_convergence_plots(fit, diagnostic, fold_dir, final_stage)
+  if (!diagnostic$passed && current_iter < INITIAL_ITER + EXTENSION_ITER) {
     fit <- extend_to(fit, INITIAL_ITER + EXTENSION_ITER)
-    d30 <- light_diagnostics(fit, fold_dir, "30k")
-    draw_convergence_plots(fit, d30, fold_dir, "30k")
-    stamp(fold_dir, sprintf(
-      "30k light gate=%s; max Rhat=%.4f, min bulk ESS=%.1f, min tail ESS=%.1f; no further extension.",
-      d30$passed, d30$summary$max_rhat,
-      d30$summary$min_bulk_ess, d30$summary$min_tail_ess
-    ))
-    final_stage <- "30k"
+    final_stage <- paste0("iter", fit$diagnostics$summary$n_iter)
+    diagnostic <- light_diagnostics(fit, fold_dir, final_stage)
+    draw_convergence_plots(fit, diagnostic, fold_dir, final_stage)
   }
+  stamp(fold_dir, paste(final_stage, "convergence gate:", diagnostic$passed))
 
   set_status(fold_dir, fold, "prediction", paste("Predicting from", final_stage, "fit."))
   X_test <- as.matrix(test[, X_COLUMNS, drop = FALSE])
@@ -426,6 +504,7 @@ for (fold in FOLDS_TO_RUN) {
   )
   pred <- data.frame(
     repeat_id = REPEAT_ID, fold = fold, final_stage = final_stage,
+    convergence_passed = diagnostic$passed,
     RID = test$RID, diagnosis = test$diagnosis, R = test$R,
     y_true = test[[Y_COLUMN]], pred_mean = colMeans(response_draws),
     pred_sd = apply(response_draws, 2L, stats::sd),
@@ -435,17 +514,26 @@ for (fold in FOLDS_TO_RUN) {
   )
   write.csv(pred, file.path(fold_dir, "eivgp_predictions.csv"), row.names = FALSE)
   metrics <- score_predictions(pred)
+  metrics$convergence_passed <- diagnostic$passed
   metrics$repeat_id <- REPEAT_ID; metrics$fold <- fold; metrics$final_stage <- final_stage
   write.csv(metrics, file.path(fold_dir, "eivgp_metrics.csv"), row.names = FALSE)
   all_metrics[[as.character(fold)]] <- metrics
   atomic_write_lines(c(
     paste0("completed_at=", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z")),
     paste0("repeat=", REPEAT_ID), paste0("fold=", fold),
+    paste0("convergence_passed=", diagnostic$passed),
     paste0("final_stage=", final_stage)
-  ), file.path(fold_dir, "COMPLETED.txt"))
-  set_status(fold_dir, fold, "complete", paste("Completed at", final_stage))
+  ), file.path(fold_dir, "EIV_COMPLETED.txt"))
+  set_status(fold_dir, fold, "EIV_complete", paste("EIV prediction completed at", final_stage))
   cat("\n### Fold", fold, "\n\n")
   print(knitr::kable(metrics, digits = 3))
+  set_status(fold_dir, fold, "comparison", "Running shared prediction and CSF inference tasks.")
+  adni_extended_fold(fit, train, test, draw_ids, fold_dir, REPEAT_ID, fold,
+                     SMOKE_TEST, diagnostic$passed, response_draws)
+  atomic_write_lines(c(paste0("completed_at=", Sys.time()),
+    paste0("schema=", ADNI_CASE_SCHEMA), paste0("convergence_passed=", diagnostic$passed)),
+    file.path(fold_dir, "CASE_STUDY_COMPLETED.txt"))
+  set_status(fold_dir, fold, "complete", "EIV fit, comparison, and additional inference finished; inspect method status.")
   rm(fit, response_draws)
   invisible(gc())
 }
@@ -454,9 +542,32 @@ combined_metrics <- do.call(rbind, all_metrics)
 write.csv(combined_metrics, file.path(OUTPUT_ROOT, "all_fold_metrics.csv"), row.names = FALSE)
 ```
 
+## Compact main results and appendix export
+
+Published competitors follow the numerical/computation section: UC-GP
+(Qian et al., 2008; Zhou et al., 2011) via kergp, LVGP (Zhang et al., 2020)
+via LVGP, and EzGP (Xiao et al., 2021) via EzGP. The installed eivGP 0.3.1 public adapters
+use their default production controls and training-only tuning. Exact package
+code fingerprints and versions are recorded because 0.3.1 development builds
+can differ in optimizer rescue schedules.
+Failed fits are listed, not replaced by substitute implementations. SMOKE
+runs use explicitly reduced budgets to exercise code, never to rank methods.
+
+The primary table uses the intersection of folds with valid predictions from
+all four methods. Incomplete intersections are labelled provisional; per-method
+available-fold results are separately tabulated. MCMC warnings are retained.
+Scores are pooled over out-of-fold participants within each repeat. No independent
+replication standard errors are computed from folds or repeated participants.
+
+```{r report, results='asis'}
+main_table <- adni_case_report(OUTPUT_ROOT, FOLDS_TO_RUN, SMOKE_TEST)
+print(knitr::kable(main_table, digits = 3))
+```
+
 ## Session information
 
 ```{r session-info}
 writeLines(capture.output(sessionInfo()), file.path(OUTPUT_ROOT, "sessionInfo.txt"))
 sessionInfo()
+unlink(RUN_LOCK, recursive = TRUE)
 ```

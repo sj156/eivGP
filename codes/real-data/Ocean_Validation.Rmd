@@ -1,0 +1,44 @@
+---
+title: "Ocean validation with real observations"
+output:
+  html_document:
+    toc: true
+---
+
+This validation uses controlled hiding of measured phosphate. It uses the
+univariate threshold model in **eivGP 0.3.1**. ADNI is the separate primary
+observational application with naturally missing inputs.
+
+## Configuration
+
+Set `OCEAN_DATA_DIR` to the folder containing `study1_data.csv` and `meta.json`.
+`OCEAN_QUICK=true` is the default pipeline check; use `false` for production.
+`MIXEDGP_CORES` controls the worker budget. Kernel, cache, and output options
+are described in the README.
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = TRUE)
+if (!exists("OCEAN_REALDATA_DIR")) {
+  input <- knitr::current_input(dir = TRUE)
+  if (length(input) != 1L || !nzchar(input)) stop("Use run_application.R or knit this notebook.")
+  OCEAN_REALDATA_DIR <- dirname(normalizePath(input))
+}
+```
+
+## Fit, predict, and generate figures
+
+The scripts fit representative calibration subsets and repeated nested
+calibration subsets. All EIV fitting and prediction use the installed package.
+Baseline comparisons use the same kernel family and test information target.
+The full-training-U oracle also integrates test U given its ordinal interval.
+
+```{r analysis}
+source(file.path(OCEAN_REALDATA_DIR, "run_ocean_all.R"), local = TRUE)
+```
+
+## Reproducibility
+
+```{r session}
+writeLines(capture.output(sessionInfo()), file.path(OCEAN_OUT_PREFIX, "sessionInfo.txt"))
+sessionInfo()
+```

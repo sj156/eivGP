@@ -1,94 +1,104 @@
-# ADNI Toledo EIV-GP run bundle
+# ADNI comparative case study
 
-This folder is self-contained for the final EIV-GP runs on the frozen
-Toledo-inspired ADNI cohort. It intentionally excludes the earlier ordinary
-screening gates.
+`ADNI_Toledo_EIVGP.Rmd` is the analysis entry point. It retains the collaborator's
+frozen data, repeats 2/3, four-chain sampler, and checkpoint schedule. Added
+comparison/reporting code is in `adni_case_study_helpers.R`. The installed
+**eivGP 0.3.1** package performs all EIV fitting, prediction, and imputation.
 
-## Default run
+## Linux commands
 
-`ADNI_Toledo_EIVGP.Rmd` defaults to **repeat 2, folds 1--3**, four chains,
-20,000 transitions per chain (4,000 warm-up), and one 10,000-transition
-extension when the lightweight convergence gate fails. The fit uses eivGP
-0.3.1, `ident="none"`, the SE/ARD kernel, `u_block_size=8`, and
-`cross_every=10`.
-
-Open the Rmd in RStudio and click **Knit**, or run from this directory:
-
-```r
-rmarkdown::render("ADNI_Toledo_EIVGP.Rmd")
-```
-
-On macOS/Linux the four chains use four forked workers. The package's current
-backend falls back to serial execution on Windows.
-
-## Change to repeat 3
-
-At the top of the Rmd, change:
-
-```r
-DEFAULT_REPEAT_ID <- 2L
-```
-
-to `3L`. Alternatively, do not edit the file and launch with
-`ADNI_REPEAT_ID=3` in the environment.
-
-## Quick installation and smoke test
-
-The Rmd installs the tested GitHub revision of `sj156/eivGP` automatically when
-the package is absent. `rmarkdown`, `knitr`, and `remotes` should be installed
-before rendering:
-
-```r
-install.packages(c("rmarkdown", "knitr", "remotes"))
-```
-
-To check the complete data -> fit -> checkpoint -> diagnostic plots ->
-prediction path without starting production:
+From the repository root, after obtaining the collaborator's private cleaned data:
 
 ```sh
-EIVGP_SMOKE_TEST=1 Rscript -e 'rmarkdown::render("ADNI_Toledo_EIVGP.Rmd")'
+Rscript codes/real-data/setup.R   # first setup: also installs kergp, LVGP, EzGP
+export ADNI_DATA_DIR="$PWD/real-data/adni"
+export ADNI_OUTPUT_DIR="$PWD/results/adni"
+EIVGP_SMOKE_TEST=1 EIVGP_N_CORES=4 Rscript codes/real-data/run_application.R adni
+ADNI_REPEAT_ID=2 EIVGP_N_CORES=4 Rscript codes/real-data/run_application.R adni
+# Run repeat 3 on another machine or after repeat 2:
+ADNI_REPEAT_ID=3 EIVGP_N_CORES=4 Rscript codes/real-data/run_application.R adni
 ```
 
-Smoke output is isolated under `outputs/smoke_repeat2/` and cannot be mistaken
-for production output.
+The short smoke run checks paths and plotting with explicitly reduced competitor
+budgets; optimizer failures can occur. It does not establish model performance.
+Production competitors use their installed public adapters' default controls.
+All packages must be installed before fitting. Code fingerprints and package
+versions are saved because 0.3.1 development builds may differ internally.
 
-## Checkpoints and progress
+After transferring both complete repeat output directories into ADNI_OUTPUT_DIR:
 
-- First checkpoint: iteration 6,000 (4,000 warm-up + 2,000 retained).
-- Later checkpoints: every 2,000 transitions through 20,000, and through
-  30,000 only when the 20k lightweight gate fails.
-- `fit_latest.rds` is atomically overwritten. It contains every retained draw
-  and the continuation state, so keeping older copies is unnecessary and would
-  consume substantial disk space.
-- `PROGRESS.md` and `CURRENT_STATUS.txt` live in each fold output directory.
-- Re-running the Rmd resumes a compatible `fit_latest.rds` rather than starting
-  that fold over.
+```sh
+Rscript codes/real-data/ADNI-toledo/report_adni.R
+```
 
-The package cannot expose a recoverable checkpoint before a `fit_eivgp()` or
-`continue_eivgp()` call returns; therefore iteration 2,000 and 4,000 cannot be
-saved while retaining a 4,000-transition warm-up.
+This regenerates reports without fitting and writes `combined/table1_prediction.md`
+and CSV. It requires complete common-fold comparisons in repeats 2 and 3. Repeat
+metrics are averaged through participant losses, with no independent-replicate SE.
+The per-repeat figure uses its prespecified fold 1; do not select a favorable
+repeat or fold for the paper. Use repeat 2 as the main illustration and repeat 3
+as the appendix stability check unless the protocol is amended before results.
 
-## Convergence outputs
+## Compact main text
 
-The workflow deliberately does not run the expensive full
-`diagnose_eivgp()`. It uses the raw diagnostics already computed in the fit and
-writes:
+1. Background: PET amyloid burden and fluid biomarkers; explain that ordinal
+   proxies are constructed and CSF is naturally unavailable for many participants.
+2. `main/fig1_exploration.pdf`: CSF availability, observed-CSF/PET relationship,
+   and outcome variation within joint ordinal patterns.
+3. `main/table1_prediction.md`: common out-of-fold response prediction for EIV-GP,
+   UC-GP, LVGP, and EzGP. It reports RMSE, CRPS, 95% coverage/width, and interval
+   score, overall and in the naturally missing-CSF subgroup.
+4. `main/fig2_CSF_inference.pdf`: held-out masked-CSF validation and a pointwise
+   posterior CSF-coordinate response surface. Neither naturally missing CSF nor
+   the true response surface is observed, so those cannot be assigned truth-based
+   accuracy scores. PNG previews accompany both figures.
 
-- parameter and summary diagnostic CSVs at 20k and, if needed, 30k;
-- key-parameter trace plots;
-- trace plots for the six missing-U coordinates with the worst raw R-hat;
-- an R-hat overview plot with the 1.01 threshold.
+The published methods follow the computation section's main method roster and
+use the public eivGP adapters to kergp, LVGP, and EzGP. CC-GP and PI-GP remain
+separate calibration-aware simulation ablations; they have not been silently
+replaced by differently defined ADNI methods. The appendix LM-CSF benchmark is
+explicitly a simple response-free imputer, not PI-GP or a published GP method.
 
-The lightweight gate requires finite diagnostics, R-hat <= 1.01, bulk and tail
-ESS >= 400, and MCSE/SD <= 0.10 for continuous hyperparameters, loadings,
-thresholds, and every missing U. Failure at 30k is reported, not extended again.
+## Comparison protocol
 
-## Frozen files
+- Primary: all methods predict test Y given X,C, with test CSF withheld. EIV-GP
+  uses observed training CSF; the literature competitors use X,C,Y. The comparison
+  shows utility of the complete workflows, not an isolated algorithmic advantage
+  at identical training-information use.
+- Secondary: use available test CSF for EIV-GP, retaining X,C predictions for
+  categorical competitors. These predictions are reported in the appendix.
+- Prospective CSF validation hides observed test CSF, passes only test C to
+  `impute_eivgp`, and never passes test Y. It evaluates the observed-CSF subset,
+  not naturally missing CSF. The LM-CSF benchmark uses the same training observed
+  CSF and test ordinal variables. Training imputation uses training Y and is
+  saved separately without unsupported truth scores.
+- Surface plot: fold 1, median training age, female=0, APOE4 dose=1, observed
+  training-CSF 10th–90th percentile range. It shows pointwise intervals and an
+  association, not a causal effect or a population-averaged curve.
+- All transformations and competitor tuning use training data. Upstream cutoff
+  construction and screening history still need the collaborator's documentation.
+- Invalid public-package predictions remain failures. No variance patch, substitute
+  implementation, or favorable-fold selection is introduced. Main-table subsets
+  are common to all methods and are labelled incomplete unless all folds finish.
+- Never interpret smoke results as evidence. Failed MCMC gates and optimizer
+  warnings remain visible; do not assert superiority from untrustworthy estimates.
 
-- `data/toledo_adni_cohort_n495.csv`: full n=495 cohort.
-- `data/toledo_adni_balanced_repeated_3fold.csv`: frozen repeat 1--3 folds.
-- `DATA_MANIFEST.txt`: checksums and design constants.
+## Appendix and private outputs
 
-Do not regenerate or edit the CSVs. The Rmd checks their MD5 hashes before any
-fit begins.
+`appendix/` contains fold/scenario scores (including MAE, NLPD when conditional
+Gaussian components are available, and 50/80/95% coverage), method availability,
+paired loss contrasts, CSF validation scores, cohort summaries, and package
+fingerprints. Paired bootstrap intervals condition on fitted folds; they are
+not full repeated-CV uncertainty intervals and do not include refitting variation.
 
+Each `fold_N/case-study/` contains bounded EIV predictive draws, cached competitor
+predictions, participant-level scores, prospective CSF checks, missing-training-CSF
+posteriors, all hyperparameter diagnostics, dictionary occupancy, and prediction
+scores by chain. Participant-level outputs must remain in private storage.
+
+Reruns reuse the EIV checkpoint and compatible comparator cache. Completed failures
+are cached too; inspect them, then remove that fold's `case-study/competitors.rds`
+explicitly if a rerun is warranted. Changed comparator settings/input/package
+fingerprints reject cache reuse. Full MCMC checkpoint compatibility is unchanged.
+`EIV_COMPLETED.txt` marks the original fitting/prediction task;
+`CASE_STUDY_COMPLETED.txt` marks completion of the extended workflow. Both still
+require inspection of convergence and competitor status.

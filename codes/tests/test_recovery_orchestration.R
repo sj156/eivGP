@@ -29,10 +29,11 @@ pred<-do.call(rbind,lapply(seq_len(nrow(comp)),function(i){
  data.frame(cell_id=cell$id,rep=comp$rep[i],method=comp$method[i],test_id=seq_along(d$test$y),y=d$test$y,mean=0,variance=1)
 }))
 write.csv(pred,file.path(report,"predictions.csv"),row.names=FALSE)
+expected_chain_workers<-4L
 fit_calls<-competitor_calls<-0L
 mixedgp_recovery_source_cell <- function(path,env){
  fit_calls<<-fit_calls+1L
- stopifnot(env$STUDY2_PARALLEL_LEVEL=="hybrid",env$STUDY2_CHAIN_WORKERS==4L,env$STUDY2_DATASET_WORKERS==1L,env$STUDY2_REP_IDS==1L,identical(env$STUDY2_RECOVERY_MODEL$priors$signal_shape,c(13,3)))
+ stopifnot(env$STUDY2_PARALLEL_LEVEL=="hybrid",env$STUDY2_CHAIN_WORKERS==expected_chain_workers,env$STUDY2_DATASET_WORKERS==1L,env$STUDY2_REP_IDS==1L,identical(env$STUDY2_RECOVERY_MODEL$priors$signal_shape,c(13,3)))
  env$raw_outputs<-list(predictive_metrics=base[1,,drop=FALSE])
 }
 e$mixedgp_cached_competitors<-function(X_train,y_train,C_train,X_test,C_test,n_draw,seed,m_vec,methods,controls,cache_root,allow_fit,retry_failed){
@@ -93,7 +94,8 @@ if(.Platform$OS.type!="windows"){
     do.call(serial_mock,args)
   }
   parallel_out<-file.path(root,"parallel-recovered")
-  par_audit<-mixedgp_recover_publication(getwd(),archive,data_root,parallel_out,"run",studies="study2",competitor_workers=2L)
+  expected_chain_workers<-2L
+  par_audit<-mixedgp_recover_publication(getwd(),archive,data_root,parallel_out,"run",studies="study2",competitor_workers=8L,core_budget=2L)
   call_files<-list.files(calls_dir,full.names=TRUE)
   pids<-vapply(call_files,function(f)readLines(f)[1],character(1))
   stopifnot(all(par_audit$complete),length(call_files)==3L,length(unique(pids))>=2L,sum(pids!=as.character(Sys.getpid()))>=2L)
@@ -104,3 +106,12 @@ if(.Platform$OS.type!="windows"){
   stopifnot(identical(before,tools::md5sum(call_files)))
   message("Multicore orchestration passed: distinct worker PIDs, serial-equivalent scores, no refitting on resume.")
 }
+
+# CPU allocation is validated and caps both phases, without increasing defaults.
+stopifnot(identical(mixedgp_recovery_core_settings(2L,4L,8L),
+  list(core_budget=2L,chain_workers=2L,competitor_workers=2L)),
+  mixedgp_recovery_core_settings(8L)$competitor_workers==4L,
+  mixedgp_recovery_core_settings(8L,competitor_workers=8L)$competitor_workers==8L)
+for(bad in list(0,-1,1.5,NA_real_,Inf,c(2L,4L)))
+  stopifnot(inherits(try(mixedgp_recovery_core_settings(bad),silent=TRUE),"try-error"))
+message("CPU budget validation and phase caps passed.")

@@ -132,11 +132,21 @@ mixedgp_recovery_tables <- function(state, configs, output, certify=FALSE) {
   audit
 }
 
-mixedgp_recover_publication <- function(repo, archive_root, data_root, output,
-    action=c("plan","run","check"), chain_workers=4L, studies=c("study1","study2"), competitor_workers=4L) {
-  action<-match.arg(action)
+# A user-supplied CPU allocation caps both non-overlapping recovery phases.
+mixedgp_recovery_core_settings <- function(core_budget=4L,chain_workers=4L,competitor_workers=4L){
+  core_budget<-mixedgp_validate_scalar_integer(core_budget,"core_budget (--cores)",1L)
   chain_workers<-mixedgp_validate_scalar_integer(chain_workers,"chain_workers",1L)
   competitor_workers<-mixedgp_validate_scalar_integer(competitor_workers,"competitor_workers",1L)
+  list(core_budget=core_budget,chain_workers=min(chain_workers,core_budget),
+    competitor_workers=min(competitor_workers,core_budget))
+}
+
+mixedgp_recover_publication <- function(repo, archive_root, data_root, output,
+    action=c("plan","run","check"), chain_workers=4L, studies=c("study1","study2"), competitor_workers=4L, core_budget=4L) {
+  action<-match.arg(action)
+  allocation<-mixedgp_recovery_core_settings(core_budget,chain_workers,competitor_workers)
+  chain_workers<-allocation$chain_workers;competitor_workers<-allocation$competitor_workers
+  core_budget<-allocation$core_budget
   repo<-normalizePath(repo,mustWork=TRUE)
   archive_root<-normalizePath(archive_root,mustWork=TRUE)
   if(!all(studies%in%c("study1","study2"))||anyDuplicated(studies))stop("Invalid study selection.")
@@ -148,7 +158,7 @@ mixedgp_recover_publication <- function(repo, archive_root, data_root, output,
   on.exit(unlink(lock,recursive=TRUE),add=TRUE)
   saveRDS(list(pid=Sys.getpid(),host=Sys.info()[["nodename"]],created=as.character(Sys.time())),file.path(lock,"owner.rds"))
   engine<-mixedgp_simulation_engine(file.path(repo,"codes"))
-  message("Recovery parallelism: up to ",chain_workers," MCMC chains for one dataset, or ",
+  message("Recovery CPU budget: ",core_budget," cores. Up to ",chain_workers," MCMC chains for one dataset, or ",
     competitor_workers," independent competitor fits; phases do not overlap. Backend: ",
     engine$mixedgp_parallel_backend(max(chain_workers,competitor_workers))$backend)
   configs<-sources<-list();state<-list()
@@ -166,7 +176,7 @@ mixedgp_recover_publication <- function(repo, archive_root, data_root, output,
     if(any(vapply(cfg$cells,function(c)c$n_rep!=50L,logical(1))))stop("Recovery requires the publication 50-dataset design.")
     cfg$code_dir<-file.path(repo,"codes");cfg$data_root<-file.path(data_root,study)
     cfg$use_cache<-TRUE;cfg$parallel$level<-"hybrid";cfg$parallel$workers<-1L;cfg$parallel$chain_workers<-chain_workers
-    cfg$parallel$core_budget<-chain_workers;cfg$parallel$active_chain_limit<-min(chain_workers,cfg$mcmc$n_chains)
+    cfg$parallel$core_budget<-core_budget;cfg$parallel$active_chain_limit<-min(chain_workers,cfg$mcmc$n_chains)
     configs[[study]]<-cfg
     report<-file.path(archive_root,"competitor-reports",study,"publication")
     if(!file.exists(file.path(report,"metrics.csv")))stop("Missing original competitor report: ",report)

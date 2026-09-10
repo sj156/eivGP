@@ -40,3 +40,18 @@ stopifnot(e$calls==9L,all(retried$status$status=="success"))
 unchanged <- run(seed=200L,allow_fit=TRUE,retry_failed=TRUE)
 stopifnot(e$calls==9L,all(unchanged$status$cache_hit),nrow(run(methods=character())$status)==0L)
 message("Competitor cache: read-only misses, reuse, selection, draw budgets, invalidation and retry passed.")
+
+# A locked method cannot erase successes from the same dataset.
+miss <- run(seed=300L)
+lock <- paste0(miss$status$cache_file[miss$status$method=="LVGP"],".lock")
+dir.create(dirname(lock),recursive=TRUE,showWarnings=FALSE);dir.create(lock)
+locked <- run(seed=300L,allow_fit=TRUE)
+stopifnot(locked$status$optimization_status[locked$status$method=="LVGP"]=="cache_locked",
+  all(locked$status$status[locked$status$method!="LVGP"]=="success"),dir.exists(lock),
+  setequal(names(locked$draws),c("UC-GP","EzGP")))
+unlink(lock,recursive=TRUE)
+# Cleanup must not remove a lock subsequently owned by another coordinator.
+dir.create(lock);saveRDS(list(token="new-owner"),file.path(lock,"owner.rds"))
+e$mixedgp_release_competitor_lock(lock,"old-owner");stopifnot(dir.exists(lock))
+e$mixedgp_release_competitor_lock(lock,"new-owner");stopifnot(!dir.exists(lock))
+message("Cache-lock isolation and ownership checks passed.")

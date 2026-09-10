@@ -1,11 +1,18 @@
 ## Repository-only competitor protocol/cache. No eivGP MCMC or installation.
 mixedgp_competitor_protocol <- function(study) {
   study <- match.arg(study, c("study1", "study2"))
-  list(`UC-GP` = list(n_starts = 8L),
+  list(`UC-GP` = list(n_starts = 8L, rescue_starts = c(32L,64L)),
     LVGP = list(n_starts = 8L, max_retries = 3L, max_iter_ini = 100L,
       max_iter_lat = 20L, rescue_iter_ini = 300L, rescue_iter_lat = 100L,
       max_elapsed_seconds = if (study == "study1") 1800 else 3600, parallel = FALSE),
-    EzGP = list(tau_fractions = c(1e-6, .0025, .01, .04, .16), cv_folds = 3L, maxeval = 100L))
+    EzGP = list(tau_fractions = c(1e-6, .0025, .01, .04, .16), cv_folds = 3L, maxeval = 100L, rescue_maxeval = c(300L,1000L)))
+}
+
+mixedgp_release_competitor_lock <- function(lock, token) {
+  if (!file.exists(file.path(lock,"owner.rds"))) return(invisible(NULL))
+  owner <- suppressWarnings(tryCatch(readRDS(file.path(lock,"owner.rds")),error=function(e)NULL))
+  if (identical(owner$token,token)) unlink(lock,recursive=TRUE)
+  invisible(NULL)
 }
 
 mixedgp_competitor_hash <- function(x) {
@@ -48,9 +55,23 @@ mixedgp_cached_competitors <- function(X_train, y_train, C_train, X_test, C_test
       message("Competitor ", method, ": fitting ", substr(key,1L,12L))
       dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
       lock <- paste0(path, ".lock")
-      if (!dir.create(lock, showWarnings = FALSE)) stop("Competitor cache is locked: ", lock,
-        ". Another run may be active; do not remove its lock while it is running.")
-      result <- tryCatch({
+      if (!dir.create(lock, showWarnings = FALSE)) {
+        status <- mixedgp_competitor_status(method,status="unavailable_or_failed",
+          optimization_status="cache_locked",message=paste("Competitor cache is locked:",lock,
+            "No lock was removed; other methods remain eligible."))
+        status$cache_key <- key; status$cache_hit <- FALSE; status$cache_file <- path
+        statuses[[method]] <- status
+        if (strict) stop(status$message)
+        next
+      }
+      # Release our own lock on interrupts as well as ordinary errors.
+      token <- basename(tempfile("owner-"))
+      do.call(on.exit,list(substitute(mixedgp_release_competitor_lock(P,T),list(P=lock,T=token)),add=TRUE),envir=environment())
+      saveRDS(list(token=token,pid=Sys.getpid(),host=Sys.info()[["nodename"]],created=as.character(Sys.time())),
+        file.path(lock,"owner.rds"))
+      latest <- if(file.exists(path)) readRDS(path) else NULL
+      if (!is.null(latest) && !identical(latest$identity,identity)) stop("Competitor cache identity mismatch: ",path)
+      result <- if(!is.null(latest) && all(latest$result$status$status=="success")) latest$result else tryCatch({
         ## The adapter returns a Gaussian predictor. Retain the model and exact
         ## moments; draws can subsequently be generated at any evaluation budget.
         run_published_mixedgp_competitors(checked$X, as.numeric(y_train), checked$C,
@@ -66,7 +87,7 @@ mixedgp_cached_competitors <- function(X_train, y_train, C_train, X_test, C_test
         cached <- list(identity=identity, result=result, created=as.character(Sys.time()))
         tmp <- tempfile(tmpdir=dirname(path)); saveRDS(cached,tmp,version=3L)
         if (!file.rename(tmp,path)) stop("Cannot save competitor cache: ",path)
-      }, finally = unlink(lock, recursive=TRUE))
+      }, finally = mixedgp_release_competitor_lock(lock, token))
       hit <- FALSE
       message("Competitor ", method, ": saved ", paste(result$status$status,collapse=","))
     }

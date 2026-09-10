@@ -94,6 +94,11 @@ study2_competitor_status <- mixedgp_competitor_status
 
 format_mixedgp_optimizer_attempts <- function(attempt) {
   if (is.null(attempt) || nrow(attempt) == 0L) return("")
+  if ("budget_name" %in% names(attempt)) return(paste(
+    paste0("retry=",attempt$retry,",seed=",attempt$seed,",",attempt$budget_name,"=",attempt$budget,
+      ",elapsed=",signif(attempt$elapsed_seconds,5),",status=",attempt$status,
+      ",message=",attempt$message),collapse=" | "))
+
   fmt_num <- function(x, digits = 6L) {
     ifelse(
       is.finite(x),
@@ -235,7 +240,7 @@ attach_predictive_normal_components <- function(draws, mean, variance) {
   draws
 }
 
-mixedgp_adapter_ucgp <- function(X_train,
+mixedgp_adapter_ucgp_once <- function(X_train,
                                  y_train,
                                  C_train,
                                  X_test,
@@ -674,7 +679,7 @@ select_ezgp_tau_cv <- function(train_x,
   )
 }
 
-mixedgp_adapter_ezgp <- function(X_train,
+mixedgp_adapter_ezgp_once <- function(X_train,
                                  y_train,
                                  C_train,
                                  X_test,
@@ -973,4 +978,50 @@ run_study2_published_competitors <- run_published_mixedgp_competitors
 run_study1_published_competitors <- run_published_mixedgp_competitors
 
 ## Backward-compatible adapter name used in older validation code.
+# Prespecified rescue sequence: stop at the first valid fit. Test responses are
+# never supplied to an adapter and cannot influence retry or model selection.
+mixedgp_retry_adapter <- function(adapter, args, budget_name, budgets, change_seed=TRUE) {
+  attempts <- list()
+  for (i in seq_along(budgets)) {
+    trial <- args; trial[[budget_name]] <- budgets[i]
+    trial$seed <- as.integer(args$seed + if (change_seed) (i-1L)*1000L else 0L)
+    start <- proc.time()[3]
+    result <- tryCatch(do.call(adapter,trial),error=function(e)e)
+    ok <- !inherits(result,"error")
+    attempts[[i]] <- data.frame(retry=i, seed=trial$seed, budget_name=budget_name,
+      budget=budgets[i], elapsed_seconds=unname(proc.time()[3]-start),
+      status=if(ok)"converged" else "failed", message=if(ok)"" else conditionMessage(result))
+    if (ok) {
+      result$optimizer_attempts <- do.call(rbind,attempts)
+      result$optimization_status <- if(i==1L)"default_converged" else "rescued_converged"
+      result$fit$recovery_attempts <- result$optimizer_attempts
+      return(result)
+    }
+  }
+  failure <- simpleError(paste0("Prespecified optimizer rescue exhausted: ",conditionMessage(result)))
+  failure$optimizer_attempts <- do.call(rbind,attempts)
+  stop(failure)
+}
+
+mixedgp_adapter_ucgp <- function(X_train,y_train,C_train,X_test,C_test,m_vec,n_draw,seed,
+    n_starts=8L, rescue_starts=c(32L,64L)) {
+  budgets <- c(n_starts,rescue_starts)
+  if(anyNA(budgets)||any(!is.finite(budgets))||any(budgets<1|budgets!=floor(budgets)))stop("Invalid UC-GP start budgets.")
+  mixedgp_retry_adapter(mixedgp_adapter_ucgp_once,
+    list(X_train=X_train,y_train=y_train,C_train=C_train,X_test=X_test,C_test=C_test,
+      m_vec=m_vec,n_draw=n_draw,seed=seed),"n_starts",as.integer(budgets))
+}
+
+mixedgp_adapter_ezgp <- function(X_train,y_train,C_train,X_test,C_test,m_vec,n_draw,seed,
+    tau_fractions=c(1e-6,.0025,.01,.04,.16), cv_folds=3L, maxeval=100L,
+    cv_score=c("nlpd","mse"), rescue_maxeval=c(300L,1000L)) {
+  budgets <- c(maxeval,rescue_maxeval)
+  if(anyNA(budgets)||any(!is.finite(budgets))||any(budgets<1|budgets!=floor(budgets)))stop("Invalid EzGP evaluation budgets.")
+  mixedgp_retry_adapter(mixedgp_adapter_ezgp_once,
+    list(X_train=X_train,y_train=y_train,C_train=C_train,X_test=X_test,C_test=C_test,
+      m_vec=m_vec,n_draw=n_draw,seed=seed,tau_fractions=tau_fractions,cv_folds=cv_folds,
+      cv_score=match.arg(cv_score)),"maxeval",as.integer(budgets),change_seed=FALSE)
+}
+
 study2_adapter_ucgp_qian <- mixedgp_adapter_ucgp
+

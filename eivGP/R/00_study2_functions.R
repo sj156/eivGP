@@ -5759,3 +5759,80 @@ make_mcmc_review_ordprobit <- function(fit,
     plots = plots
   )
 }
+
+# Deterministic reference integration for the two-dimensional simulation DGP.
+# This is a numerical oracle, not an exact latent sampler or fitted posterior.
+oracle_m0_quadrature_2d <- function(X, C, true_params,
+    orders = c(40L, 80L, 160L, 240L), tolerance = 1e-5) {
+  X <- as.matrix(X); C <- as.matrix(C)
+  if (nrow(X) != nrow(C) || nrow(X) < 1L || ncol(C) != true_params$q ||
+      true_params$d != 2L || any(!is.finite(X)) || anyNA(C) ||
+      any(C != floor(C) | C < 1 | C > true_params$m) ||
+      !isTRUE(all.equal(unname(true_params$Omega), diag(true_params$q))) ||
+      !true_params$score_error %in% c("gaussian", "logistic") ||
+      !is.finite(true_params$lambda) || true_params$lambda <= 0) {
+    stop("Quadrature requires valid inputs and the independent-score, two-dimensional Study II DGP.")
+  }
+  if (length(orders) < 2L || anyNA(orders) || any(orders < 2 | orders != floor(orders)) ||
+      any(diff(orders) <= 0) || length(tolerance) != 1L || !is.finite(tolerance) || tolerance <= 0)
+    stop("Invalid quadrature convergence controls.")
+  keys <- pattern_key(C); previous <- NULL
+  # Stable interval probability: subtract survival probabilities in the right tail.
+  cdf <- if (true_params$score_error == "gaussian") stats::pnorm else stats::plogis
+  scale <- true_params$lambda * if (true_params$score_error == "logistic") sqrt(3)/pi else 1
+  for (order in orders) {
+    jacobi <- matrix(0, order, order)
+    jacobi[cbind(seq_len(order-1L), 2:order)] <- sqrt(seq_len(order-1L))
+    eig <- eigen(jacobi + t(jacobi), symmetric = TRUE)
+    ix <- expand.grid(seq_len(order), seq_len(order))
+    U <- cbind(eig$values[ix[,1]], eig$values[ix[,2]])
+    weights <- eig$vectors[1,]^2
+    log_prior_weights <- log(weights[ix[,1]]) + log(weights[ix[,2]])
+    location <- U %*% t(true_params$A)
+    current <- probability <- numeric(nrow(X))
+    for (key in unique(keys)) {
+      rows <- which(keys == key); c <- C[rows[1],]; logw <- log_prior_weights
+      for (j in seq_len(ncol(C))) {
+        cuts <- c(-Inf, true_params$tau[j,], Inf)
+        lower <- (cuts[c[j]] - location[,j])/scale
+        upper <- (cuts[c[j]+1L] - location[,j])/scale
+        prob <- ifelse(lower > 0, cdf(lower, lower.tail=FALSE)-cdf(upper, lower.tail=FALSE),
+                       cdf(upper)-cdf(lower))
+        logw <- logw + log(pmax(prob, 0))
+      }
+      peak <- max(logw)
+      if (!is.finite(peak)) stop("Quadrature has no positive mass for pattern ", key)
+      w <- exp(logw-peak); mass <- sum(w); w <- w/mass
+      probability[rows] <- exp(peak)*mass
+      for (i in rows) current[i] <- sum(w*f0_2d(X[rep(i,nrow(U)),,drop=FALSE],U,
+                                               scenario=true_params$scenario))
+    }
+    if (!is.null(previous)) {
+      difference <- abs(current-previous)
+      # Check both the normalized expectation and the normalizing probability.
+      probability_change <- abs(probability-previous_probability)/pmax(probability, .Machine$double.xmin)
+      if (all(is.finite(current)) && max(difference) <= tolerance && max(probability_change) <= tolerance) {
+        attr(current,"truth_diagnostics") <- data.frame(evaluation_row=seq_len(nrow(X)),
+          pattern=keys, n_latent=NA_integer_, mcse=NA_real_, nested_half_difference=NA_real_,
+          method="gauss_hermite", quadrature_order=order, quadrature_difference=difference,
+          pattern_probability=probability, probability_relative_difference=probability_change)
+        attr(current,"rejection_telemetry") <- data.frame()
+        return(current)
+      }
+    }
+    previous <- current; previous_probability <- probability
+  }
+  stop("Oracle quadrature did not meet the declared convergence tolerance; retain an unavailable truth score.")
+}
+
+# Failed reference evaluation must never select which datasets get fitted.
+# Preserve the caller's RNG even when the reference task throws after drawing.
+mixedgp_reference_task <- function(stage, computation) {
+  had_seed <- exists(".Random.seed", envir=.GlobalEnv, inherits=FALSE)
+  if (had_seed) saved_seed <- get(".Random.seed", envir=.GlobalEnv)
+  on.exit(if (had_seed) assign(".Random.seed", saved_seed, envir=.GlobalEnv)
+          else if (exists(".Random.seed", envir=.GlobalEnv, inherits=FALSE))
+            rm(".Random.seed", envir=.GlobalEnv), add=TRUE)
+  tryCatch(list(value=force(computation), status=data.frame(stage=stage,status="success",message="")),
+    error=function(e) list(value=NULL,status=data.frame(stage=stage,status="failed",message=conditionMessage(e))))
+}

@@ -26,4 +26,4 @@ Collate: '00_parallel_utils.R' '00_study1_functions.R'
         '00_public_api.R' '00_diagnostics.R' '00_mcmc_workflow.R'
         'eivGP-package.R' 'global-variables.R'
 Config/litr/version: 0.9.3
-Config/litr/id: f345669d6f178829014586f95ac6a203
+Config/litr/id: c53c227844837a9e7bed20a129150e21

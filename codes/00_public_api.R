@@ -1348,6 +1348,11 @@ fit_ezgp <- function(X,
 #' Fit one audited published mixed-input GP competitor
 #' @param method One of `"UC-GP"`, `"LVGP"`, or `"EzGP"`.
 #' @param ... Arguments passed to the method-specific single-call wrapper.
+#' @details UC-GP tries its original start budget before the fixed
+#'   `rescue_starts = c(32L, 64L)` sequence after failure. EzGP similarly uses
+#'   `rescue_maxeval = c(300L, 1000L)` with unchanged training CV folds.
+#'   Both stop at the first valid fit and record every attempt; no test responses
+#'   enter fitting or selection. Set the rescue vector to `integer(0)` to disable it.
 #' @export
 fit_mixedgp_competitor <- function(method, ...) {
   method <- match.arg(method, c("UC-GP", "LVGP", "EzGP"))

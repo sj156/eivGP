@@ -127,6 +127,8 @@ stopifnot(file.copy(file.path(canonical_dir, "tests", "test_v030_workflow.R"),
                    file.path(test_dir, "test-v030-workflow.R"), overwrite = TRUE))
 stopifnot(file.copy(file.path(canonical_dir, "tests", "test_v031_updates.R"),
                    file.path(test_dir, "test-v031-updates.R"), overwrite = TRUE))
+stopifnot(file.copy(file.path(canonical_dir, "tests", "testthat", "test-recovery-helpers.R"),
+                   file.path(test_dir, "test-recovery-helpers.R"), overwrite = TRUE))
 devtools::load_all(package_dir, quiet = TRUE)
 ```
 

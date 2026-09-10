@@ -14,3 +14,10 @@ fit_mixedgp_competitor(method, ...)
 \description{
 Fit one audited published mixed-input GP competitor
 }
+\details{
+UC-GP tries its original start budget before the fixed
+\code{rescue_starts = c(32L, 64L)} sequence after failure. EzGP similarly uses
+\code{rescue_maxeval = c(300L, 1000L)} with unchanged training CV folds.
+Both stop at the first valid fit and record every attempt; no test responses
+enter fitting or selection. Set the rescue vector to \code{integer(0)} to disable it.
+}

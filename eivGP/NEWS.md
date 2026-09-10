@@ -1,3 +1,16 @@
+# Development: publication recovery
+
+- UC-GP and EzGP now support documented, bounded optimizer rescue sequences;
+  original successful fits return immediately and attempt histories are retained.
+- Added internal, refinement-checked two-dimensional Gauss--Hermite oracle mean
+  integration for independent Gaussian/logistic ordinal scores. Numerical truth
+  diagnostics distinguish quadrature error checks from Monte Carlo standard errors.
+- Reference-task failures can be recorded without aborting fitted-method scoring.
+  Reference calculations preserve the caller's RNG stream.
+- Repository experiments add immediate fit/predictive checkpoints, replication-ID
+  selection, cache-lock isolation, and a separate resumable publication recovery
+  runner. They do not alter the posterior, MCMC budgets, or frozen datasets.
+
 # eivGP 0.3.1
 
 This patch changes transition kernels, not the 0.3.0 posterior, priors, finite

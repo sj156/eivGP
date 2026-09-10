@@ -46,20 +46,16 @@ run_one_study2_replication <- function(rep_id, scenario) {
     stop("Frozen Study II dataset does not contain every required calibration split.")
   }
 
-  oracle_pool <- make_oracle_pool_2d(
-    true_params = dat$true_params,
-    n_pool = n_oracle_pool,
-    seed = fit_seed_base + 3L
-  )
-  oracle_draws <- sample_oracle_test_y_2d(
-    X_test = test$X,
-    C_test = test$C,
-    true_params = dat$true_params,
-    sigma_eps = dat$sigma_eps,
-    n_draw = n_pred_draw,
-    oracle_pool = oracle_pool,
-    seed = fit_seed_base + 4L
-  )
+  reference_status <- list()
+  pool_task <- mixedgp_reference_task("oracle_pool", make_oracle_pool_2d(
+    true_params=dat$true_params, n_pool=n_oracle_pool, seed=fit_seed_base+3L))
+  oracle_pool <- pool_task$value
+  reference_status$pool <- pool_task$status
+  prediction_task <- mixedgp_reference_task("oracle_prediction", sample_oracle_test_y_2d(
+    X_test=test$X, C_test=test$C, true_params=dat$true_params,
+    sigma_eps=dat$sigma_eps, n_draw=n_pred_draw, oracle_pool=oracle_pool, seed=fit_seed_base+4L))
+  oracle_draws <- prediction_task$value
+  reference_status$prediction <- prediction_task$status
 
   competitor_status <- data.frame(method=character(),status=character(),rep=integer(),scenario=character())
 
@@ -72,23 +68,32 @@ run_one_study2_replication <- function(rep_id, scenario) {
     STUDY2_MCMC_TARGET_N_POINTS
   )
   target_gate_test_rows <- mean_eval_idx[target_gate_local_idx]
-  mean_truth <- oracle_m0_2d(
-    X = test$X[mean_eval_idx, , drop = FALSE],
-    C = test$C[mean_eval_idx, , drop = FALSE],
-    true_params = dat$true_params,
-    oracle_pool = oracle_pool,
-    n_latent = n_m_truth,
-    seed = data_seed_base + 151L
-  )
+  mean_task <- mixedgp_reference_task("oracle_mean", {
+    if (STUDY2_ORACLE_MEAN_METHOD == "quadrature") {
+      oracle_m0_quadrature_2d(test$X[mean_eval_idx,,drop=FALSE],
+        test$C[mean_eval_idx,,drop=FALSE], dat$true_params)
+    } else {
+      oracle_m0_2d(X=test$X[mean_eval_idx,,drop=FALSE], C=test$C[mean_eval_idx,,drop=FALSE],
+        true_params=dat$true_params, oracle_pool=oracle_pool, n_latent=n_m_truth,
+        seed=data_seed_base+151L)
+    }
+  })
+  mean_truth <- mean_task$value
+  mean_task$status$method <- STUDY2_ORACLE_MEAN_METHOD
+  reference_status$mean <- mean_task$status
   mean_truth_rejection <- attr(mean_truth, "rejection_telemetry")
   mean_truth_diagnostics <- attr(mean_truth, "truth_diagnostics")
-  mean_truth_rejection$rep <- rep_id
-  mean_truth_rejection$scenario <- scenario
-  mean_truth_diagnostics$rep <- rep_id
-  mean_truth_diagnostics$scenario <- scenario
+  tag_truth <- function(x) {
+    if (is.null(x) || !nrow(x)) return(data.frame())
+    x$rep <- rep_id; x$scenario <- scenario; x
+  }
+  mean_truth_rejection <- tag_truth(mean_truth_rejection)
+  mean_truth_diagnostics <- tag_truth(mean_truth_diagnostics)
+  reference_status <- tag_truth(bind_rows(reference_status))
+  write.csv(reference_status, file.path(TAB_DIR, sprintf("reference_status_%s_rep%03d.csv",scenario,rep_id)),row.names=FALSE)
   mean_recovery <- list()
 
-  metrics <- list(
+  metrics <- if (is.null(oracle_draws)) list() else list(
     Oracle = summarize_predictive_samples_by_pattern(
       draw_mat = oracle_draws,
       y_true = test$y,
@@ -123,7 +128,12 @@ run_one_study2_replication <- function(rep_id, scenario) {
       ", |O|=", n_calib
     )
 
-    fit <- fit_eivgp_ordprobit_fb(
+    fit_file <- file.path(FIT_DIR, sprintf("recovery_fit_%s_rep%03d_cal%03d_%s.rds",scenario,rep_id,n_calib,CACHE_TAG))
+    fit_identity <- list(cache_spec=CACHE_SPEC, data_md5=unname(tools::md5sum(data_path)),
+      rep=rep_id, scenario=scenario, calibration=n_calib)
+    saved_fit <- if (file.exists(fit_file)) readRDS(fit_file) else NULL
+    if (!is.null(saved_fit) && !identical(saved_fit$identity,fit_identity)) stop("Saved-fit identity mismatch: ",fit_file)
+    fit <- if (!is.null(saved_fit)) saved_fit$fit else fit_eivgp_ordprobit_fb(
       X_raw = train$X,
       y_raw = train$y,
       C_ord = train$C,
@@ -133,6 +143,10 @@ run_one_study2_replication <- function(rep_id, scenario) {
       d = d_latent,
       m_vec = m_vec,
       ident = ident_method,
+      priors = if(is.null(STUDY2_RECOVERY_MODEL))list()else STUDY2_RECOVERY_MODEL$priors,
+      sampler_control = if(is.null(STUDY2_RECOVERY_MODEL))list()else STUDY2_RECOVERY_MODEL$control,
+      kernel = if(is.null(STUDY2_RECOVERY_MODEL))"se"else STUDY2_RECOVERY_MODEL$kernel$name,
+      matern_nu = if(is.null(STUDY2_RECOVERY_MODEL))2.5 else STUDY2_RECOVERY_MODEL$kernel$matern_nu,
       n_iter = mc_n_iter,
       burn = mc_burn,
       thin = mc_thin,
@@ -145,6 +159,10 @@ run_one_study2_replication <- function(rep_id, scenario) {
       verbose = FALSE
     )
 
+    # Save immediately: downstream diagnostics/evaluation must not lose MCMC work.
+    if (isTRUE(STUDY2_CHECKPOINT_FITS) && is.null(saved_fit))
+      mixedgp_atomic_save_rds(list(identity=fit_identity,fit=fit),fit_file)
+    rm(saved_fit)
     draw_ids <- seq_len(dim(fit$mcmc$samples_U)[1])
     if (length(draw_ids) > n_pred_draw) {
       draw_ids <- draw_ids[
@@ -176,6 +194,9 @@ run_one_study2_replication <- function(rep_id, scenario) {
         n_calib = n_calib,
         scenario = scenario
       )
+
+    mixedgp_atomic_save_rds(list(identity=fit_identity,metrics=metrics[[paste0("EIV_",n_calib)]]),
+      file.path(RES_DIR,sprintf("predictive_checkpoint_%s_rep%03d_cal%03d_%s.rds",scenario,rep_id,n_calib,CACHE_TAG)))
 
     m_draw_ids <- draw_ids
     if (length(m_draw_ids) > n_m_draw) {
@@ -216,7 +237,7 @@ run_one_study2_replication <- function(rep_id, scenario) {
         prediction_sampler_used = attr(eiv_draws, "latent_sampler"),
         mean_sampler_used = attr(m_draws, "latent_sampler")
       )
-    mean_recovery[[paste0("EIV_", n_calib)]] <-
+    if (!is.null(mean_truth)) mean_recovery[[paste0("EIV_", n_calib)]] <-
       summarize_mean_recovery_2d(
         m_draws,
         m_true = mean_truth,
@@ -824,6 +845,7 @@ run_one_study2_replication <- function(rep_id, scenario) {
     dataset_identity = data.frame(rep=rep_id, dataset_md5=mixedgp_dataset_identity(frozen$data)),
     metrics = bind_rows(metrics),
     mean_recovery = bind_rows(mean_recovery),
+    reference_status = reference_status,
     mean_truth_rejection = mean_truth_rejection,
     mean_truth_diagnostics = mean_truth_diagnostics,
     diagnostics = bind_rows(diagnostics),
@@ -863,6 +885,8 @@ run_one_study2_replication <- function(rep_id, scenario) {
         mean_posterior_draws_requested = n_m_draw,
         mean_latent_integration_draws = n_m_latent,
         mean_truth_latent_draws = n_m_truth,
+        mean_truth_method = STUDY2_ORACLE_MEAN_METHOD,
+        mean_truth_quadrature_tolerance = if(STUDY2_ORACLE_MEAN_METHOD=="quadrature")1e-5 else NA_real_,
         prospective_latent_sampler = predictive_latent_sampler,
         diagnostic_gibbs_sweeps = diagnostic_n_new_latent_gibbs,
         rejection_max_batches = rejection_max_batches
@@ -880,6 +904,12 @@ run_grid <- expand.grid(
   rep = seq_len(n_rep),
   stringsAsFactors = FALSE
 )
+
+if (!is.null(STUDY2_REP_IDS)) {
+  ids <- mixedgp_as_integer_strict(STUDY2_REP_IDS,"STUDY2_REP_IDS",1L)
+  if (anyDuplicated(ids) || any(ids > n_rep)) stop("Invalid original replication IDs.")
+  run_grid <- run_grid[run_grid$rep %in% ids,,drop=FALSE]
+}
 
 rep_files <- file.path(
   REP_DIR,
@@ -948,6 +978,7 @@ write.csv(dataset_identity, file.path(STUDY2_OUT_PREFIX, "dataset_identity.csv")
 
 mc_results <- bind_rows(lapply(rep_objects, `[[`, "metrics"))
 mc_mean_recovery <- bind_rows(lapply(rep_objects, `[[`, "mean_recovery"))
+mc_reference_status <- bind_rows(lapply(rep_objects, `[[`, "reference_status"))
 mc_mean_truth_rejection <- bind_rows(
   lapply(rep_objects, `[[`, "mean_truth_rejection")
 )
@@ -984,6 +1015,7 @@ replication_metadata <- lapply(rep_objects, `[[`, "metadata")
 
 raw_outputs <- list(
   predictive_metrics = mc_results,
+  reference_status = mc_reference_status,
   mean_recovery = mc_mean_recovery,
   mean_truth_rejection = mc_mean_truth_rejection,
   mean_truth_diagnostics = mc_mean_truth_diagnostics,

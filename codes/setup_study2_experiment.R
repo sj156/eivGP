@@ -63,6 +63,13 @@ suppressPackageStartupMessages({
 if (!exists("STUDY2_CONFIG")) STUDY2_CONFIG <- "quick"
 if (!exists("STUDY2_USE_CACHE")) STUDY2_USE_CACHE <- TRUE
 if (!exists("STUDY2_MC_RESUME")) STUDY2_MC_RESUME <- TRUE
+if (!exists("STUDY2_REP_IDS")) STUDY2_REP_IDS <- NULL
+if (!exists("STUDY2_CHECKPOINT_FITS")) STUDY2_CHECKPOINT_FITS <- TRUE
+if (!exists("STUDY2_RECOVERY_MODEL")) STUDY2_RECOVERY_MODEL <- NULL
+
+if (!exists("STUDY2_ORACLE_MEAN_METHOD")) STUDY2_ORACLE_MEAN_METHOD <- "quadrature"
+STUDY2_ORACLE_MEAN_METHOD <- match.arg(STUDY2_ORACLE_MEAN_METHOD,c("quadrature","rejection"))
+
 if (!exists("STUDY2_OUT_PREFIX")) STUDY2_OUT_PREFIX <- ".."
 if (!exists("STUDY2_SAVE_REP_FITS")) STUDY2_SAVE_REP_FITS <- FALSE
 if (!exists("STUDY2_STRICT_COMPETITORS")) STUDY2_STRICT_COMPETITORS <- FALSE
@@ -368,7 +375,9 @@ scenario_code <- c(
 )
 scenario_tag <- paste(unname(scenario_code[STUDY2_SCENARIOS]), collapse = "")
 CACHE_SPEC <- list(
-  schema = "s2v17_nonfatal_diagnostic_targets",
+  schema = "s2v18_nonfatal_reference_evaluation",
+  oracle_mean_method = STUDY2_ORACLE_MEAN_METHOD,
+  recovery_model = STUDY2_RECOVERY_MODEL,
   design_tag = STUDY2_DESIGN_TAG,
   study2_config = STUDY2_CONFIG,
   scenario_code = scenario_tag,
@@ -422,7 +431,7 @@ CACHE_SPEC <- list(
 )
 CACHE_SPEC$fingerprint <- mixedgp_object_fingerprint(CACHE_SPEC)
 CACHE_TAG <- paste0(
-  "s2v16-q", length(m_vec), "-", substr(CACHE_SPEC$fingerprint, 1L, 16L)
+  "s2v18-q", length(m_vec), "-", substr(CACHE_SPEC$fingerprint, 1L, 16L)
 )
 saveRDS(
   CACHE_SPEC,

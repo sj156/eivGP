@@ -1,15 +1,23 @@
 # Recover the original 50-dataset publication comparisons
 
-Run this from the repository containing the revised `codes/`, `eivGP/`, and `experiments/` directories. Use the Linux machine with the **original frozen `.rds` inputs**. Do not regenerate datasets to replace failures. Recovery does not modify the archives, original reports, or the Overleaf paper.
+Run this from the repository containing the revised `codes/`, `eivGP/`, and `experiments/` directories. Run **Study II on Linux and Study I on the Mac mini**, each with its own original frozen `.rds` inputs and publication archive. Do not regenerate datasets to replace failures. Recovery does not modify the archives, original reports, or the Overleaf paper.
 
 ## Commands
 
-From the repository root on Linux, with the usual `reproduction/` layout:
+From the updated repository root on **Linux (Study II)**, with the usual `reproduction/` layout:
 
 ```sh
-Rscript --vanilla experiments/recover_publication.R plan
-Rscript --vanilla experiments/recover_publication.R run > recovery.log 2>&1
-Rscript --vanilla experiments/recover_publication.R check
+Rscript --vanilla experiments/recover_publication.R plan --studies=study2
+Rscript --vanilla experiments/recover_publication.R run --studies=study2 --chain-workers=4 --competitor-workers=4 > recovery-study2.log 2>&1
+Rscript --vanilla experiments/recover_publication.R check --studies=study2
+```
+
+On the **Mac mini (Study I)**:
+
+```sh
+Rscript --vanilla experiments/recover_publication.R plan --studies=study1
+Rscript --vanilla experiments/recover_publication.R run --studies=study1 --competitor-workers=4 > recovery-study1.log 2>&1
+Rscript --vanilla experiments/recover_publication.R check --studies=study1
 ```
 
 The plan prints the missing IDs without fitting. Run the same `run` command again to resume interrupted work. `check` independently checks input provenance, original replication IDs, duplicates, and finite predictive scores. `run`/`check` return a nonzero exit status if any requested predictive comparison remains incomplete.
@@ -27,7 +35,14 @@ Replace `plan` with `run` or `check`, preserving the same options. The Linux mou
 
 `--studies=study2` limits recovery to Study II. Use a separate `--output` folder if changing the study selection. The default recovers both studies, including Study I EzGP failures. Study II always retains the original calibration grid, so it also repairs the calibration curves, not just calibration 50 in Table 2.
 
-`--chain-workers=4` is the default: one dataset runs at a time, with up to four chains in parallel. This preserves the archived iterations, warmup, priors, seeds, and calibration subsets. The code does not estimate runtime or reduce the MCMC budget. Keep the output directory and its fit checkpoints for resumption.
+Multicore recovery is enabled by default on Linux and macOS:
+
+- `--chain-workers=4`: up to four MCMC chains for one EIV–GP dataset at a time; the explicit count reaches the sampler. More than four workers cannot accelerate the archived four-chain fit.
+- `--competitor-workers=4`: up to four independent missing method/dataset fits in parallel. This also accelerates Study I, whose missing outputs are competitor fits. Increase this number if CPU and RAM permit; concurrency is capped by the number of pending tasks in the batch.
+- These phases run separately, so their worker counts are not multiplied or added. Only the coordinator writes merged tables and state; workers use separate cache entries. Completed batches are saved, and cached successes are reused after interruption. Unexpected worker errors remain visible in `attempts.csv`.
+- Original per-task seeds are independent of scheduling. Numerical-library threads are limited to one per worker by the launcher. Run with `Rscript` in a terminal on each machine; Windows falls back to serial execution.
+
+This preserves the archived iterations, warmup, priors, seeds, and calibration subsets. The code does not estimate runtime or reduce the MCMC budget. Keep the output directory and its fit checkpoints for resumption.
 
 The script sources the revised computation layer directly; reinstalling the package is not required to run recovery. To update a separately installed package, run `R CMD INSTALL eivGP`. If dependencies are missing, use the repository's `experiments/install_eivgp_dependencies.R` first.
 
@@ -78,4 +93,4 @@ The script certifies **valid predictive outputs**, not MCMC convergence. Diagnos
 
 ## Validation performed for this revision
 
-Tests cover forced oracle errors followed by actual tiny MCMC fitting, fit/checkpoint reuse, RNG isolation, analytic oracle checks, bounded retries, lock ownership, preservation of original successful scores, missing/duplicate ID detection, and the complete recovery orchestration with mocked expensive fits. The new reference integration passed its refinement criterion on all 25 previously failing generated datasets. On the actual cached Gaussian four-proxy UC–GP dataset 45, the original eight starts failed again and the 32-start rescue produced a valid fit. These checks do not substitute for running the remaining publication fits.
+Tests also verify actual parallel MCMC, distinct competitor worker process IDs, identical serial/parallel predictive scores, and resumption without refitting. Tests cover forced oracle errors followed by actual tiny MCMC fitting, fit/checkpoint reuse, RNG isolation, analytic oracle checks, bounded retries, lock ownership, preservation of original successful scores, missing/duplicate ID detection, and the complete recovery orchestration with mocked expensive fits. The new reference integration passed its refinement criterion on all 25 previously failing generated datasets. On the actual cached Gaussian four-proxy UC–GP dataset 45, the original eight starts failed again and the 32-start rescue produced a valid fit. These checks do not substitute for running the remaining publication fits.

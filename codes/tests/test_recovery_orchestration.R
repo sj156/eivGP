@@ -32,7 +32,7 @@ write.csv(pred,file.path(report,"predictions.csv"),row.names=FALSE)
 fit_calls<-competitor_calls<-0L
 mixedgp_recovery_source_cell <- function(path,env){
  fit_calls<<-fit_calls+1L
- stopifnot(env$STUDY2_REP_IDS==1L,identical(env$STUDY2_RECOVERY_MODEL$priors$signal_shape,c(13,3)))
+ stopifnot(env$STUDY2_PARALLEL_LEVEL=="hybrid",env$STUDY2_CHAIN_WORKERS==4L,env$STUDY2_DATASET_WORKERS==1L,env$STUDY2_REP_IDS==1L,identical(env$STUDY2_RECOVERY_MODEL$priors$signal_shape,c(13,3)))
  env$raw_outputs<-list(predictive_metrics=base[1,,drop=FALSE])
 }
 e$mixedgp_cached_competitors<-function(X_train,y_train,C_train,X_test,C_test,n_draw,seed,m_vec,methods,controls,cache_root,allow_fit,retry_failed){
@@ -43,11 +43,11 @@ e$mixedgp_cached_competitors<-function(X_train,y_train,C_train,X_test,C_test,n_d
 }
 mixedgp_simulation_engine<-function(code_dir)e
 out<-file.path(root,"recovered")
-plan<-mixedgp_recover_publication(getwd(),archive,data_root,out,"plan",studies="study2")
+plan<-mixedgp_recover_publication(getwd(),archive,data_root,out,"plan",studies="study2",competitor_workers=1L)
 stopifnot(fit_calls==0L,competitor_calls==0L,sum(!plan$complete)==4L)
-first<-mixedgp_recover_publication(getwd(),archive,data_root,out,"run",studies="study2")
+first<-mixedgp_recover_publication(getwd(),archive,data_root,out,"run",studies="study2",competitor_workers=1L)
 stopifnot(all(first$complete),fit_calls==1L,competitor_calls==3L)
-second<-mixedgp_recover_publication(getwd(),archive,data_root,out,"run",studies="study2")
+second<-mixedgp_recover_publication(getwd(),archive,data_root,out,"run",studies="study2",competitor_workers=1L)
 stopifnot(all(second$complete),fit_calls==1L,competitor_calls==3L)
 state<-readRDS(file.path(out,"state.rds"))
 stopifnot(nrow(state$study2$metrics)==150L,nrow(state$study2$raw$predictive_metrics)==50L)
@@ -59,7 +59,7 @@ stopifnot(isTRUE(all.equal(z,comp,check.attributes=FALSE)))
 # before any fit: changing a retained response in a recovered state is detected.
 state$study2$predictions$y[1]<-state$study2$predictions$y[1]+1
 saveRDS(state,file.path(out,"state.rds"))
-err<-try(mixedgp_recover_publication(getwd(),archive,data_root,out,"check",studies="study2"),silent=TRUE)
+err<-try(mixedgp_recover_publication(getwd(),archive,data_root,out,"check",studies="study2",competitor_workers=1L),silent=TRUE)
 stopifnot(inherits(err,"try-error"),grepl("do not match",err),fit_calls==1L,competitor_calls==3L)
 message("Full recovery orchestration passed: plan/no fits, original IDs, only missing tasks, resume, retained scores, input mismatch refusal.")
 
@@ -82,3 +82,25 @@ state2$study2$metrics$CRPS[1]<-NA_real_
 a<-mixedgp_recovery_tables(state2,list(study2=fullcfg),check_out,certify=TRUE)
 stopifnot(grepl("INCOMPLETE",readLines(file.path(check_out,"table2_complete.tex"))))
 message("Table certification and stale-complete-table invalidation passed.")
+
+# Real forked orchestration: distinct processes, identical seeded metrics, resume.
+if(.Platform$OS.type!="windows"){
+  calls_dir<-file.path(root,"parallel-calls");dir.create(calls_dir)
+  serial_mock<-e$mixedgp_cached_competitors
+  e$mixedgp_cached_competitors<-function(...){
+    args<-list(...)
+    writeLines(as.character(Sys.getpid()),file.path(calls_dir,paste0(args$methods,"-",args$seed)))
+    do.call(serial_mock,args)
+  }
+  parallel_out<-file.path(root,"parallel-recovered")
+  par_audit<-mixedgp_recover_publication(getwd(),archive,data_root,parallel_out,"run",studies="study2",competitor_workers=2L)
+  call_files<-list.files(calls_dir,full.names=TRUE)
+  pids<-vapply(call_files,function(f)readLines(f)[1],character(1))
+  stopifnot(all(par_audit$complete),length(call_files)==3L,length(unique(pids))>=2L,sum(pids!=as.character(Sys.getpid()))>=2L)
+  parallel_state<-readRDS(file.path(parallel_out,"state.rds"))
+  stopifnot(identical(parallel_state$study2$metrics,state$study2$metrics))
+  before<-tools::md5sum(call_files)
+  mixedgp_recover_publication(getwd(),archive,data_root,parallel_out,"run",studies="study2",competitor_workers=2L)
+  stopifnot(identical(before,tools::md5sum(call_files)))
+  message("Multicore orchestration passed: distinct worker PIDs, serial-equivalent scores, no refitting on resume.")
+}

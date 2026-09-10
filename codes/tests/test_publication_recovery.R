@@ -45,6 +45,7 @@ cfg<-study2_simulation_config("development",code_dir="codes",core_budget=1L,
 cfg$cells<-cfg$cells[1L];cell<-cfg$cells[[1]]
 cell$n_rep<-1L;cell$n<-30L;cell$n_test<-8L;cell$calibration_grid<-6L
 cell$run_ablations<-FALSE;cell$evaluate_f<-FALSE;cell$evaluate_u<-FALSE;cfg$cells[[1]]<-cell
+cfg$parallel$level<-"hybrid";cfg$parallel$workers<-1L;cfg$parallel$chain_workers<-2L;cfg$parallel$core_budget<-2L
 cfg$mcmc$n_iter<-12L;cfg$mcmc$burn<-4L;cfg$mcmc$n_chains<-2L
 cfg$evaluation<-list(n_pred_draw=4L,n_m_eval=2L,n_m_draw=4L,n_m_latent=4L,n_m_truth=16L,n_oracle_pool=30L)
 mixedgp_generate_cell_data(cfg,cell,e)
@@ -57,6 +58,7 @@ stopifnot(all(result$outputs$reference_status$status=="failed"),
  !any(result$outputs$predictive_metrics$method=="Oracle"),nrow(result$outputs$mean_recovery)==0L)
 files<-list.files(root,pattern="^recovery_fit_.*rds$",recursive=TRUE,full.names=TRUE)
 stopifnot(length(files)==1L,identical(readRDS(files[1])$fit$priors$signal_shape,c(11,4)))
+if(.Platform$OS.type!="windows")stopifnot(identical(readRDS(files[1])$fit$diagnostics$summary$parallel_cores,2L),identical(readRDS(files[1])$fit$diagnostics$summary$parallel_backend,"fork"))
 # Resume must use saved work, even if sampling is unavailable on the next call.
 e$fit_eivgp_ordprobit_fb<-function(...)stop("Sampler must not run on resume")
 again<-suppressWarnings(mixedgp_run_study2_cell(cfg,cell,e,root))

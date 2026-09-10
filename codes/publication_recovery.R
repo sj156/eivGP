@@ -133,9 +133,10 @@ mixedgp_recovery_tables <- function(state, configs, output, certify=FALSE) {
 }
 
 mixedgp_recover_publication <- function(repo, archive_root, data_root, output,
-    action=c("plan","run","check"), chain_workers=4L, studies=c("study1","study2")) {
+    action=c("plan","run","check"), chain_workers=4L, studies=c("study1","study2"), competitor_workers=4L) {
   action<-match.arg(action)
   chain_workers<-mixedgp_validate_scalar_integer(chain_workers,"chain_workers",1L)
+  competitor_workers<-mixedgp_validate_scalar_integer(competitor_workers,"competitor_workers",1L)
   repo<-normalizePath(repo,mustWork=TRUE)
   archive_root<-normalizePath(archive_root,mustWork=TRUE)
   if(!all(studies%in%c("study1","study2"))||anyDuplicated(studies))stop("Invalid study selection.")
@@ -147,6 +148,9 @@ mixedgp_recover_publication <- function(repo, archive_root, data_root, output,
   on.exit(unlink(lock,recursive=TRUE),add=TRUE)
   saveRDS(list(pid=Sys.getpid(),host=Sys.info()[["nodename"]],created=as.character(Sys.time())),file.path(lock,"owner.rds"))
   engine<-mixedgp_simulation_engine(file.path(repo,"codes"))
+  message("Recovery parallelism: up to ",chain_workers," MCMC chains for one dataset, or ",
+    competitor_workers," independent competitor fits; phases do not overlap. Backend: ",
+    engine$mixedgp_parallel_backend(max(chain_workers,competitor_workers))$backend)
   configs<-sources<-list();state<-list()
   locate<-function(study){
     roots<-c(archive_root,file.path(archive_root,study),file.path(archive_root,"results",study))
@@ -161,7 +165,8 @@ mixedgp_recover_publication <- function(repo, archive_root, data_root, output,
     archive<-readRDS(file.path(run,"run_summary.rds"));cfg<-archive$config
     if(any(vapply(cfg$cells,function(c)c$n_rep!=50L,logical(1))))stop("Recovery requires the publication 50-dataset design.")
     cfg$code_dir<-file.path(repo,"codes");cfg$data_root<-file.path(data_root,study)
-    cfg$use_cache<-TRUE;cfg$parallel$level<-"chains";cfg$parallel$workers<-1L;cfg$parallel$chain_workers<-chain_workers
+    cfg$use_cache<-TRUE;cfg$parallel$level<-"hybrid";cfg$parallel$workers<-1L;cfg$parallel$chain_workers<-chain_workers
+    cfg$parallel$core_budget<-chain_workers;cfg$parallel$active_chain_limit<-min(chain_workers,cfg$mcmc$n_chains)
     configs[[study]]<-cfg
     report<-file.path(archive_root,"competitor-reports",study,"publication")
     if(!file.exists(file.path(report,"metrics.csv")))stop("Missing original competitor report: ",report)
@@ -201,7 +206,7 @@ mixedgp_recover_publication <- function(repo, archive_root, data_root, output,
     current<-current[match(a$file,current$file),,drop=FALSE]
     if(nrow(a)!=50L||anyNA(current$md5)||!identical(tolower(as.character(a$md5)),tolower(as.character(current$md5))))
       stop("Frozen datasets differ from the archived 50-dataset collection: ",cell$id,
-        ". Point --data-root to the original Linux inputs; do not regenerate them.")
+        ". Point --data-root to this study's original inputs; do not regenerate them.")
     # CSV decimals/R serialization can vary by platform; validate actual held-out
     # responses before reusing the published competitor metrics.
     preds<-state[[study]]$predictions
@@ -261,9 +266,16 @@ mixedgp_recover_publication <- function(repo, archive_root, data_root, output,
       mixedgp_recovery_save(state,output);mixedgp_recovery_tables(state,configs,output,certify=TRUE)
       rm(env);gc()
     }
+    # Workers own distinct method/dataset cache entries. Only the coordinator
+    # writes merged state, attempts, and tables, after each bounded batch.
+    tasks<-list()
     for(rep_id in seq_len(cell$n_rep))for(method in c("UC-GP","LVGP","EzGP")){
       old<-state[[study]]$metrics;old<-old[old$cell_id==cell$id&old$rep==rep_id&old$method==method,,drop=FALSE]
       if(nrow(old)==1L&&mixedgp_recovery_valid(old))next
+      tasks[[length(tasks)+1L]]<-list(rep=rep_id,method=method)
+    }
+    recover_competitor<-function(task){
+      rep_id<-task$rep;method<-task$method
       frozen<-mixedgp_read_cell_replication(cfg,cell,rep_id);train<-frozen$data$train;test<-frozen$data$test
       X<-if(study=="study1")matrix(train$x,ncol=1)else train$X;C<-if(study=="study1")matrix(train$c,ncol=1)else train$C
       Xt<-if(study=="study1")matrix(test$x,ncol=1)else test$X;Ct<-if(study=="study1")matrix(test$c,ncol=1)else test$C
@@ -272,17 +284,39 @@ mixedgp_recover_publication <- function(repo, archive_root, data_root, output,
         m_vec=rep(cell$m,ncol(C)),methods=method,controls=engine$mixedgp_competitor_protocol(study),
         cache_root=file.path(output,"competitor-cache"),allow_fit=TRUE,retry_failed=TRUE)
       status<-ans$status;status$cell_id<-cell$id;status$rep<-rep_id;status$dataset_md5<-engine$mixedgp_competitor_hash(frozen$data)
-      state[[study]]$statuses<-mixedgp_recovery_upsert(state[[study]]$statuses,status,c("cell_id","rep","method"))
+      met<-pred<-NULL
       if(all(status$status=="success")){
         met<-engine$summarize_predictive_samples_1d(ans$draws[[method]],test$y,method,rep_id,NA_integer_,cell$scenario)
         met$cell_id<-cell$id
-        state[[study]]$metrics<-mixedgp_recovery_upsert(state[[study]]$metrics,met,c("cell_id","rep","method"))
         pred<-data.frame(cell_id=cell$id,rep=rep_id,method=method,test_id=seq_along(test$y),y=test$y,
           mean=ans$predictive_means[[method]],variance=ans$predictive_variances[[method]])
-        state[[study]]$predictions<-mixedgp_recovery_upsert(state[[study]]$predictions,pred,c("cell_id","rep","method"))
       }
-      record(study,cell$id,rep_id,method,status$status[1],status$message[1])
-      mixedgp_recovery_save(state,output);mixedgp_recovery_tables(state,configs,output,certify=TRUE)
+      list(status=status,metrics=met,predictions=pred)
+    }
+    if(length(tasks))for(start in seq.int(1L,length(tasks),by=competitor_workers)){
+      batch<-tasks[seq.int(start,min(length(tasks),start+competitor_workers-1L))]
+      message("Recovering ",study," ",cell$id,": ",length(batch)," competitor tasks in parallel")
+      answers<-engine$mixedgp_parallel_lapply(batch,function(task){
+        tryCatch(recover_competitor(task),error=function(e)list(error=conditionMessage(e)))
+      },n_cores=competitor_workers,seeds=vapply(batch,function(task)
+        if(study=="study1")250000L+1000L*task$rep else
+          1000000L*match(cell$scenario,c("primary","latent_additive_control","high_uncertainty","logistic_misspec"))+10000L*task$rep+100L,integer(1)))
+      for(i in seq_along(batch)){
+        rep_id<-batch[[i]]$rep;method<-batch[[i]]$method;answer<-answers[[i]]
+        if(is.null(answer)||inherits(answer,"try-error")||!is.null(answer$error)){
+          reason<-if(is.list(answer)&&!is.null(answer$error))answer$error else "Competitor worker exited without a result; retry with run."
+          record(study,cell$id,rep_id,method,"worker_error",reason)
+          next
+        }
+        status<-answer$status
+        state[[study]]$statuses<-mixedgp_recovery_upsert(state[[study]]$statuses,status,c("cell_id","rep","method"))
+        if(!is.null(answer$metrics)){
+          state[[study]]$metrics<-mixedgp_recovery_upsert(state[[study]]$metrics,answer$metrics,c("cell_id","rep","method"))
+          state[[study]]$predictions<-mixedgp_recovery_upsert(state[[study]]$predictions,answer$predictions,c("cell_id","rep","method"))
+        }
+        record(study,cell$id,rep_id,method,status$status[1],status$message[1])
+        mixedgp_recovery_save(state,output);mixedgp_recovery_tables(state,configs,output,certify=TRUE)
+      }
     }
   }
   audit<-mixedgp_recovery_tables(state,configs,output,certify=TRUE)

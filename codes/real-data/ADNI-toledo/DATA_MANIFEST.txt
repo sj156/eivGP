@@ -1,0 +1,29 @@
+Frozen 2026-09-10 for the Toledo-inspired ADNI EIV-GP experiment.
+
+toledo_adni_cohort_n495.csv
+  MD5: d10b980253304620efea9f2a013166a9
+  n: 495
+  observed U (R=1): 133
+  naturally missing U (R=0): 362
+
+toledo_adni_balanced_repeated_3fold.csv
+  MD5: 895a5759c7baf22e1771516c0aa84d70
+  repeats: 3
+  folds per repeat: 3
+  test n per fold: 165
+
+Model variables
+  Y: y_centiloid
+  U: u_csf_abeta42
+  X: x_age_years, x_female, x_apoe4_dose
+  C: c_ab42_ab40_3, c_gfap_3
+  engine: multivariate ordinal-probit
+  latent_dim: 1
+  ident: none
+  kernel: se (ARD)
+
+Tested package
+  repository: https://github.com/sj156/eivGP
+  package version: 0.3.1
+  commit: a3aa0f697f97d4bdf027507ac3c9b952644affb9
+

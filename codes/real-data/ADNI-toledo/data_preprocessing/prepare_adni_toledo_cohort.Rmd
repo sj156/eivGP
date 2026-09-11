@@ -1,0 +1,975 @@
+---
+title: "Prepare the Toledo-inspired ADNI cohort and frozen 3 x 3 folds"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+date: "2026-09-11"
+---
+
+## Purpose and data-use boundary
+
+This notebook reconstructs the participant-level inputs used by the
+Toledo-inspired ADNI EIV-GP analysis. It creates, **only in a local secure
+directory**:
+
+1. `toledo_adni_cohort_n495.csv`;
+2. `toledo_adni_balanced_repeated_3fold.csv`;
+3. aggregate validation and provenance files.
+
+The generated CSV files contain ADNI participant-level or derived
+participant-level data. Each investigator who
+runs this notebook must have approved ADNI access and must comply with the
+[ADNI Data Use Agreement](https://adni.loni.usc.edu/wp-content/themes/adni_2023/documents/ADNI_Data_Use_Agreement.pdf).
+
+
+## Raw ADNI files required
+
+Download the following tables through the investigator's own approved
+[LONI IDA/ADNI account](https://adni.loni.usc.edu/data-samples/adni-data/).
+The displayed download filename may have a date suffix. The notebook searches
+recursively by the stable table name, so a file such as
+`UCBERKELEY_AMY_6MM_01Aug2026.csv` is accepted.
+
+| Stable table name | ADNI area / description | Columns used |
+|---|---|---|
+| `UPENN_PLASMA_FUJIREBIO_QUANTERIX` | Biofluid Biomarkers; UPENN plasma Aβ42, Aβ40, p-tau217, NfL and GFAP measured by Fujirebio/Quanterix | `RID`, `EXAMDATE`, `pT217_F`, `pT217_AB42_F`, `AB42_AB40_F`, `GFAP_Q` |
+| `UCBERKELEY_AMY_6MM` | PET numerical data; UC Berkeley amyloid PET 6 mm analysis | `RID`, `SCANDATE`, `CENTILOIDS`, `SUMMARY_SUVR`, `TRACER`, `qc_flag` |
+| `DXSUM` | Clinical Assessments; diagnostic summary | `RID`, `EXAMDATE`, `DIAGNOSIS` |
+| `PTDEMOG` | Subject Characteristics; participant demographics | `RID`, `VISDATE`, `PTGENDER`, `PTEDUCAT`, `PTDOB` |
+| `APOERES` | Genetics / Biospecimen; ApoE genotyping results | `RID`, `GENOTYPE` |
+| `UPENNBIOMK_ROCHE_ELECSYS` | Biofluid Biomarkers; UPENN CSF Roche Elecsys biomarkers | `RID`, `EXAMDATE`, `ABETA42`, `BATCH` |
+
+For the exact frozen experiment, use the same ADNI snapshot used in the
+original analysis (the PET, diagnosis, and demographics exports were dated
+01-Aug-2026). ADNI tables are updated over time. A newer snapshot can change
+the eligible cohort and therefore cannot silently replace the frozen
+confirmatory cohort.
+
+The preferred input is the original CSV exported from IDA. For local backward
+compatibility, this notebook can also read a matching `.rda` file or a matching
+CSV stored inside a ZIP archive. Those compatibility options do not authorize
+redistribution of the data.
+
+## Configuration
+
+Before rendering, set two environment variables. Example:
+
+```r
+Sys.setenv(
+  ADNI_RAW_DIR = "/secure/path/to/my/adni-downloads",
+  ADNI_TOLEDO_DATA_DIR = "/secure/path/to/my/adni-derived/toledo"
+)
+rmarkdown::render("prepare_adni_toledo_cohort.Rmd")
+```
+
+Alternatively, place the raw downloads in a local `raw-data/` directory beside
+this Rmd. The default output is `local-data/` beside this Rmd. Both directory
+names must be excluded from Git.
+
+Set `ADNI_STRICT_FROZEN=0` only for an explicitly labelled cohort-update
+sensitivity analysis. Such output is not the frozen n=495 experiment.
+
+```{r setup}
+knitr::opts_chunk$set(
+  echo = TRUE, message = TRUE, warning = TRUE,
+  results = "markup", error = FALSE
+)
+
+input_path <- tryCatch(knitr::current_input(dir = TRUE), error = function(e) "")
+PROJECT_DIR <- if (nzchar(input_path)) {
+  dirname(normalizePath(input_path))
+} else {
+  normalizePath(getwd())
+}
+
+env_flag <- function(name, default = FALSE) {
+  value <- tolower(Sys.getenv(name, unset = if (default) "true" else "false"))
+  if (!value %in% c("true", "false", "1", "0", "yes", "no")) {
+    stop(name, " must be true/false, yes/no, or 1/0.")
+  }
+  value %in% c("true", "1", "yes")
+}
+
+RAW_DIR <- Sys.getenv(
+  "ADNI_RAW_DIR", unset = file.path(PROJECT_DIR, "raw-data")
+)
+OUTPUT_DIR <- Sys.getenv(
+  "ADNI_TOLEDO_DATA_DIR", unset = file.path(PROJECT_DIR, "local-data")
+)
+STRICT_FROZEN <- env_flag("ADNI_STRICT_FROZEN", TRUE)
+
+if (!dir.exists(RAW_DIR)) {
+  stop(
+    "ADNI raw-data directory not found: ", RAW_DIR, "\n",
+    "Set ADNI_RAW_DIR to the investigator's secure local ADNI download directory."
+  )
+}
+dir.create(OUTPUT_DIR, recursive = TRUE, showWarnings = FALSE)
+RAW_DIR <- normalizePath(RAW_DIR)
+OUTPUT_DIR <- normalizePath(OUTPUT_DIR)
+
+cat("Raw directory:", RAW_DIR, "\n")
+cat("Local derived-data directory:", OUTPUT_DIR, "\n")
+cat("Strict frozen reproduction:", STRICT_FROZEN, "\n")
+```
+
+## Input discovery and validation helpers
+
+The environment-variable overrides below are optional. They are useful if the
+raw directory contains multiple versions of the same ADNI table:
+
+```text
+ADNI_PLASMA_FILE
+ADNI_PET_FILE
+ADNI_DIAGNOSIS_FILE
+ADNI_DEMOGRAPHICS_FILE
+ADNI_APOE_FILE
+ADNI_CSF_FILE
+```
+
+Each override should point to the exact local CSV, RDA, or ZIP file. When a ZIP
+is supplied, the notebook selects the member beginning with the corresponding
+stable table name.
+
+```{r input-helpers}
+escape_regex <- function(x) {
+  gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", x)
+}
+
+stable_file_pattern <- function(stem, extension = "csv|rda") {
+  ## Match the stable IDA name or the usual DDMonYYYY export suffix. This
+  ## deliberately rejects project-derived files such as *_baseline_selected.csv.
+  paste0(
+    "^", escape_regex(stem),
+    "(?:_[0-9]{2}[A-Za-z]{3}[0-9]{4})?\\.(", extension, ")$"
+  )
+}
+
+zip_candidate <- function(zip_path, stem) {
+  listing <- utils::unzip(zip_path, list = TRUE)$Name
+  hit <- listing[grepl(
+    stable_file_pattern(stem, "csv"), basename(listing), ignore.case = TRUE
+  )]
+  if (!length(hit)) return(NULL)
+  if (length(hit) > 1L) {
+    stop(
+      "ZIP contains multiple candidates for ", stem, ": ", zip_path, "\n",
+      paste(hit, collapse = "\n")
+    )
+  }
+  list(path = zip_path, member = hit[[1L]], kind = "zip_csv")
+}
+
+discover_source <- function(stem, override_env) {
+  override <- Sys.getenv(override_env, unset = "")
+  if (nzchar(override)) {
+    if (!file.exists(override)) stop(override_env, " does not exist: ", override)
+    override <- normalizePath(override)
+    if (grepl("\\.zip$", override, ignore.case = TRUE)) {
+      answer <- zip_candidate(override, stem)
+      if (is.null(answer)) stop("No ", stem, " CSV found inside ", override)
+      return(answer)
+    }
+    kind <- if (grepl("\\.csv$", override, ignore.case = TRUE)) {
+      "csv"
+    } else if (grepl("\\.rda$", override, ignore.case = TRUE)) {
+      "rda"
+    } else {
+      stop(override_env, " must identify a CSV, RDA, or ZIP file.")
+    }
+    return(list(path = override, member = NA_character_, kind = kind))
+  }
+
+  files <- list.files(RAW_DIR, recursive = TRUE, full.names = TRUE)
+  direct_csv <- files[
+    grepl(stable_file_pattern(stem, "csv"), basename(files), ignore.case = TRUE)
+  ]
+  direct_rda <- files[
+    grepl(stable_file_pattern(stem, "rda"), basename(files), ignore.case = TRUE)
+  ]
+  zip_files <- files[grepl("\\.zip$", files, ignore.case = TRUE)]
+  inside_zip <- Filter(Negate(is.null), lapply(zip_files, zip_candidate, stem = stem))
+
+  candidates <- c(
+    lapply(direct_csv, function(x) list(path = x, member = NA_character_, kind = "csv")),
+    inside_zip,
+    lapply(direct_rda, function(x) list(path = x, member = NA_character_, kind = "rda"))
+  )
+  if (!length(candidates)) {
+    stop(
+      "Could not find ADNI table ", stem, " under ", RAW_DIR, ".\n",
+      "Download it from IDA or set ", override_env, " to its exact path."
+    )
+  }
+
+  ## Prefer CSV over compatibility RDA. If there is more than one candidate at
+  ## the best available level, require an explicit file override instead of
+  ## silently mixing ADNI snapshots.
+  rank <- vapply(candidates, function(x) {
+    switch(x$kind, csv = 1L, zip_csv = 2L, rda = 3L)
+  }, integer(1))
+  candidates <- candidates[rank == min(rank)]
+  if (length(candidates) > 1L) {
+    labels <- vapply(candidates, function(x) {
+      paste0(x$path, if (!is.na(x$member)) paste0("::", x$member) else "")
+    }, character(1))
+    stop(
+      "Multiple equally preferred sources found for ", stem, ".\n",
+      "Set ", override_env, " to one exact file:\n", paste(labels, collapse = "\n")
+    )
+  }
+  candidates[[1L]]
+}
+
+read_source <- function(source, stem) {
+  if (source$kind == "csv") {
+    out <- utils::read.csv(
+      source$path, stringsAsFactors = FALSE, check.names = FALSE
+    )
+  } else if (source$kind == "zip_csv") {
+    out <- utils::read.csv(
+      unz(source$path, source$member),
+      stringsAsFactors = FALSE, check.names = FALSE
+    )
+  } else {
+    env <- new.env(parent = emptyenv())
+    loaded <- load(source$path, envir = env)
+    object_name <- if (stem %in% loaded) stem else loaded[[1L]]
+    out <- as.data.frame(env[[object_name]], stringsAsFactors = FALSE)
+  }
+  out
+}
+
+require_columns <- function(data, columns, label) {
+  missing <- setdiff(columns, names(data))
+  if (length(missing)) {
+    stop(label, " is missing required columns: ", paste(missing, collapse = ", "))
+  }
+  invisible(data)
+}
+
+parse_adni_date <- function(x) {
+  if (inherits(x, "Date")) return(x)
+  x <- trimws(as.character(x))
+  x[x %in% c("", "NA", "N/A")] <- NA_character_
+  out <- as.Date(rep(NA_character_, length(x)))
+  for (fmt in c("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y")) {
+    use <- is.na(out) & !is.na(x)
+    out[use] <- as.Date(x[use], format = fmt)
+  }
+  out
+}
+
+parse_month_year_midpoint <- function(x) {
+  if (inherits(x, "Date")) return(x)
+  x <- trimws(as.character(x))
+  out <- as.Date(rep(NA_character_, length(x)))
+  mm_yyyy <- grepl("^[0-9]{1,2}/[0-9]{4}$", x)
+  out[mm_yyyy] <- as.Date(paste0("15/", x[mm_yyyy]), format = "%d/%m/%Y")
+  yyyy_mm <- grepl("^[0-9]{4}-[0-9]{1,2}$", x)
+  out[yyyy_mm] <- as.Date(paste0(x[yyyy_mm], "-15"), format = "%Y-%m-%d")
+  full <- is.na(out) & !is.na(x)
+  out[full] <- parse_adni_date(x[full])
+  out
+}
+
+as_numeric <- function(x) suppressWarnings(as.numeric(as.character(x)))
+
+nearest_match <- function(anchor, measure, anchor_date = "anchor_date",
+                          measure_date = "measure_date", lower = -183L,
+                          upper = 183L, label, value_names = "value") {
+  paired <- merge(
+    anchor[, c("row_id", "RID", anchor_date)], measure, by = "RID"
+  )
+  paired$delta_days <- as.numeric(paired[[measure_date]] - paired[[anchor_date]])
+  paired <- paired[
+    paired$delta_days >= lower & paired$delta_days <= upper,
+    , drop = FALSE
+  ]
+  paired <- paired[
+    order(paired$row_id, abs(paired$delta_days), paired[[measure_date]]),
+    , drop = FALSE
+  ]
+  paired <- paired[
+    !duplicated(paired$row_id),
+    c("row_id", measure_date, value_names, "delta_days"),
+    drop = FALSE
+  ]
+  names(paired)[2L] <- paste0(label, "_date")
+  names(paired)[match(value_names, names(paired))] <- paste0(label, "_", value_names)
+  names(paired)[ncol(paired)] <- paste0(label, "_delta_days")
+  paired
+}
+
+atomic_write_csv <- function(data, path) {
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  tmp <- tempfile(paste0(basename(path), "-"), tmpdir = dirname(path))
+  on.exit(if (file.exists(tmp)) unlink(tmp), add = TRUE)
+  utils::write.csv(data, tmp, row.names = FALSE)
+  if (!file.rename(tmp, path)) stop("Could not publish ", path)
+  invisible(path)
+}
+```
+
+## Load the six authorized raw tables
+
+No participant rows are printed in this report.
+
+```{r load-inputs}
+specs <- list(
+  plasma = list(
+    stem = "UPENN_PLASMA_FUJIREBIO_QUANTERIX",
+    env = "ADNI_PLASMA_FILE",
+    columns = c("RID", "EXAMDATE", "pT217_F", "pT217_AB42_F",
+                "AB42_AB40_F", "GFAP_Q")
+  ),
+  pet = list(
+    stem = "UCBERKELEY_AMY_6MM", env = "ADNI_PET_FILE",
+    columns = c("RID", "SCANDATE", "CENTILOIDS", "SUMMARY_SUVR",
+                "TRACER", "qc_flag")
+  ),
+  diagnosis = list(
+    stem = "DXSUM", env = "ADNI_DIAGNOSIS_FILE",
+    columns = c("RID", "EXAMDATE", "DIAGNOSIS")
+  ),
+  demographics = list(
+    stem = "PTDEMOG", env = "ADNI_DEMOGRAPHICS_FILE",
+    columns = c("RID", "VISDATE", "PTGENDER", "PTEDUCAT", "PTDOB")
+  ),
+  apoe = list(
+    stem = "APOERES", env = "ADNI_APOE_FILE",
+    columns = c("RID", "GENOTYPE")
+  ),
+  csf = list(
+    stem = "UPENNBIOMK_ROCHE_ELECSYS", env = "ADNI_CSF_FILE",
+    columns = c("RID", "EXAMDATE", "ABETA42", "BATCH")
+  )
+)
+
+sources <- lapply(specs, function(x) discover_source(x$stem, x$env))
+tables <- Map(function(source, spec) {
+  data <- read_source(source, spec$stem)
+  require_columns(data, spec$columns, spec$stem)
+  data
+}, sources, specs)
+
+source_manifest <- do.call(rbind, lapply(names(sources), function(name) {
+  source <- sources[[name]]
+  info <- file.info(source$path)
+  data.frame(
+    role = name,
+    stable_table = specs[[name]]$stem,
+    local_file = basename(source$path),
+    archive_member = if (is.na(source$member)) "" else source$member,
+    file_bytes = info$size,
+    file_md5 = unname(tools::md5sum(source$path)),
+    rows_read = nrow(tables[[name]]),
+    stringsAsFactors = FALSE
+  )
+}))
+atomic_write_csv(
+  source_manifest,
+  file.path(OUTPUT_DIR, "toledo_adni_raw_source_manifest_LOCAL_ONLY.csv")
+)
+
+cat("Validated six raw ADNI tables.\n")
+cat("Raw rows by table:\n")
+print(source_manifest[, c("stable_table", "rows_read")], row.names = FALSE)
+```
+
+## Build the Toledo analysis cohort
+
+The construction order reproduces the original frozen analysis:
+
+1. use the plasma visit as the temporal anchor;
+2. match the nearest QC-passed amyloid PET scan within +/-183 days;
+3. match the nearest diagnosis to PET within +/-183 days;
+4. attach demographics and APOE4 dose;
+5. retain the closest eligible plasma-PET landmark per RID **before** reading
+   CSF availability;
+6. define observed `U` as Roche Elecsys CSF Aβ42 within +/-30 days of PET;
+7. retain florbetapir (`FBP`) PET only;
+8. derive plasma Aβ42/Aβ40 and GFAP tertiles from the complete n=495 cohort
+   without using `Y`, `U`, or `R`.
+
+```{r construct-cohort}
+plasma0 <- tables$plasma
+anchor <- data.frame(
+  RID = as.integer(as_numeric(plasma0$RID)),
+  anchor_date = parse_adni_date(plasma0$EXAMDATE),
+  plasma_ptau217 = as_numeric(plasma0$pT217_F),
+  plasma_ptau217_ab42 = as_numeric(plasma0$pT217_AB42_F),
+  stringsAsFactors = FALSE
+)
+anchor <- anchor[
+  complete.cases(anchor) & anchor$plasma_ptau217 > 0 &
+    anchor$plasma_ptau217_ab42 > 0,
+  , drop = FALSE
+]
+anchor$c_ptau217_3 <- as.integer(cut(
+  anchor$plasma_ptau217,
+  breaks = c(-Inf, 0.128, 0.299, Inf),
+  labels = 1:3, ordered_result = TRUE
+))
+anchor$c_ptau217_ab42_3 <- as.integer(cut(
+  anchor$plasma_ptau217_ab42,
+  breaks = c(-Inf, 0.0055, 0.0086, Inf),
+  labels = 1:3, ordered_result = TRUE
+))
+anchor$row_id <- seq_len(nrow(anchor))
+
+## Keep these two continuous plasma measurements for the final ordinal proxies.
+plasma_proxy <- data.frame(
+  RID = as.integer(as_numeric(plasma0$RID)),
+  anchor_date = parse_adni_date(plasma0$EXAMDATE),
+  plasma_ab42_ab40 = as_numeric(plasma0$AB42_AB40_F),
+  plasma_gfap = as_numeric(plasma0$GFAP_Q),
+  stringsAsFactors = FALSE
+)
+plasma_proxy <- plasma_proxy[
+  !duplicated(plasma_proxy[, c("RID", "anchor_date")]),
+  , drop = FALSE
+]
+
+pet0 <- tables$pet
+pet <- data.frame(
+  RID = as.integer(as_numeric(pet0$RID)),
+  measure_date = parse_adni_date(pet0$SCANDATE),
+  centiloid = as_numeric(pet0$CENTILOIDS),
+  summary_suvr = as_numeric(pet0$SUMMARY_SUVR),
+  tracer = as.character(pet0$TRACER),
+  qc_flag = as.integer(as_numeric(pet0$qc_flag)),
+  stringsAsFactors = FALSE
+)
+pet <- pet[
+  pet$qc_flag == 2L & is.finite(pet$centiloid) & !is.na(pet$measure_date),
+  , drop = FALSE
+]
+pet_match <- nearest_match(
+  anchor, pet, label = "pet",
+  value_names = c("centiloid", "summary_suvr", "tracer")
+)
+parent <- merge(anchor, pet_match, by = "row_id")
+names(parent)[names(parent) == "pet_centiloid"] <- "y_centiloid"
+names(parent)[names(parent) == "pet_summary_suvr"] <- "y_summary_suvr"
+names(parent)[names(parent) == "pet_tracer"] <- "tracer"
+
+diagnosis0 <- tables$diagnosis
+diagnosis <- data.frame(
+  RID = as.integer(as_numeric(diagnosis0$RID)),
+  measure_date = parse_adni_date(diagnosis0$EXAMDATE),
+  value = as.integer(as_numeric(diagnosis0$DIAGNOSIS)),
+  stringsAsFactors = FALSE
+)
+diagnosis <- diagnosis[
+  diagnosis$value %in% 1:3 & !is.na(diagnosis$measure_date),
+  , drop = FALSE
+]
+diagnosis_match <- nearest_match(
+  parent, diagnosis, anchor_date = "pet_date", label = "diagnosis"
+)
+parent <- merge(parent, diagnosis_match, by = "row_id")
+names(parent)[names(parent) == "diagnosis_value"] <- "diagnosis_code"
+
+demographics0 <- tables$demographics
+demographics <- data.frame(
+  RID = as.integer(as_numeric(demographics0$RID)),
+  VISDATE = parse_adni_date(demographics0$VISDATE),
+  PTGENDER = as.integer(as_numeric(demographics0$PTGENDER)),
+  PTEDUCAT = as_numeric(demographics0$PTEDUCAT),
+  PTDOB = as.character(demographics0$PTDOB),
+  stringsAsFactors = FALSE
+)
+demographics <- demographics[
+  demographics$PTGENDER %in% c(1L, 2L) &
+    is.finite(demographics$PTEDUCAT) & !is.na(demographics$PTDOB),
+  , drop = FALSE
+]
+demographics <- demographics[order(demographics$RID, demographics$VISDATE), ]
+demographics <- demographics[
+  !duplicated(demographics$RID),
+  c("RID", "PTGENDER", "PTEDUCAT", "PTDOB"),
+  drop = FALSE
+]
+parent <- merge(parent, demographics, by = "RID")
+birth_midmonth <- parse_month_year_midpoint(parent$PTDOB)
+parent$x_age_years <- as.numeric(parent$pet_date - birth_midmonth) / 365.25
+parent$x_female <- as.integer(parent$PTGENDER == 2L)
+parent$x_education_years <- parent$PTEDUCAT
+
+apoe0 <- tables$apoe
+apoe <- data.frame(
+  RID = as.integer(as_numeric(apoe0$RID)),
+  GENOTYPE = as.character(apoe0$GENOTYPE),
+  stringsAsFactors = FALSE
+)
+apoe <- apoe[!is.na(apoe$GENOTYPE) & nzchar(apoe$GENOTYPE), , drop = FALSE]
+apoe <- apoe[!duplicated(apoe$RID), , drop = FALSE]
+apoe$x_apoe4_dose <- lengths(regmatches(
+  apoe$GENOTYPE, gregexpr("4", apoe$GENOTYPE)
+))
+parent <- merge(parent, apoe, by = "RID")
+
+required <- c(
+  "y_centiloid", "x_age_years", "x_female", "x_apoe4_dose",
+  "c_ptau217_3", "c_ptau217_ab42_3", "diagnosis_code"
+)
+parent <- parent[
+  apply(parent[, required, drop = FALSE], 1L, function(x) all(is.finite(x))),
+  , drop = FALSE
+]
+
+## This is the important no-selection-on-U step: choose one landmark per RID
+## before CSF is read or R is defined.
+parent <- parent[
+  order(parent$RID, abs(parent$pet_delta_days), parent$pet_date),
+  , drop = FALSE
+]
+parent <- parent[!duplicated(parent$RID), , drop = FALSE]
+parent$row_id <- seq_len(nrow(parent))
+
+csf0 <- tables$csf
+csf <- data.frame(
+  RID = as.integer(as_numeric(csf0$RID)),
+  measure_date = parse_adni_date(csf0$EXAMDATE),
+  abeta42 = as_numeric(csf0$ABETA42),
+  batch = as.character(csf0$BATCH),
+  stringsAsFactors = FALSE
+)
+csf <- csf[
+  is.finite(csf$abeta42) & csf$abeta42 > 0 & !is.na(csf$measure_date),
+  , drop = FALSE
+]
+csf_match <- nearest_match(
+  parent, csf, anchor_date = "pet_date", lower = -30L, upper = 30L,
+  label = "u_csf", value_names = c("abeta42", "batch")
+)
+cohort <- merge(parent, csf_match, by = "row_id", all.x = TRUE)
+cohort$u_log_csf_abeta42 <- log(cohort$u_csf_abeta42)
+cohort$R <- as.integer(is.finite(cohort$u_csf_abeta42))
+cohort$tracer_fbp <- as.integer(toupper(cohort$tracer) == "FBP")
+
+keep <- c(
+  "RID", "anchor_date", "pet_date", "tracer", "tracer_fbp",
+  "y_centiloid", "y_summary_suvr", "R", "u_csf_abeta42",
+  "u_log_csf_abeta42", "u_csf_batch", "c_ptau217_3",
+  "c_ptau217_ab42_3", "plasma_ptau217", "plasma_ptau217_ab42",
+  "x_age_years", "x_female", "x_education_years", "x_apoe4_dose",
+  "diagnosis_code", "GENOTYPE", "pet_delta_days", "u_csf_date",
+  "u_csf_delta_days"
+)
+cohort <- cohort[order(cohort$RID), keep]
+cohort <- cohort[cohort$tracer_fbp == 1L, , drop = FALSE]
+cohort$diagnosis <- c(`1` = "CN", `2` = "MCI", `3` = "Dementia")[
+  as.character(cohort$diagnosis_code)
+]
+
+cohort <- merge(
+  cohort, plasma_proxy, by = c("RID", "anchor_date"), all.x = TRUE,
+  sort = FALSE
+)
+cohort <- cohort[order(cohort$RID), , drop = FALSE]
+if (any(!is.finite(cohort$plasma_ab42_ab40)) ||
+    any(!is.finite(cohort$plasma_gfap)) ||
+    any(cohort$plasma_ab42_ab40 <= 0) || any(cohort$plasma_gfap <= 0)) {
+  stop("Eligible cohort contains missing/invalid plasma Aβ42/Aβ40 or GFAP values.")
+}
+
+## Exploratory ordered measurements: complete-cohort marginal tertiles only.
+## Y, U, and R do not enter the cutpoint calculation.
+ab42_ab40_cutpoints <- unname(stats::quantile(
+  cohort$plasma_ab42_ab40, c(1 / 3, 2 / 3)
+))
+gfap_cutpoints <- unname(stats::quantile(
+  cohort$plasma_gfap, c(1 / 3, 2 / 3)
+))
+cohort$c_ab42_ab40_3 <- as.integer(cut(
+  cohort$plasma_ab42_ab40,
+  c(-Inf, ab42_ab40_cutpoints, Inf),
+  labels = 1:3, ordered_result = TRUE
+))
+cohort$c_gfap_3 <- as.integer(cut(
+  cohort$plasma_gfap,
+  c(-Inf, gfap_cutpoints, Inf),
+  labels = 1:3, ordered_result = TRUE
+))
+
+## Preserve the byte-level schema of the frozen file. In the historical
+## two-stage pipeline anchor_date was re-parsed as Date, whereas pet_date and
+## u_csf_date remained ISO character columns after an intermediate CSV read.
+cohort$pet_date <- as.character(cohort$pet_date)
+cohort$u_csf_date <- as.character(cohort$u_csf_date)
+
+cohort_file <- file.path(OUTPUT_DIR, "toledo_adni_cohort_n495.csv")
+atomic_write_csv(cohort, cohort_file)
+
+cohort_summary <- data.frame(
+  n = nrow(cohort),
+  observed_U = sum(cohort$R == 1L),
+  missing_U = sum(cohort$R == 0L),
+  missing_fraction = mean(cohort$R == 0L),
+  ab42_ab40_tertile_1 = ab42_ab40_cutpoints[[1L]],
+  ab42_ab40_tertile_2 = ab42_ab40_cutpoints[[2L]],
+  gfap_tertile_1 = gfap_cutpoints[[1L]],
+  gfap_tertile_2 = gfap_cutpoints[[2L]],
+  cohort_md5 = unname(tools::md5sum(cohort_file)),
+  stringsAsFactors = FALSE
+)
+
+if (STRICT_FROZEN) {
+  stopifnot(
+    nrow(cohort) == 495L,
+    !anyDuplicated(cohort$RID),
+    sum(cohort$R == 1L) == 133L,
+    all.equal(ab42_ab40_cutpoints, c(0.0782, 0.0883333333333333),
+              tolerance = 1e-12) == TRUE,
+    all.equal(gfap_cutpoints, c(127.966666666667, 215.9),
+              tolerance = 1e-10) == TRUE
+  )
+}
+
+cat("Cohort constructed. Aggregate summary only:\n")
+print(cohort_summary, row.names = FALSE)
+```
+
+## Construct the frozen balanced 3 repeats x 3 folds
+
+This is the exact balance-only procedure used for the current `balanced-v2`
+split. It never fits a prediction model and never selects a split based on
+held-out predictive performance.
+
+Each fold has exactly 165 participants. Balance targets include diagnosis,
+natural U availability, outcome range, sex, APOE4 dose, the two-proxy joint
+cells, age, observed-U range, and coarse observed-U/amyloid-PET curve regions.
+The use of `Y` and observed `U` here is only for allocation balance; it does not
+change cohort membership and does not evaluate a fitted model.
+
+```{r construct-folds}
+cohort <- cohort[order(cohort$RID), , drop = FALSE]
+n <- nrow(cohort)
+r1 <- cohort$R == 1L
+r0 <- !r1
+
+bin_rank <- function(x, k) {
+  pmin(k, pmax(1L, ceiling(rank(x, ties.method = "average") / length(x) * k)))
+}
+one_hot <- function(x, prefix) {
+  matrix <- stats::model.matrix(~ factor(x) - 1L)
+  colnames(matrix) <- paste0(prefix, seq_len(ncol(matrix)))
+  matrix
+}
+zscore <- function(x) as.numeric(scale(x))
+
+blocks <- list()
+block_weights <- list()
+add_block <- function(x, weight) {
+  blocks[[length(blocks) + 1L]] <<- as.matrix(x)
+  block_weights[[length(block_weights) + 1L]] <<- rep(
+    weight, ncol(as.matrix(x))
+  )
+}
+
+add_block(one_hot(cohort$diagnosis_code, "diagnosis_"), 3)
+add_block(one_hot(interaction(cohort$diagnosis_code, cohort$R), "diagnosis_R_"), 3)
+add_block(one_hot(bin_rank(cohort$y_centiloid, 5L), "Yq5_"), 3)
+add_block(one_hot(cohort$x_female, "sex_"), 1.5)
+add_block(one_hot(cohort$x_apoe4_dose, "apoe_"), 2)
+add_block(one_hot(interaction(
+  cohort$c_ab42_ab40_3, cohort$c_gfap_3
+), "Ccell_"), 2)
+add_block(cbind(
+  age_z = zscore(cohort$x_age_years),
+  Y_z = zscore(cohort$y_centiloid),
+  Y_z2 = zscore(cohort$y_centiloid)^2
+), 1)
+
+u_q5 <- integer(n)
+u_q5[r1] <- bin_rank(cohort$u_csf_abeta42[r1], 5L)
+y_q3_r1 <- integer(n)
+y_q3_r1[r1] <- bin_rank(cohort$y_centiloid[r1], 3L)
+u_q3 <- integer(n)
+u_q3[r1] <- bin_rank(cohort$u_csf_abeta42[r1], 3L)
+
+r1_uq <- matrix(0, n, 5L)
+r1_uq[cbind(which(r1), u_q5[r1])] <- 1
+colnames(r1_uq) <- paste0("R1_Uq5_", 1:5)
+add_block(r1_uq, 5)
+
+r1_curve <- matrix(0, n, 9L)
+curve_id <- (u_q3[r1] - 1L) * 3L + y_q3_r1[r1]
+r1_curve[cbind(which(r1), curve_id)] <- 1
+colnames(r1_curve) <- paste0("R1_UxY_region_", 1:9)
+add_block(r1_curve, 4)
+
+cell_id <- (cohort$c_ab42_ab40_3 - 1L) * 3L + cohort$c_gfap_3
+r1_cell <- matrix(0, n, 9L)
+r1_cell[cbind(which(r1), cell_id[r1])] <- 1
+colnames(r1_cell) <- paste0("R1_Ccell_", 1:9)
+add_block(r1_cell, 6)
+
+r0_cell <- matrix(0, n, 9L)
+r0_cell[cbind(which(r0), cell_id[r0])] <- 1
+colnames(r0_cell) <- paste0("R0_Ccell_", 1:9)
+add_block(r0_cell, 3)
+
+u_z <- numeric(n)
+u_z[r1] <- zscore(cohort$u_csf_abeta42[r1])
+y_r1_z <- numeric(n)
+y_r1_z[r1] <- zscore(cohort$y_centiloid[r1])
+add_block(cbind(
+  R1_U_z = u_z, R1_U_z2 = u_z^2,
+  R1_Y_z = y_r1_z, R1_UxY = u_z * y_r1_z
+), 2)
+
+feature <- do.call(cbind, blocks)
+weight <- unlist(block_weights, use.names = FALSE)
+target <- colSums(feature) / 3
+feature_scale <- pmax(
+  1,
+  sqrt(colSums((feature - rep(colMeans(feature), each = n))^2) / 3)
+)
+contribution <- function(sums) {
+  sum(weight * ((sums - target) / feature_scale)^2)
+}
+
+make_initial <- function(seed, repeat_id) {
+  set.seed(seed)
+  assignment <- integer(n)
+  r1_counts <- c(45L, 44L, 44L)[
+    ((seq_len(3L) + repeat_id - 2L) %% 3L) + 1L
+  ]
+  r0_counts <- 165L - r1_counts
+  assignment[sample(which(r1))] <- rep(1:3, r1_counts)
+  assignment[sample(which(r0))] <- rep(1:3, r0_counts)
+  assignment
+}
+
+improve <- function(assignment, seed, attempts = 100000L) {
+  set.seed(seed)
+  sums <- do.call(rbind, lapply(1:3, function(k) {
+    colSums(feature[assignment == k, , drop = FALSE])
+  }))
+  score <- sum(vapply(1:3, function(k) contribution(sums[k, ]), numeric(1)))
+  best <- assignment
+  best_score <- score
+  pools <- list(which(r0), which(r1))
+
+  for (step in seq_len(attempts)) {
+    pool <- pools[[sample.int(2L, 1L)]]
+    pair <- sample(pool, 2L)
+    a <- assignment[pair[1L]]
+    b <- assignment[pair[2L]]
+    if (a == b) next
+    old <- contribution(sums[a, ]) + contribution(sums[b, ])
+    delta <- feature[pair[2L], ] - feature[pair[1L], ]
+    new_a <- sums[a, ] + delta
+    new_b <- sums[b, ] - delta
+    new <- contribution(new_a) + contribution(new_b)
+    temperature <- 0.02 * (1 - step / attempts)
+    if (new <= old || stats::runif(1) < exp(
+      (old - new) / max(temperature, 1e-8)
+    )) {
+      assignment[pair] <- assignment[rev(pair)]
+      sums[a, ] <- new_a
+      sums[b, ] <- new_b
+      score <- score + new - old
+      if (score < best_score) {
+        best <- assignment
+        best_score <- score
+      }
+    }
+  }
+  list(fold = best, score = best_score)
+}
+
+adjusted_rand <- function(a, b) {
+  table_ab <- table(a, b)
+  choose2 <- function(x) x * (x - 1) / 2
+  index <- sum(choose2(table_ab))
+  row_sum <- sum(choose2(rowSums(table_ab)))
+  column_sum <- sum(choose2(colSums(table_ab)))
+  total <- choose2(length(a))
+  expected <- row_sum * column_sum / total
+  (index - expected) / ((row_sum + column_sum) / 2 - expected)
+}
+
+RNGkind("Mersenne-Twister", "Inversion", "Rejection")
+candidate_pool <- vector("list", 3L)
+for (repeat_id in 1:3) {
+  candidates <- vector("list", 12L)
+  for (candidate_id in seq_along(candidates)) {
+    seed <- 202609170L + 10000L * repeat_id + candidate_id
+    candidates[[candidate_id]] <- improve(
+      make_initial(seed, repeat_id), seed + 500000L
+    )
+  }
+  candidate_pool[[repeat_id]] <- candidates
+}
+
+selected <- vector("list", 3L)
+scores_1 <- vapply(candidate_pool[[1L]], `[[`, numeric(1), "score")
+selected[[1L]] <- candidate_pool[[1L]][[which.min(scores_1)]]
+for (repeat_id in 2:3) {
+  scores <- vapply(candidate_pool[[repeat_id]], `[[`, numeric(1), "score")
+  eligible <- which(scores <= min(scores) * 1.10)
+  diversity <- vapply(eligible, function(candidate_id) {
+    max(vapply(selected[seq_len(repeat_id - 1L)], function(old) {
+      abs(adjusted_rand(
+        old$fold, candidate_pool[[repeat_id]][[candidate_id]]$fold
+      ))
+    }, numeric(1)))
+  }, numeric(1))
+  selected[[repeat_id]] <- candidate_pool[[repeat_id]][[
+    eligible[which.min(diversity)]
+  ]]
+}
+
+folds <- do.call(rbind, lapply(1:3, function(repeat_id) {
+  data.frame(
+    repeat_id = repeat_id,
+    RID = cohort$RID,
+    fold = selected[[repeat_id]]$fold
+  )
+}))
+folds <- folds[order(folds$repeat_id, folds$RID), , drop = FALSE]
+
+fold_audit <- list()
+audit_index <- 0L
+for (repeat_id in 1:3) for (fold_id in 1:3) {
+  ids <- folds$RID[folds$repeat_id == repeat_id & folds$fold == fold_id]
+  test <- cohort[cohort$RID %in% ids, , drop = FALSE]
+  train_r1 <- cohort[!cohort$RID %in% ids & cohort$R == 1L, , drop = FALSE]
+  test_r1 <- test[test$R == 1L, , drop = FALSE]
+  train_cell <- table(factor(
+    cell_id[match(train_r1$RID, cohort$RID)], levels = 1:9
+  ))
+  audit_index <- audit_index + 1L
+  fold_audit[[audit_index]] <- data.frame(
+    repeat_id = repeat_id,
+    fold = fold_id,
+    test_n = nrow(test),
+    test_R1 = sum(test$R == 1L),
+    train_R1 = nrow(train_r1),
+    age_SMD = (mean(test$x_age_years) - mean(cohort$x_age_years)) /
+      stats::sd(cohort$x_age_years),
+    Y_SMD = (mean(test$y_centiloid) - mean(cohort$y_centiloid)) /
+      stats::sd(cohort$y_centiloid),
+    U_SMD_R1 = (mean(test_r1$u_csf_abeta42) -
+                  mean(cohort$u_csf_abeta42[r1])) /
+      stats::sd(cohort$u_csf_abeta42[r1]),
+    min_train_R1_Ccell = min(train_cell),
+    stringsAsFactors = FALSE
+  )
+}
+fold_audit <- do.call(rbind, fold_audit)
+
+repeat_diversity <- data.frame(
+  repeat_a = c(1L, 1L, 2L),
+  repeat_b = c(2L, 3L, 3L),
+  adjusted_rand = c(
+    adjusted_rand(selected[[1L]]$fold, selected[[2L]]$fold),
+    adjusted_rand(selected[[1L]]$fold, selected[[3L]]$fold),
+    adjusted_rand(selected[[2L]]$fold, selected[[3L]]$fold)
+  )
+)
+
+fold_file <- file.path(
+  OUTPUT_DIR, "toledo_adni_balanced_repeated_3fold.csv"
+)
+atomic_write_csv(folds, fold_file)
+atomic_write_csv(
+  fold_audit,
+  file.path(OUTPUT_DIR, "toledo_adni_fold_balance_summary_LOCAL_ONLY.csv")
+)
+atomic_write_csv(
+  repeat_diversity,
+  file.path(OUTPUT_DIR, "toledo_adni_repeat_diversity_LOCAL_ONLY.csv")
+)
+
+stopifnot(
+  nrow(folds) == 3L * nrow(cohort),
+  !anyDuplicated(folds[, c("repeat_id", "RID")]),
+  all(table(folds$repeat_id) == nrow(cohort)),
+  setequal(folds$fold, 1:3)
+)
+if (STRICT_FROZEN) {
+  stopifnot(
+    nrow(folds) == 1485L,
+    all(table(folds$repeat_id, folds$fold) == 165L),
+    all(fold_audit$test_R1 %in% 44:45),
+    all(fold_audit$train_R1 %in% 88:89),
+    all(fold_audit$min_train_R1_Ccell >= 2L),
+    max(abs(repeat_diversity$adjusted_rand)) < 0.01
+  )
+}
+
+cat("Frozen fold construction completed. Aggregate audit only:\n")
+print(fold_audit, row.names = FALSE)
+cat("\nCross-repeat adjusted Rand indices:\n")
+print(repeat_diversity, row.names = FALSE)
+cat("\nFold file MD5:", unname(tools::md5sum(fold_file)), "\n")
+```
+
+## Final frozen-reproduction check and local manifest
+
+For the 01-Aug-2026 source snapshot, the expected output hashes are included as
+reproducibility checks. A hash mismatch is not repaired by editing the cohort or
+fold files manually. First check raw-table versions, column definitions, locale,
+and R version.
+
+```{r final-check}
+EXPECTED_COHORT_MD5 <- "d10b980253304620efea9f2a013166a9"
+EXPECTED_FOLD_MD5 <- "895a5759c7baf22e1771516c0aa84d70"
+cohort_md5 <- unname(tools::md5sum(cohort_file))
+fold_md5 <- unname(tools::md5sum(fold_file))
+
+if (STRICT_FROZEN && cohort_md5 != EXPECTED_COHORT_MD5) {
+  stop(
+    "The cohort passed structural checks but does not reproduce the frozen ",
+    "cohort byte-for-byte. Expected ", EXPECTED_COHORT_MD5,
+    "; obtained ", cohort_md5, ". Check the raw ADNI snapshot."
+  )
+}
+if (STRICT_FROZEN && fold_md5 != EXPECTED_FOLD_MD5) {
+  stop(
+    "The folds passed structural checks but do not reproduce the frozen split ",
+    "byte-for-byte. Expected ", EXPECTED_FOLD_MD5,
+    "; obtained ", fold_md5, ". Do not use these folds for the frozen run."
+  )
+}
+
+manifest_lines <- c(
+  paste0("created_at=", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z")),
+  paste0("strict_frozen=", STRICT_FROZEN),
+  "cohort_rule=plasma anchor; nearest QC-pass amyloid PET within 183 days; one closest FBP landmark per RID before CSF exposure",
+  "observed_U_rule=nearest Roche Elecsys CSF ABETA42 within 30 days of PET",
+  "proxy_rule=complete-cohort marginal tertiles; no Y/U/R in cutpoint calculation",
+  "fold_rule=balanced-v2; 3 repeats x 3 folds; balance/support only; no fitted-model performance",
+  paste0("cohort_n=", nrow(cohort)),
+  paste0("observed_U_n=", sum(cohort$R == 1L)),
+  paste0("cohort_md5=", cohort_md5),
+  paste0("fold_md5=", fold_md5),
+  paste0("R_version=", R.version.string)
+)
+writeLines(
+  manifest_lines,
+  file.path(OUTPUT_DIR, "toledo_adni_preprocessing_manifest_LOCAL_ONLY.txt")
+)
+
+cat("Frozen preprocessing reproduced successfully.\n")
+cat("Cohort:", cohort_file, "\n")
+cat("Folds:", fold_file, "\n")
+cat("Cohort MD5:", cohort_md5, "\n")
+cat("Fold MD5:", fold_md5, "\n")
+cat("Do not upload the generated files to Git or GitHub.\n")
+```
+
+## Session information
+
+The report records the local software environment but never prints participant
+rows.
+
+```{r session-info}
+sessionInfo()
+```

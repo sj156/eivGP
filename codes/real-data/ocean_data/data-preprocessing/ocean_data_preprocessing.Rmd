@@ -1,0 +1,612 @@
+---
+title: "Ocean Study 1: raw BCO-DMO data to the class-6 cohort"
+author: "EIV-GP project"
+output:
+  html_notebook:
+    toc: true
+    toc_depth: 2
+params:
+  raw_file: ""
+  output_dir: ""
+  source_split_seed: 20260730
+  calibration_seed: 20260805
+  class6_split_log_std: -1.5
+---
+
+This notebook is the reproducible data-preparation record for the Ocean
+application in the EIV-GP experiments. It reads the public BCO-DMO
+Dataset 3228 file `AllBottle.csv`, applies the frozen eligibility and
+deduplication rules, reconstructs the inherited train/test source-row split,
+and writes the six-class N/P cohort used by the current reports.
+
+The source dataset is available from the [BCO-DMO Dataset 3228 landing
+page](https://www.bco-dmo.org/dataset/3228). The page identifies the primary
+file as `AllBottle.csv` and licenses the dataset under CC-BY-4.0. Please retain
+that attribution when redistributing the processed subset. The raw file is
+not committed by this project; download it from BCO-DMO and pass its path in
+`params$raw_file` (or set `OCEAN_RAW_FILE`).
+
+## 1. Required raw file and fields
+
+Download **`AllBottle.csv` from BCO-DMO Dataset 3228** (“All bottle data …
+ECOHAB-PNW project”). The preparation needs the following raw columns:
+
+| Raw column(s) | Role in this cohort |
+|:--|:--|
+| `Cruise`, `Station`, `Survey`, `date`, `Event` | provenance retained in the output |
+| `depth`, `depthID`, `bottle` | shallow-water eligibility, deduplication, provenance |
+| `lon`, `lat` | retained location fields |
+| `NO3_NO2` | observed response (y=\mathrm{NO_3+NO_2}) and inherited split |
+| `H2PO4` | latent phosphate (u) and six ordinal classes (C) |
+| `SiO2` | retained for provenance; **not** an eligibility requirement here |
+| `temp1`, `temp2` | temperature, using `temp2` only as a valid fallback |
+| `sal1_corrected`, `sal2_corrected`, `sal1_uncorrected`, `sal2_uncorrected` | salinity, preferring corrected sensors |
+
+The code treats empty strings, `NA`, `NaN`, `nd`, and `ND` as missing. Numeric
+conversion and the sensor-fallback rules below reproduce the existing Ocean
+preparation scripts.
+
+## 2. Parameters and paths
+
+The default raw-file search includes the path used in the working project:
+`code/New-version/ocean_new/bcodmo_bounded_raw_nitrate_eivgp/data/raw/AllBottle.csv`.
+For a clean checkout, place the downloaded file there or provide an explicit
+path through `OCEAN_RAW_FILE` or `params$raw_file`. By default the output is
+written to the existing class-6 derived-data directory; set
+`OCEAN_OUTPUT_DIR` or `params$output_dir` to write elsewhere.
+
+```{r setup, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = TRUE)
+
+rmd_input <- knitr::current_input(dir = TRUE)
+if (is.null(rmd_input) || !length(rmd_input) || !nzchar(rmd_input)) {
+  rmd_input <- file.path("package-match", "notebooks", "ocean_data_preprocessing.Rmd")
+}
+rmd_dir <- dirname(normalizePath(rmd_input, mustWork = TRUE))
+repo_dir <- normalizePath(file.path(rmd_dir, "..", ".."), mustWork = TRUE)
+case_dir <- file.path(
+  repo_dir, "code", "New-version", "ocean_new",
+  "bcodmo_np_role_swap_class6_split_2026-08-05"
+)
+
+param_or_env <- function(param, env_name) {
+  if (!is.null(param) && length(param) == 1L && nzchar(as.character(param))) {
+    return(as.character(param))
+  }
+  value <- Sys.getenv(env_name, unset = "")
+  if (nzchar(value)) value else ""
+}
+
+raw_file <- param_or_env(params$raw_file, "OCEAN_RAW_FILE")
+if (!nzchar(raw_file)) {
+  raw_candidates <- c(
+    file.path(repo_dir, "code", "New-version", "ocean_new",
+              "bcodmo_bounded_raw_nitrate_eivgp", "data", "raw", "AllBottle.csv"),
+    file.path(case_dir, "data", "raw", "AllBottle.csv")
+  )
+  raw_file <- raw_candidates[file.exists(raw_candidates)][1L]
+}
+if (is.na(raw_file) || !file.exists(raw_file)) {
+  stop(
+    "AllBottle.csv was not found. Download BCO-DMO Dataset 3228 and set ",
+    "OCEAN_RAW_FILE=/path/to/AllBottle.csv or params$raw_file."
+  )
+}
+raw_file <- normalizePath(raw_file, mustWork = TRUE)
+
+output_dir <- param_or_env(params$output_dir, "OCEAN_OUTPUT_DIR")
+if (!nzchar(output_dir)) {
+  output_dir <- file.path(
+    case_dir, "data", "derived", "positive_primary_np_swap_class6"
+  )
+}
+output_dir <- normalizePath(output_dir, mustWork = FALSE)
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+audit_dir <- file.path(dirname(output_dir), "..", "audit")
+audit_dir <- normalizePath(audit_dir, mustWork = FALSE)
+calibration_dir <- file.path(dirname(output_dir), "..", "calibration_designs")
+calibration_dir <- normalizePath(calibration_dir, mustWork = FALSE)
+dir.create(audit_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(calibration_dir, recursive = TRUE, showWarnings = FALSE)
+
+source_split_seed <- as.integer(params$source_split_seed)
+calibration_seed <- as.integer(params$calibration_seed)
+class6_split_log_std <- as.numeric(params$class6_split_log_std)
+
+cat("Raw file:", raw_file, "\n")
+cat("Output directory:", output_dir, "\n")
+cat("Source-row split seed:", source_split_seed, "\n")
+cat("Calibration seed:", calibration_seed, "\n")
+```
+
+## 3. Read and normalize the raw BCO-DMO file
+
+Temperature uses `temp1` first and valid `temp2` as fallback. Salinity uses
+corrected sensors first, then uncorrected sensors. The valid ranges are the
+same conservative screening ranges used by the original preparation code.
+
+```{r read-raw}
+raw <- read.csv(
+  raw_file,
+  check.names = FALSE,
+  stringsAsFactors = FALSE,
+  na.strings = c("", "NA", "NaN", "nd", "ND")
+)
+
+required_raw <- c(
+  "Cruise", "Station", "Survey", "date", "Event", "depth", "depthID",
+  "lon", "lat", "NO3_NO2", "H2PO4", "SiO2", "bottle", "temp1", "temp2",
+  "sal1_corrected", "sal2_corrected", "sal1_uncorrected", "sal2_uncorrected"
+)
+missing_raw <- setdiff(required_raw, names(raw))
+if (length(missing_raw)) {
+  stop("AllBottle.csv is missing required column(s): ", paste(missing_raw, collapse = ", "))
+}
+
+as_num <- function(x) suppressWarnings(as.numeric(x))
+first_valid <- function(candidates, lower, upper) {
+  answer <- rep(NA_real_, length(candidates[[1L]]))
+  for (candidate in candidates) {
+    z <- as_num(candidate)
+    use <- !is.finite(answer) & is.finite(z) & z >= lower & z <= upper
+    answer[use] <- z[use]
+  }
+  answer
+}
+
+depth <- as_num(raw$depth)
+nitrate <- as_num(raw$NO3_NO2)
+phosphate <- as_num(raw$H2PO4)
+silicate <- as_num(raw$SiO2)
+temperature <- first_valid(list(raw$temp1, raw$temp2), -2, 35)
+salinity <- first_valid(
+  list(raw$sal1_corrected, raw$sal2_corrected,
+       raw$sal1_uncorrected, raw$sal2_uncorrected),
+  20, 40
+)
+
+raw_md5 <- unname(tools::md5sum(raw_file))
+cat("Raw rows:", nrow(raw), " | MD5:", raw_md5, "\n")
+```
+
+## 4. Eligibility, provenance, and deduplication
+
+The primary cohort is restricted to shallow samples (`depth <= 10` m),
+positive nitrate+nitrite, positive phosphate, and valid temperature/salinity.
+Unlike an earlier sensitivity workflow, `SiO2` is not used as a filter.
+Rows are deduplicated by `Cruise + depthID`; when `depthID` is missing, a
+stable raw-row fallback key is used. The original `source_row` is retained so
+the final split can be audited against the raw file.
+
+```{r eligibility}
+base_eligible <- (
+  is.finite(depth) & depth <= 10 &
+    is.finite(nitrate) & nitrate >= 0 &
+    is.finite(phosphate) & phosphate > 0 &
+    is.finite(temperature) & is.finite(salinity)
+)
+eligible_idx <- which(base_eligible)
+
+depth_id <- as.character(raw$depthID[eligible_idx])
+missing_depth_id <- is.na(depth_id) | !nzchar(depth_id)
+depth_id[missing_depth_id] <- paste0("source_row_", eligible_idx[missing_depth_id])
+
+pool0 <- data.frame(
+  source_row = eligible_idx,
+  record_key = paste(raw$Cruise[eligible_idx], depth_id, sep = "|"),
+  cruise = raw$Cruise[eligible_idx],
+  station = raw$Station[eligible_idx],
+  survey = raw$Survey[eligible_idx],
+  date = raw$date[eligible_idx],
+  event = raw$Event[eligible_idx],
+  depth_id = depth_id,
+  bottle = raw$bottle[eligible_idx],
+  depth_m = depth[eligible_idx],
+  longitude = as_num(raw$lon[eligible_idx]),
+  latitude = as_num(raw$lat[eligible_idx]),
+  NO3_NO2_uM = nitrate[eligible_idx],
+  H2PO4_uM = phosphate[eligible_idx],
+  SiO2_uM = silicate[eligible_idx],
+  x_temperature = temperature[eligible_idx],
+  x_salinity = salinity[eligible_idx],
+  stringsAsFactors = FALSE
+)
+
+duplicate_group_size <- ave(seq_len(nrow(pool0)), pool0$record_key, FUN = length)
+duplicate_flag <- duplicated(pool0$record_key)
+duplicate_audit <- pool0[duplicate_group_size > 1L, , drop = FALSE]
+duplicate_audit$duplicate_group_size <- duplicate_group_size[duplicate_group_size > 1L]
+duplicate_audit$kept_first_copy <- !duplicate_flag[duplicate_group_size > 1L]
+write.csv(duplicate_audit, file.path(audit_dir, "duplicate_records.csv"), row.names = FALSE)
+
+pool <- pool0[!duplicate_flag, , drop = FALSE]
+row.names(pool) <- NULL
+
+positive <- pool[pool$NO3_NO2_uM > 0, , drop = FALSE]
+row.names(positive) <- NULL
+
+## Descriptive consensus outlier flag inherited from the positive-primary
+## preparation. It is retained for audit only; flagged rows remain in the
+## primary cohort.
+global_fit <- lm(
+  H2PO4_uM ~ poly(NO3_NO2_uM, 3, raw = TRUE) + x_temperature + x_salinity,
+  data = positive
+)
+global_rstudent <- rstudent(global_fit)
+global_cook <- cooks.distance(global_fit)
+global_hat <- hatvalues(global_fit)
+local_x <- scale(positive[, c("NO3_NO2_uM", "x_temperature", "x_salinity")])
+local_pred <- local_scale <- local_z <- rep(NA_real_, nrow(positive))
+local_k <- 40L
+for (i in seq_len(nrow(positive))) {
+  distance2 <- rowSums(sweep(local_x, 2L, local_x[i, ], "-")^2)
+  neighbors <- order(distance2)[2L:(local_k + 1L)]
+  local_pred[i] <- median(positive$H2PO4_uM[neighbors])
+  local_scale[i] <- max(mad(positive$H2PO4_uM[neighbors], constant = 1.4826), 0.03)
+  local_z[i] <- (positive$H2PO4_uM[i] - local_pred[i]) / local_scale[i]
+}
+positive$consensus_outlier <- abs(global_rstudent) > 5 & abs(local_z) > 5
+
+outlier_audit <- positive[, c(
+  "source_row", "record_key", "cruise", "station", "date", "event",
+  "depth_m", "NO3_NO2_uM", "H2PO4_uM", "x_temperature", "x_salinity"
+)]
+outlier_audit$global_rstudent <- global_rstudent
+outlier_audit$global_cook <- global_cook
+outlier_audit$global_hat <- global_hat
+outlier_audit$local_pred <- local_pred
+outlier_audit$local_robust_scale <- local_scale
+outlier_audit$local_robust_z <- local_z
+outlier_audit$consensus_outlier <- positive$consensus_outlier
+outlier_audit <- outlier_audit[order(abs(outlier_audit$local_robust_z), decreasing = TRUE), , drop = FALSE]
+write.csv(outlier_audit, file.path(audit_dir, "outlier_audit.csv"), row.names = FALSE)
+write.csv(outlier_audit[outlier_audit$consensus_outlier, , drop = FALSE],
+          file.path(audit_dir, "consensus_outlier_candidates.csv"), row.names = FALSE)
+
+cat("Eligible before deduplication:", nrow(pool0), "\n")
+cat("Removed duplicate copies:", sum(duplicate_flag), "\n")
+cat("Positive-primary pool:", nrow(positive), "\n")
+```
+
+## 5. Reconstruct the frozen 100/300 source-row split
+
+The class-6 experiment uses a frozen 100/300 train/test cohort drawn from the positive-primary eligible pool. 
+We select 20 training and 60 test observations within each prespecified nitrate stratum using 
+`source_split_seed = 20260730`, thereby fixing the source rows independently of the final ordinal labels. 
+We then define six phosphate classes on the full eligible pool and attach these labels to the selected observations. 
+This separates cohort selection from the construction of the six-class ordinal input.
+
+```{r frozen-split}
+source_cut <- as.numeric(
+  quantile(positive$NO3_NO2_uM, probs = seq_len(4L) / 5L, type = 1)
+)
+if (length(unique(source_cut)) != 4L) stop("Inherited nitrate quintile cuts are not distinct")
+source_class <- cut(
+  positive$NO3_NO2_uM,
+  breaks = c(-Inf, source_cut, Inf), labels = FALSE, right = TRUE
+)
+
+set.seed(source_split_seed)
+selected_source <- lapply(seq_len(5L), function(cc) {
+  ids <- which(source_class == cc)
+  if (length(ids) < 80L) stop("Insufficient rows in inherited source class ", cc)
+  ids <- sample(ids, length(ids), replace = FALSE)
+  list(train = ids[seq_len(20L)], test = ids[20L + seq_len(60L)])
+})
+train_source <- positive$source_row[unlist(lapply(selected_source, `[[`, "train"), use.names = FALSE)]
+test_source <- positive$source_row[unlist(lapply(selected_source, `[[`, "test"), use.names = FALSE)]
+# The original 5-class script sorts its saved data by old nitrate class and
+# source_row before the class-6 script reads the source IDs. Preserve that
+# order; it affects the deterministic calibration prefixes below.
+train_source <- train_source[order(source_class[match(train_source, positive$source_row)], train_source)]
+test_source <- test_source[order(source_class[match(test_source, positive$source_row)], test_source)]
+stopifnot(length(train_source) == 100L, length(test_source) == 300L)
+stopifnot(!length(intersect(train_source, test_source)))
+
+write.csv(
+  data.frame(
+    source_row = c(train_source, test_source),
+    split = c(rep("train", length(train_source)), rep("test", length(test_source))),
+    inherited_nitrate_class = c(
+      source_class[match(train_source, positive$source_row)],
+      source_class[match(test_source, positive$source_row)]
+    )
+  ),
+  file.path(audit_dir, "inherited_source_split.csv"),
+  row.names = FALSE
+)
+```
+
+## 6. Construct the class-6 N/P role-swap cohort
+
+For the ocean case, we define:
+
+\[
+y = \mathrm{NO_3+NO_2}, \qquad
+u = \operatorname{standardize}\{\log(\mathrm{H_2PO_4})\}, \qquad
+x = (\mathrm{temperature},\mathrm{salinity}).
+\]
+
+The six ordinal levels are constructed from five empirical phosphate-quintile cutpoints 
+computed over the full positive-primary pool. The lowest quintile is further divided at 
+standardized log-phosphate \(-1.5\). Both the cutpoints and the standardization parameters 
+are estimated using the full pool, rather than only the 400 selected train/test observations.
+
+```{r class6-cohort}
+m <- 6L
+quintile_cut <- as.numeric(
+  quantile(positive$H2PO4_uM, probs = seq_len(4L) / 5L, type = 1)
+)
+log_u <- log(positive$H2PO4_uM)
+log_center <- mean(log_u)
+log_scale <- sd(log_u)
+split_raw_uM <- exp(log_center + log_scale * class6_split_log_std)
+raw_cut <- c(split_raw_uM, quintile_cut)
+if (length(unique(raw_cut)) != m - 1L) stop("Class-6 phosphate cutpoints are not distinct")
+
+assign_class <- function(u, cuts) {
+  as.integer(cut(u, breaks = c(-Inf, cuts, Inf), labels = FALSE, right = TRUE))
+}
+
+positive$c <- assign_class(positive$H2PO4_uM, raw_cut)
+positive$c0 <- positive$c - 1L
+positive$y <- positive$NO3_NO2_uM
+raw_center <- mean(positive$H2PO4_uM)
+raw_scale <- sd(positive$H2PO4_uM)
+positive$u_raw_std <- (positive$H2PO4_uM - raw_center) / raw_scale
+positive$u_log_std <- (log(positive$H2PO4_uM) - log_center) / log_scale
+
+build_split <- function(source_ids, split_name) {
+  idx <- match(source_ids, positive$source_row)
+  if (anyNA(idx)) stop("A frozen source row is missing from the positive pool")
+  out <- positive[idx, , drop = FALSE]
+  out$split <- split_name
+  out
+}
+dat <- rbind(build_split(train_source, "train"), build_split(test_source, "test"))
+row.names(dat) <- NULL
+
+dat$calib_10 <- 0L
+dat$calib_25 <- 0L
+dat$calib_50 <- 0L
+train_idx <- which(dat$split == "train")
+class_sizes <- as.integer(table(factor(dat$c[train_idx], levels = seq_len(m))))
+
+## Largest-remainder proportional allocation, exactly as in the class-6 script.
+allocate_prop <- function(weights, total) {
+  weights <- as.numeric(weights)
+  if (any(weights < 0) || sum(weights) <= 0) stop("Non-positive allocation weights")
+  raw <- total * weights / sum(weights)
+  base <- floor(raw)
+  remainder <- total - sum(base)
+  if (remainder > 0L) {
+    frac_order <- order(raw - base, decreasing = TRUE)
+    base[frac_order[seq_len(remainder)]] <- base[frac_order[seq_len(remainder)]] + 1L
+  }
+  as.integer(base)
+}
+
+n50_target <- pmin(allocate_prop(class_sizes, 50L), class_sizes)
+while (sum(n50_target) < 50L) {
+  room <- class_sizes - n50_target
+  add <- pmin(allocate_prop(pmax(room, 0), 50L - sum(n50_target)), room)
+  if (!sum(add)) add[which.max(room)] <- 1L
+  n50_target <- n50_target + add
+}
+n25_target <- pmin(allocate_prop(n50_target, 25L), n50_target)
+while (sum(n25_target) < 25L) {
+  room <- n50_target - n25_target
+  n25_target[which.max(room)] <- n25_target[which.max(room)] + 1L
+}
+n10_target <- pmin(allocate_prop(n25_target, 10L), n25_target)
+while (sum(n10_target) < 10L) {
+  room <- n25_target - n10_target
+  n10_target[which.max(room)] <- n10_target[which.max(room)] + 1L
+}
+stopifnot(sum(n10_target) == 10L, sum(n25_target) == 25L, sum(n50_target) == 50L)
+
+selection_rows <- list()
+for (cc in seq_len(m)) {
+  class_idx <- train_idx[dat$c[train_idx] == cc]
+  set.seed(calibration_seed + cc)
+  ordering <- sample(class_idx, length(class_idx), replace = FALSE)
+  if (n10_target[cc] > 0L) dat$calib_10[ordering[seq_len(n10_target[cc])]] <- 1L
+  if (n25_target[cc] > 0L) dat$calib_25[ordering[seq_len(n25_target[cc])]] <- 1L
+  if (n50_target[cc] > 0L) dat$calib_50[ordering[seq_len(n50_target[cc])]] <- 1L
+  selected <- ordering[seq_len(n50_target[cc])]
+  if (length(selected)) {
+    selection_rows[[cc]] <- data.frame(
+      c = cc,
+      source_row = dat$source_row[selected],
+      cruise = dat$cruise[selected],
+      in_calib_10 = dat$calib_10[selected],
+      in_calib_25 = dat$calib_25[selected],
+      in_calib_50 = dat$calib_50[selected],
+      selection_rank_within_class = seq_along(selected),
+      x_temperature = dat$x_temperature[selected],
+      x_salinity = dat$x_salinity[selected],
+      used_y_for_selection = FALSE,
+      used_exact_u_for_selection = FALSE,
+      audit_y_NO3_NO2_uM = dat$NO3_NO2_uM[selected],
+      audit_u_H2PO4_uM = dat$H2PO4_uM[selected],
+      stringsAsFactors = FALSE
+    )
+  }
+}
+dat$calib_10_random_existing <- dat$calib_10
+dat <- dat[order(match(dat$split, c("train", "test")), dat$c, dat$source_row), , drop = FALSE]
+row.names(dat) <- NULL
+dat$sample_row_id <- seq_len(nrow(dat))
+
+train <- dat[dat$split == "train", , drop = FALSE]
+test <- dat[dat$split == "test", , drop = FALSE]
+stopifnot(
+  nrow(train) == 100L, nrow(test) == 300L,
+  identical(as.integer(table(factor(train$c, levels = seq_len(m)))), class_sizes),
+  all(train$calib_10 <= train$calib_25),
+  all(train$calib_25 <= train$calib_50),
+  identical(as.integer(table(factor(train$c[train$calib_10 == 1L], levels = seq_len(m)))), n10_target),
+  identical(as.integer(table(factor(train$c[train$calib_25 == 1L], levels = seq_len(m)))), n25_target),
+  identical(as.integer(table(factor(train$c[train$calib_50 == 1L], levels = seq_len(m)))), n50_target),
+  max(abs(exp(log_center + log_scale * dat$u_log_std) - dat$H2PO4_uM)) < 1e-10
+)
+```
+
+## 7. Write the reusable cohort files
+
+The two principal files are:
+
+- `eligible_pool.csv`: all 1,393 positive-primary eligible records, with
+  constructed six-class labels and both raw/log-standardized phosphate;
+- `study1_data.csv`: the frozen 100/300 train/test cohort, calibration flags,
+  and `sample_row_id`.
+
+The metadata file records the raw-file checksum, source-row split seed,
+calibration seed, cutpoints, standardization constants, and class counts.
+This makes it possible to distinguish a changed raw download or preprocessing
+rule from a changed model fit.
+
+```{r write-output}
+write.csv(positive, file.path(output_dir, "eligible_pool.csv"), row.names = FALSE)
+write.csv(dat, file.path(output_dir, "study1_data.csv"), row.names = FALSE)
+write.csv(
+  do.call(rbind, selection_rows),
+  file.path(calibration_dir, "nested_calibration_selected_rows.csv"),
+  row.names = FALSE
+)
+write.csv(
+  data.frame(
+    calibration_size = c(10L, 25L, 50L),
+    nested = "10 subset 25 subset 50",
+    seed = calibration_seed,
+    allocation = "size-proportional within class; larger classes receive remainder seats",
+    uses_y_for_selection = FALSE,
+    uses_exact_u_for_selection = FALSE
+  ),
+  file.path(calibration_dir, "nested_calibration_design.csv"),
+  row.names = FALSE
+)
+
+split_audit <- data.frame(
+  split = c("train", "test", "pool"),
+  matrix(
+    c(
+      as.integer(table(factor(train$c, levels = seq_len(m)))),
+      as.integer(table(factor(test$c, levels = seq_len(m)))),
+      as.integer(table(factor(positive$c, levels = seq_len(m))))
+    ),
+    nrow = 3L, byrow = TRUE,
+    dimnames = list(NULL, paste0("class_", seq_len(m)))
+  ),
+  n = c(nrow(train), nrow(test), nrow(positive)),
+  check.names = FALSE
+)
+write.csv(split_audit, file.path(audit_dir, "phosphate_class6_split_counts.csv"), row.names = FALSE)
+
+allocation_audit <- data.frame(
+  c = seq_len(m), train_n = class_sizes,
+  n_calib_10 = n10_target, n_calib_25 = n25_target, n_calib_50 = n50_target,
+  raw_lower = c(-Inf, raw_cut), raw_upper = c(raw_cut, Inf),
+  log_std_lower = c(-Inf, (log(raw_cut) - log_center) / log_scale),
+  log_std_upper = c((log(raw_cut) - log_center) / log_scale, Inf)
+)
+write.csv(allocation_audit, file.path(calibration_dir, "class6_proportional_calibration_allocation.csv"), row.names = FALSE)
+
+metadata <- list(
+  setting_id = "BCODMO_surface_np_role_swap_positive_primary_class6_split",
+  profile = "positive_primary_np_swap_class6",
+  dataset = "BCO-DMO dataset 3228 AllBottle.csv",
+  raw_file = basename(raw_file),
+  raw_file_md5 = raw_md5,
+  source_split_seed = source_split_seed,
+  calibration_selection_seed = calibration_seed,
+  class6_split_log_std = class6_split_log_std,
+  class6_split_raw_uM = split_raw_uM,
+  eligibility = paste(
+    "depth <= 10 m; NO3_NO2 > 0; H2PO4 > 0; valid temperature and salinity;",
+    "no SiO2 filter; deduplicated by Cruise + depthID"
+  ),
+  y = "raw positive NO3_NO2_uM",
+  u_raw = "H2PO4_uM",
+  x_columns = c("x_temperature", "x_salinity"),
+  m = m,
+  class_rule = "five raw-H2PO4 quintiles (type=1), then split the lowest class at standardized log(phosphate) = -1.5",
+  threshold_raw_uM = raw_cut,
+  quintile_cut_raw_uM = quintile_cut,
+  raw_center = raw_center,
+  raw_scale = raw_scale,
+  log_center = log_center,
+  log_scale = log_scale,
+  raw_tau_reference = (raw_cut - raw_center) / raw_scale,
+  log_tau_reference = (log(raw_cut) - log_center) / log_scale,
+  log_support = "unbounded standardized log scale; back-transform positive",
+  n_pool = nrow(positive),
+  pool_class_counts = as.integer(table(factor(positive$c, levels = seq_len(m)))),
+  n_train = nrow(train),
+  train_class_counts = class_sizes,
+  n_test = nrow(test),
+  test_class_counts = as.integer(table(factor(test$c, levels = seq_len(m)))),
+  calibration_grid = c(10L, 25L, 50L),
+  calibration_by_class_10 = paste(n10_target, collapse = "/"),
+  calibration_by_class_25 = paste(n25_target, collapse = "/"),
+  calibration_by_class_50 = paste(n50_target, collapse = "/"),
+  no_u_given_x = TRUE,
+  role_swap = TRUE,
+  class6_refine = TRUE
+)
+if (!requireNamespace("jsonlite", quietly = TRUE)) stop("jsonlite is required to write metadata.json")
+jsonlite::write_json(
+  metadata, file.path(output_dir, "meta.json"),
+  pretty = TRUE, auto_unbox = TRUE, digits = 16, na = "null"
+)
+
+cat("\nWrote cohort files:\n")
+cat("  ", file.path(output_dir, "eligible_pool.csv"), " (", nrow(positive), " rows)\n", sep = "")
+cat("  ", file.path(output_dir, "study1_data.csv"), " (", nrow(dat), " rows)\n", sep = "")
+cat("Pool class counts:", paste(metadata$pool_class_counts, collapse = "/"), "\n")
+cat("Train class counts:", paste(metadata$train_class_counts, collapse = "/"), "\n")
+cat("Test class counts:", paste(metadata$test_class_counts, collapse = "/"), "\n")
+cat("Calibration |O|=10/25/50:", paste(metadata$calibration_by_class_10, metadata$calibration_by_class_25, metadata$calibration_by_class_50, sep = " | "), "\n")
+```
+
+## 8. Reproducibility checks
+
+The checks below are intentionally strict. In particular, class labels are
+computed from phosphate, (y) is nitrate+nitrite, the calibration rows are
+nested and selected without using (y) or exact (u), and the log transform
+round-trips to the raw phosphate values.
+
+```{r checks}
+identity_checks <- data.frame(
+  check = c(
+    "raw_file_exists",
+    "positive_pool_size",
+    "train_size",
+    "test_size",
+    "train_test_source_rows_disjoint",
+    "y_is_nitrate",
+    "classes_from_phosphate",
+    "calibration_nested",
+    "log_inverse_roundtrip"
+  ),
+  pass = c(
+    file.exists(raw_file),
+    nrow(positive) == 1393L,
+    nrow(train) == 100L,
+    nrow(test) == 300L,
+    !length(intersect(train$source_row, test$source_row)),
+    isTRUE(all.equal(dat$y, dat$NO3_NO2_uM)),
+    isTRUE(all.equal(dat$c, assign_class(dat$H2PO4_uM, raw_cut))),
+    all(train$calib_10 <= train$calib_25) && all(train$calib_25 <= train$calib_50),
+    max(abs(exp(log_center + log_scale * dat$u_log_std) - dat$H2PO4_uM)) < 1e-10
+  )
+)
+write.csv(identity_checks, file.path(audit_dir, "preparation_identity_checks.csv"), row.names = FALSE)
+knitr::kable(identity_checks)
+stopifnot(all(identity_checks$pass))
+```
+
+The resulting `study1_data.csv` is the direct input expected by the Ocean
+EIV-GP and baseline workflows. The model code should not recompute classes or
+standardization from the 400 selected rows; it should read the generated
+`meta.json` and use the stored `c`, `u_log_std`, `split`, and calibration flags.

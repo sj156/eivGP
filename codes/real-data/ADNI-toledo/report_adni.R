@@ -1,10 +1,19 @@
 #!/usr/bin/env Rscript
-# Rebuild reports without any model fitting. Run after collecting both repeats.
+# Rebuild reports without any model fitting. Run after collecting the selected repeats.
 f <- grep("^--file=", commandArgs(FALSE), value = TRUE)
 project <- dirname(normalizePath(sub("^--file=", "", f[1])))
 source(file.path(project, "adni_case_study_helpers.R"))
 base <- Sys.getenv("ADNI_OUTPUT_DIR", file.path(project, "outputs"))
-repeats <- c(2L, 3L)
+args <- commandArgs(TRUE)
+repeat_spec <- Sys.getenv("ADNI_REPEATS", "2,3")
+if (length(args)) {
+  if (length(args) == 2L && args[1L] == "--repeats") repeat_spec <- args[2L]
+  else if (length(args) == 1L && startsWith(args[1L], "--repeats=")) repeat_spec <- sub("^--repeats=", "", args[1L])
+  else stop("Usage: Rscript report_adni.R [--repeats 1,2,3]")
+}
+if (!grepl("^[123](,[123])*$", repeat_spec)) stop("Select repeats from 1,2,3.")
+repeats <- as.integer(strsplit(repeat_spec, ",", fixed = TRUE)[[1]])
+if (anyDuplicated(repeats)) stop("Duplicate repeats are not allowed.")
 tables <- list()
 for (r in repeats) {
   root <- file.path(base, paste0("repeat", r))

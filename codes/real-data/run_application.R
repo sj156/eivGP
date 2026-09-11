@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 args <- commandArgs(trailingOnly = TRUE)
-usage <- "Usage: Rscript codes/real-data/run_application.R adni|ocean|data [--cores N] [--repeats 2,3] [--plan]"
+usage <- "Usage: Rscript codes/real-data/run_application.R adni|ocean|data [--cores N] [--repeats 1,2,3] [--plan]"
 if (!length(args) || !args[1L] %in% c("adni", "ocean", "data")) stop(usage)
 application <- args[1L]; rest <- args[-1L]; plan_only <- FALSE
 cores <- Sys.getenv("EIVGP_CORES", "")
@@ -24,7 +24,7 @@ if (nzchar(cores)) {
   budget <- parse_count(cores, "--cores")
   Sys.setenv(EIVGP_CORES = budget, MIXEDGP_CORES = budget)
 } else budget <- parse_count(Sys.getenv("EIVGP_N_CORES", "4"), "EIVGP_N_CORES")
-if (!grepl("^[23](,[23])*$", repeats_text)) stop("--repeats must be 2, 3, or 2,3.")
+if (!grepl("^[123](,[123])*$", repeats_text)) stop("--repeats must select distinct repeats from 1,2,3.")
 repeats <- as.integer(strsplit(repeats_text, ",", fixed = TRUE)[[1]])
 if (anyDuplicated(repeats)) stop("Duplicate repeats are not allowed.")
 file_arg <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -42,7 +42,7 @@ flag <- function(name) {
 smoke <- flag("EIVGP_SMOKE_TEST")
 folds <- if (smoke && !flag("ADNI_SMOKE_ALL_FOLDS")) 1L else 1:3
 plan <- adni_core_plan(budget, length(folds) * length(repeats), 4L,
-  parse_count(Sys.getenv("ADNI_MAX_FOLD_WORKERS", "6"), "ADNI_MAX_FOLD_WORKERS"))
+  parse_count(Sys.getenv("ADNI_MAX_FOLD_WORKERS", "9"), "ADNI_MAX_FOLD_WORKERS"))
 if (application == "adni") {
   adni_print_core_plan(plan)
   cat("Repeats:", paste(repeats, collapse = ","), "| folds per repeat:", paste(folds, collapse = ","), "\n")

@@ -185,3 +185,30 @@ Direct Rmd rendering supports automatic fold scheduling within its selected
 single repeat via EIVGP_CORES; the R runner coordinates multiple repeats.
 For an all-fold smoke check only, set EIVGP_SMOKE_TEST=1 and
 ADNI_SMOKE_ALL_FOLDS=1; smoke outputs remain separate from production.
+
+## Fresh start with all three repeats
+
+Repeats 1, 2, and 3 are supported. All three give nine fold fits per method.
+A 12-core budget runs three folds concurrently with four chain workers each;
+a 56-core budget can run all nine folds with up to 36 chain workers. This does
+not create additional independent participants or remove earlier model-selection
+history associated with any of the frozen repeats.
+
+Stop any old run and confirm its workers have exited first. From the repository
+root, the following deletes prior ADNI outputs from both standard locations,
+including checkpoints and comparator caches, then starts all three repeats:
+
+```sh
+export ADNI_OUTPUT_DIR="$PWD/results/adni"
+rm -rf -- "$ADNI_OUTPUT_DIR" "$PWD/codes/real-data/ADNI-toledo/outputs"
+Rscript codes/real-data/run_application.R adni --cores 12 --repeats 1,2,3 --plan
+EIVGP_SMOKE_TEST=0 Rscript codes/real-data/run_application.R adni --cores 12 --repeats 1,2,3
+# After all fits finish, using the same ADNI_OUTPUT_DIR:
+Rscript codes/real-data/ADNI-toledo/report_adni.R --repeats 1,2,3
+```
+
+Delete outputs only for an intentional fresh restart. To resume an interrupted
+run, keep the same ADNI_OUTPUT_DIR and rerun without the deletion command.
+Custom output directories from earlier runs must be removed separately.
+The `--repeats` flag selects CV assignments; by itself it does not reset existing
+runs. The default repeat remains 2 for backward compatibility.

@@ -52,8 +52,9 @@ missing CSF. The surface figure uses prespecified fold 1, the training observed-
 10th–90th percentile range, median training age, female=0, and APOE4 dose=1;
 its pointwise intervals describe association and do not imply a causal effect.
 
-The study retains repeats 2 and 3 until the collaborator clarifies repeat 1's
-role in development. Data-driven preprocessing and screening history remain
+Repeats 1, 2, and 3 can be selected from the frozen fold file. Repeat 1's
+role in earlier development should still be disclosed when interpreting validation;
+a fresh computational run does not erase earlier model selection. Data-driven preprocessing and screening history remain
 necessary qualifications; freezing data does not itself exclude leakage.
 
 ```{r setup, include=TRUE}
@@ -83,7 +84,7 @@ REPEAT_ID <- if (PREPARE_ONLY) get("ADNI_RUN_REPEAT_ID", inherits = FALSE) else
 TOTAL_CORES <- env_int("EIVGP_CORES", env_int("EIVGP_N_CORES", 4L, 1L), 1L)
 MAX_FOLD_WORKERS <- env_int("ADNI_MAX_FOLD_WORKERS", 3L, 1L)
 SMOKE_TEST <- env_flag("EIVGP_SMOKE_TEST", FALSE)
-stopifnot(REPEAT_ID %in% 2:3)
+stopifnot(REPEAT_ID %in% 1:3)
 
 if (SMOKE_TEST) {
   N_CHAINS <- 4L; BURN <- 2L; INITIAL_ITER <- 8L

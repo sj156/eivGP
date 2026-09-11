@@ -14,7 +14,7 @@ while [[ $# -gt 0 ]]; do
       core_budget="$2"; shift 2 ;;
     --cores=*) core_budget="${1#--cores=}"; shift ;;
     --repeats)
-      if [[ $# -lt 2 ]]; then echo '--repeats requires 2, 3, or 2,3.' >&2; exit 2; fi
+      if [[ $# -lt 2 ]]; then echo '--repeats requires a selection from 1,2,3.' >&2; exit 2; fi
       repeat_spec="$2"; shift 2 ;;
     --repeats=*) repeat_spec="${1#--repeats=}"; shift ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
@@ -22,7 +22,7 @@ while [[ $# -gt 0 ]]; do
 done
 case "$action" in
   --help|-h) cat <<'HELP'
-Usage: bash codes/real-data/run_mac.sh {check|setup|smoke|adni|ocean|report} [--cores N] [--repeats 2,3]
+Usage: bash codes/real-data/run_mac.sh {check|setup|smoke|adni|ocean|report} [--cores N] [--repeats 1,2,3]
   check   Validate prepared data and print runtime/package availability; no fitting.
   setup   Install dependencies and tested eivGP 0.3.1 (requires internet).
   smoke   Short ADNI pipeline test, isolated from production output.
@@ -48,7 +48,15 @@ if [[ ! "$core_budget" =~ ^[1-9][0-9]*$ ]] || [[ ${#core_budget} -gt 6 ]]; then
   echo '--cores must be a positive integer no larger than 999999.' >&2
   exit 2
 fi
-case "$repeat_spec" in 2|3|2,3|3,2) ;; *) echo '--repeats must be 2, 3, or 2,3.' >&2; exit 2 ;; esac
+if [[ ! "$repeat_spec" =~ ^[123](,[123])*$ ]]; then
+  echo '--repeats must select distinct repeats from 1,2,3.' >&2; exit 2
+fi
+for id in 1 2 3; do
+  without="${repeat_spec//$id/}"
+  if [[ $((${#repeat_spec} - ${#without})) -gt 1 ]]; then
+    echo 'Duplicate repeats are not allowed.' >&2; exit 2
+  fi
+done
 export ADNI_REPEATS="$repeat_spec"
 export EIVGP_CORES="$core_budget"
 # The notebook divides this total budget across folds and chains.

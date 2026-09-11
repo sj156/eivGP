@@ -77,15 +77,19 @@ env_flag <- function(name, default = FALSE) {
   x %in% c("true", "1", "yes")
 }
 
-REPEAT_ID <- env_int("ADNI_REPEAT_ID", DEFAULT_REPEAT_ID, 1L)
-N_CORES <- env_int("EIVGP_N_CORES", 4L, 1L)
+PREPARE_ONLY <- isTRUE(get0("ADNI_PREPARE_ONLY", inherits = FALSE))
+REPEAT_ID <- if (PREPARE_ONLY) get("ADNI_RUN_REPEAT_ID", inherits = FALSE) else
+  env_int("ADNI_REPEAT_ID", DEFAULT_REPEAT_ID, 1L)
+TOTAL_CORES <- env_int("EIVGP_CORES", env_int("EIVGP_N_CORES", 4L, 1L), 1L)
+MAX_FOLD_WORKERS <- env_int("ADNI_MAX_FOLD_WORKERS", 3L, 1L)
 SMOKE_TEST <- env_flag("EIVGP_SMOKE_TEST", FALSE)
 stopifnot(REPEAT_ID %in% 2:3)
 
 if (SMOKE_TEST) {
   N_CHAINS <- 4L; BURN <- 2L; INITIAL_ITER <- 8L
   EXTENSION_ITER <- 4L; CHECKPOINT_EVERY <- 3L
-  FOLDS_TO_RUN <- 1L; PREDICTION_DRAWS <- 8L
+  FOLDS_TO_RUN <- if (env_flag("ADNI_SMOKE_ALL_FOLDS", FALSE)) 1:3 else 1L
+  PREDICTION_DRAWS <- 8L
 } else {
   N_CHAINS <- 4L; BURN <- 4000L; INITIAL_ITER <- 20000L
   EXTENSION_ITER <- 10000L; CHECKPOINT_EVERY <- 2000L
@@ -116,6 +120,11 @@ if (length(input_path) != 1L || is.na(input_path)) input_path <- ""
 PROJECT_DIR <- Sys.getenv("ADNI_PROJECT_DIR", if (nzchar(input_path)) dirname(normalizePath(input_path)) else normalizePath(getwd()))
 source(file.path(PROJECT_DIR, "..", "adni_paths.R"), local = TRUE)
 DATA_DIR <- resolve_adni_data_dir(PROJECT_DIR)
+source(file.path(PROJECT_DIR, "adni_parallel.R"), local = TRUE)
+CORE_PLAN <- if (PREPARE_ONLY) get("ADNI_RUN_CORE_PLAN", inherits = FALSE) else
+  adni_core_plan(TOTAL_CORES, length(FOLDS_TO_RUN), N_CHAINS, MAX_FOLD_WORKERS)
+N_CORES <- CORE_PLAN$chain_workers
+adni_print_core_plan(CORE_PLAN)
 DATA_FILE <- file.path(DATA_DIR, "toledo_adni_cohort_n495.csv")
 FOLD_FILE <- file.path(DATA_DIR, "toledo_adni_balanced_repeated_3fold.csv")
 OUTPUT_ROOT <- file.path(Sys.getenv("ADNI_OUTPUT_DIR", file.path(PROJECT_DIR, "outputs")), paste0(
@@ -142,6 +151,7 @@ suppressPackageStartupMessages(library(eivGP))
 source(file.path(PROJECT_DIR, "adni_case_study_helpers.R"), local = TRUE)
 for (d in c("main", "appendix")) dir.create(file.path(OUTPUT_ROOT, d), showWarnings = FALSE)
 case_packages <- adni_case_preflight(SMOKE_TEST)
+adni_write_csv(as.data.frame(CORE_PLAN), file.path(OUTPUT_ROOT, "appendix", "resource_plan.csv"))
 package_files <- list.files(system.file("R", package = "eivGP"), full.names = TRUE)
 adni_write_csv(data.frame(file = basename(package_files), md5 = unname(tools::md5sum(package_files))),
   file.path(OUTPUT_ROOT, "appendix", "eivGP_code_fingerprints.csv"))
@@ -375,9 +385,13 @@ The first recoverable checkpoint is at iteration 6,000 (4,000 warm-up plus
 overwritten every 2,000 transitions to save disk space. Each replacement fit
 contains all earlier retained draws and a valid continuation state.
 
+The total core budget is divided across folds and chains. A budget of 12 runs
+three folds concurrently with four chain workers each. Each fold has its own
+checkpoint and log. The repeat lock remains held by the coordinator; only the
+coordinator writes combined tables and figures after all workers finish.
+
 ```{r run, results='asis'}
-all_metrics <- list()
-for (fold in FOLDS_TO_RUN) {
+run_one_fold <- function(fold) {
   fold_dir <- file.path(OUTPUT_ROOT, paste0("fold_", fold))
   dir.create(fold_dir, recursive = TRUE, showWarnings = FALSE)
   unlink(file.path(fold_dir, "CASE_STUDY_COMPLETED.txt"))
@@ -519,7 +533,6 @@ for (fold in FOLDS_TO_RUN) {
   metrics$convergence_passed <- diagnostic$passed
   metrics$repeat_id <- REPEAT_ID; metrics$fold <- fold; metrics$final_stage <- final_stage
   write.csv(metrics, file.path(fold_dir, "eivgp_metrics.csv"), row.names = FALSE)
-  all_metrics[[as.character(fold)]] <- metrics
   atomic_write_lines(c(
     paste0("completed_at=", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z")),
     paste0("repeat=", REPEAT_ID), paste0("fold=", fold),
@@ -538,10 +551,16 @@ for (fold in FOLDS_TO_RUN) {
   set_status(fold_dir, fold, "complete", "EIV fit, comparison, and additional inference finished; inspect method status.")
   rm(fit, response_draws)
   invisible(gc())
+  metrics
 }
 
+if (!PREPARE_ONLY) {
+cat("Running folds; per-fold progress and errors are written to fold_N/worker.log.\n")
+all_metrics <- adni_run_folds(FOLDS_TO_RUN, run_one_fold, CORE_PLAN, OUTPUT_ROOT)
 combined_metrics <- do.call(rbind, all_metrics)
 write.csv(combined_metrics, file.path(OUTPUT_ROOT, "all_fold_metrics.csv"), row.names = FALSE)
+}
+
 ```
 
 ## Compact main results and appendix export
@@ -562,8 +581,10 @@ Scores are pooled over out-of-fold participants within each repeat. No independe
 replication standard errors are computed from folds or repeated participants.
 
 ```{r report, results='asis'}
-main_table <- adni_case_report(OUTPUT_ROOT, FOLDS_TO_RUN, SMOKE_TEST)
-print(knitr::kable(main_table, digits = 3))
+if (!PREPARE_ONLY) {
+  main_table <- adni_case_report(OUTPUT_ROOT, FOLDS_TO_RUN, SMOKE_TEST)
+  print(knitr::kable(main_table, digits = 3))
+}
 ```
 
 ## Session information
@@ -571,5 +592,5 @@ print(knitr::kable(main_table, digits = 3))
 ```{r session-info}
 writeLines(capture.output(sessionInfo()), file.path(OUTPUT_ROOT, "sessionInfo.txt"))
 sessionInfo()
-unlink(RUN_LOCK, recursive = TRUE)
+if (!PREPARE_ONLY) unlink(RUN_LOCK, recursive = TRUE)
 ```

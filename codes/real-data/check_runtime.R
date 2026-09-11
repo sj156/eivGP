@@ -4,8 +4,13 @@ root <- dirname(normalizePath(sub("^--file=", "", f[1])))
 cat("R:", as.character(getRversion()), "| architecture:", R.version$arch,
     "| OS:", Sys.info()[["sysname"]], "\n")
 cat("Total core budget:", Sys.getenv("EIVGP_CORES", "not specified"), "\n")
-cat("ADNI chain workers:", Sys.getenv("EIVGP_N_CORES", "4"),
-    "| MCMC chains: 4 (unchanged)\n")
+source(file.path(root, "ADNI-toledo", "adni_parallel.R"))
+repeat_spec <- Sys.getenv("ADNI_REPEATS", Sys.getenv("ADNI_REPEAT_ID", "2"))
+if (!repeat_spec %in% c("2", "3", "2,3", "3,2")) stop("Invalid ADNI_REPEATS")
+n_repeats <- length(strsplit(repeat_spec, ",", fixed = TRUE)[[1]])
+plan <- adni_core_plan(as.integer(Sys.getenv("EIVGP_CORES", Sys.getenv("EIVGP_N_CORES", "4"))),
+  n_folds = 3L * n_repeats, max_fold_workers = as.integer(Sys.getenv("ADNI_MAX_FOLD_WORKERS", "6")))
+adni_print_core_plan(plan)
 packages <- c("eivGP", "knitr", "ggplot2", "patchwork", "jsonlite", "posterior", "kergp", "LVGP", "EzGP")
 present <- vapply(packages, requireNamespace, logical(1), quietly = TRUE)
 versions <- vapply(packages, function(p) if (requireNamespace(p, quietly = TRUE))

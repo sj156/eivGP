@@ -109,9 +109,41 @@ if(.Platform$OS.type!="windows"){
 
 # CPU allocation is validated and caps both phases, without increasing defaults.
 stopifnot(identical(mixedgp_recovery_core_settings(2L,4L,8L),
-  list(core_budget=2L,chain_workers=2L,competitor_workers=2L)),
-  mixedgp_recovery_core_settings(8L)$competitor_workers==4L,
+  list(core_budget=2L,chain_workers=2L,competitor_workers=2L,dataset_workers=1L)),
+  mixedgp_recovery_core_settings(8L)$competitor_workers==8L,
   mixedgp_recovery_core_settings(8L,competitor_workers=8L)$competitor_workers==8L)
 for(bad in list(0,-1,1.5,NA_real_,Inf,c(2L,4L)))
   stopifnot(inherits(try(mixedgp_recovery_core_settings(bad),silent=TRUE),"try-error"))
 message("CPU budget validation and phase caps passed.")
+
+# Multiple EIV datasets: one owner merges completed records and resumes exactly.
+if(.Platform$OS.type!="windows"){
+  eiv_calls<-file.path(root,'eiv-worker-calls');dir.create(eiv_calls)
+  saveRDS(list(predictive_metrics=base[-c(1,2,3),]),file.path(run,'combined','all_raw_outputs.rds'))
+  mixedgp_recovery_source_cell<-function(path,env){
+    id<-env$STUDY2_REP_IDS
+    stopifnot(env$STUDY2_CHAIN_WORKERS==2L,env$STUDY2_DATASET_WORKERS==1L)
+    writeLines(as.character(Sys.getpid()),file.path(eiv_calls,as.character(id)))
+    env$raw_outputs<-list(predictive_metrics=base[id,,drop=FALSE])
+  }
+  concurrent_out<-file.path(root,'concurrent-eiv')
+  z<-mixedgp_recover_publication(getwd(),archive,data_root,concurrent_out,'run',
+    studies='study2',core_budget=4L,chain_workers=2L,competitor_workers=1L)
+  stopifnot(all(z$complete),length(list.files(eiv_calls))==3L)
+  pids<-vapply(list.files(eiv_calls,full.names=TRUE),function(f)readLines(f)[1],character(1))
+  stopifnot(length(unique(pids))>=2L,all(pids!=as.character(Sys.getpid())))
+  mixedgp_recovery_source_cell<-function(...)stop('Completed datasets must not run again')
+  z<-mixedgp_recover_publication(getwd(),archive,data_root,concurrent_out,'run',
+    studies='study2',core_budget=8L,chain_workers=2L,competitor_workers=1L)
+  stopifnot(all(z$complete))
+  message('Concurrent EIV recovery, coordinator merging, and changed-budget resume passed.')
+}
+if(.Platform$OS.type!='windows'){
+  pf<-file.path(concurrent_out,'provenance.rds');pr<-readRDS(pf)
+  idx<-which(basename(names(pr$identity$code_md5))=='publication_recovery.R')
+  pr$identity$code_md5[idx]<-'2841978643ece443c3a17525459aed6b';saveRDS(pr,pf)
+  z<-mixedgp_recover_publication(getwd(),archive,data_root,concurrent_out,'run',
+    studies='study2',core_budget=8L,chain_workers=2L,competitor_workers=1L)
+  stopifnot(all(z$complete),length(list.files(file.path(concurrent_out,'provenance-history')))==1L)
+  message('Scheduler-only upgrade preserved old provenance and resumed without refitting.')
+}

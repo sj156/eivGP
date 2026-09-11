@@ -35,18 +35,31 @@ Replace `plan` with `run` or `check`, preserving the same options. The Linux mou
 
 `--studies=study2` limits recovery to Study II. Use a separate `--output` folder if changing the study selection. The default recovers both studies, including Study I EzGP failures. Study II always retains the original calibration grid, so it also repairs the calibration curves, not just calibration 50 in Table 2.
 
-Multicore recovery is enabled by default on Linux and macOS. **`--cores=N` sets the CPU allocation for recovery (default: 4).** Each phase uses at most the smaller of its requested worker count and this allocation; fewer pending tasks or chains further reduce concurrency. This is a worker/thread budget, not OS CPU affinity. Set it to the cores allocated to this job on that machine.
+### Automatic use of the core allocation
 
-For example, `--cores=2` caps both phases at two workers. `--cores=8` retains the four-worker defaults; to use up to eight independent competitor fits, supply `--cores=8 --competitor-workers=8`. The archived EIV–GP fit still has four chains. Startup output reports the allocation and effective worker caps.
+Set `--cores=N` to the CPU allocation for this job (default 4). The runner automatically divides it across independent EIV–GP datasets and their archived MCMC chains. Competitor concurrency also defaults to the full allocation. For the 56-core Linux machine:
 
+```sh
+Rscript --vanilla experiments/recover_publication.R plan --studies=study2 --cores=56
+Rscript --vanilla experiments/recover_publication.R run --studies=study2 --cores=56 > recovery-study2.log 2>&1
+Rscript --vanilla experiments/recover_publication.R check --studies=study2 --cores=56
+```
 
+With four chains per dataset, this permits **14 concurrent datasets × 4 chains = 56 chain workers**, or up to 56 independent competitor fits in the separate competitor phase. The default four-core run remains one dataset × four chains. No extra chains or MCMC iterations are introduced. Dataset slots refill as soon as a task finishes; the coordinator immediately merges and saves each completed result. Each dataset retains its own fit and predictive checkpoints.
 
-- `--chain-workers=4`: up to four MCMC chains for one EIV–GP dataset at a time; the explicit count reaches the sampler. More than four workers cannot accelerate the archived four-chain fit.
-- `--competitor-workers=4`: up to four independent missing method/dataset fits in parallel. This also accelerates Study I, whose missing outputs are competitor fits. Increase this number together with `--cores` if CPU and RAM permit; concurrency is capped by the number of pending tasks in the batch.
-- These phases run separately, so their worker counts are not multiplied or added. Only the coordinator writes merged tables and state; workers use separate cache entries. Completed batches are saved, and cached successes are reused after interruption. Unexpected worker errors remain visible in `attempts.csv`.
-- Original per-task seeds are independent of scheduling. Numerical-library threads are limited to one per worker by the launcher. Run with `Rscript` in a terminal on each machine; Windows falls back to serial execution.
+Optional limits:
 
-This preserves the archived iterations, warmup, priors, seeds, and calibration subsets. The code does not estimate runtime or reduce the MCMC budget. Keep the output directory and its fit checkpoints for resumption.
+- `--chain-workers=4` limits concurrent chains within a dataset; the original four chains still run when fewer workers are requested.
+- `--dataset-workers=7` caps concurrent EIV–GP datasets at seven, useful when memory is limiting. The automatic cap is `floor(cores / chain-workers)`.
+- `--competitor-workers=8` caps independent competitor fits at eight. Omit it or use `auto` to use the allocation.
+
+Worker counts never exceed the supplied core allocation. Actual CPU utilization can be lower during reference calculations, prediction, disk I/O, or when fewer datasets remain in the current setting. The EIV–GP and competitor phases do not overlap. This is a process/thread budget, not OS CPU affinity. Memory use increases with concurrent datasets; the runner does not infer a safe memory budget from CPU count. Numerical-library threads are limited to one per worker by the launcher. Use terminal `Rscript` on Linux or macOS; Windows falls back to serial execution.
+
+### Resuming an existing recovery after this upgrade
+
+Stop the old recovery coordinator before starting the updated script, then use the **same archive, data and output paths**. Saved completed fits and scores are reused; an interrupted fit that has not reached its checkpoint must restart. The runner recognizes the immediately preceding core-budget runner by its exact source hash and permits this scheduler-only upgrade only when every other source hash, input identity, R version and dependency version is unchanged. It preserves the old provenance under `provenance-history/`. Other source changes still require a separate output folder. Changes to `--cores` or worker limits alone do not invalidate completed work.
+
+Never run two coordinators against the same output. If the old process leaves `recovery.lock`, inspect its owner and confirm it has stopped before removing that stale lock. Worker failure is recorded without dropping another dataset's completed results; rerunning `run` resumes missing work.
 
 The script sources the revised computation layer directly; reinstalling the package is not required to run recovery. To update a separately installed package, run `R CMD INSTALL eivGP`. If dependencies are missing, use the repository's `experiments/install_eivgp_dependencies.R` first.
 
@@ -82,7 +95,7 @@ The ordinary Linux repository layout also works with `--archive-root=reproductio
 
 The default output directory is `reproduction/recovery-publication/`:
 
-- `provenance.rds`: source/config/code hashes and runtime information. Changing inputs, code, R/package versions, or study selection requires a new output folder.
+- `provenance.rds`: source/config/code hashes and runtime information. Changing inputs, model/computation code, R/package versions, or study selection requires a new output folder; the audited scheduler-only upgrade above preserves a provenance history.
 - `state.rds`: resumable combined results.
 - `completeness.csv`: every method/calibration, expected IDs, missing IDs, duplicate checks, and valid counts.
 - `table2_completeness.csv`: the 12 Table 2 rows.
@@ -97,4 +110,4 @@ The script certifies **valid predictive outputs**, not MCMC convergence. Diagnos
 
 ## Validation performed for this revision
 
-Tests also verify actual parallel MCMC, distinct competitor worker process IDs, identical serial/parallel predictive scores, and resumption without refitting. Tests cover forced oracle errors followed by actual tiny MCMC fitting, fit/checkpoint reuse, RNG isolation, analytic oracle checks, bounded retries, lock ownership, preservation of original successful scores, missing/duplicate ID detection, and the complete recovery orchestration with mocked expensive fits. The new reference integration passed its refinement criterion on all 25 previously failing generated datasets. On the actual cached Gaussian four-proxy UC–GP dataset 45, the original eight starts failed again and the 32-start rescue produced a valid fit. These checks do not substitute for running the remaining publication fits.
+Tests also verify 56-core allocation, dynamic dataset-slot refill, nested dataset/chain processes, worker-error isolation, concurrent EIV–GP result merging and resumption, restricted provenance migration, actual parallel MCMC, distinct competitor worker process IDs, identical serial/parallel predictive scores, and resumption without refitting. Tests cover forced oracle errors followed by actual tiny MCMC fitting, fit/checkpoint reuse, RNG isolation, analytic oracle checks, bounded retries, lock ownership, preservation of original successful scores, missing/duplicate ID detection, and the complete recovery orchestration with mocked expensive fits. The new reference integration passed its refinement criterion on all 25 previously failing generated datasets. On the actual cached Gaussian four-proxy UC–GP dataset 45, the original eight starts failed again and the 32-start rescue produced a valid fit. These checks do not substitute for running the remaining publication fits.

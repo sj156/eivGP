@@ -6,18 +6,23 @@ REPO_DIR="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 action="${1:---help}"
 if [[ $# -gt 0 ]]; then shift; fi
 core_budget="${EIVGP_CORES:-2}"
+repeat_spec="${ADNI_REPEATS:-${ADNI_REPEAT_ID:-2}}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --cores)
       if [[ $# -lt 2 ]]; then echo '--cores requires a positive integer.' >&2; exit 2; fi
       core_budget="$2"; shift 2 ;;
     --cores=*) core_budget="${1#--cores=}"; shift ;;
+    --repeats)
+      if [[ $# -lt 2 ]]; then echo '--repeats requires 2, 3, or 2,3.' >&2; exit 2; fi
+      repeat_spec="$2"; shift 2 ;;
+    --repeats=*) repeat_spec="${1#--repeats=}"; shift ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
 case "$action" in
   --help|-h) cat <<'HELP'
-Usage: bash codes/real-data/run_mac.sh {check|setup|smoke|adni|ocean|report} [--cores N]
+Usage: bash codes/real-data/run_mac.sh {check|setup|smoke|adni|ocean|report} [--cores N] [--repeats 2,3]
   check   Validate prepared data and print runtime/package availability; no fitting.
   setup   Install dependencies and tested eivGP 0.3.1 (requires internet).
   smoke   Short ADNI pipeline test, isolated from production output.
@@ -43,8 +48,11 @@ if [[ ! "$core_budget" =~ ^[1-9][0-9]*$ ]] || [[ ${#core_budget} -gt 6 ]]; then
   echo '--cores must be a positive integer no larger than 999999.' >&2
   exit 2
 fi
+case "$repeat_spec" in 2|3|2,3|3,2) ;; *) echo '--repeats must be 2, 3, or 2,3.' >&2; exit 2 ;; esac
+export ADNI_REPEATS="$repeat_spec"
 export EIVGP_CORES="$core_budget"
-# Each model has four chains; folds and competitor fits remain sequential.
+# The notebook divides this total budget across folds and chains.
+# Keep legacy chain settings as a fallback for older code.
 chain_workers="$core_budget"
 if [[ "$chain_workers" -gt 4 ]]; then chain_workers=4; fi
 export EIVGP_N_CORES="$chain_workers"

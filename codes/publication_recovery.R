@@ -132,21 +132,63 @@ mixedgp_recovery_tables <- function(state, configs, output, certify=FALSE) {
   audit
 }
 
-# A user-supplied CPU allocation caps both non-overlapping recovery phases.
-mixedgp_recovery_core_settings <- function(core_budget=4L,chain_workers=4L,competitor_workers=4L){
+# Refill a free slot immediately and merge each result in the coordinator.
+# Dataset workers may fork their own chains; only the coordinator writes reports.
+mixedgp_recovery_dispatch <- function(tasks,worker,collect,workers=1L){
+  workers<-mixedgp_validate_scalar_integer(workers,"workers",1L)
+  if(!length(tasks))return(invisible(NULL))
+  safe_worker<-function(task)tryCatch(worker(task),error=function(e)list(worker_error=conditionMessage(e)))
+  if(workers==1L||.Platform$OS.type=="windows"){
+    for(i in seq_along(tasks))collect(safe_worker(tasks[[i]]),tasks[[i]])
+    return(invisible(NULL))
+  }
+  jobs<-list();next_task<-1L
+  on.exit({for(job in jobs)try(tools::pskill(job$process$pid),silent=TRUE)},add=TRUE)
+  while(next_task<=length(tasks)||length(jobs)){
+    while(next_task<=length(tasks)&&length(jobs)<workers){
+      task<-tasks[[next_task]]
+      process<-parallel::mcparallel(safe_worker(task),mc.set.seed=FALSE,silent=TRUE)
+      jobs[[as.character(process$pid)]]<-list(process=process,task=task)
+      next_task<-next_task+1L
+    }
+    ready<-parallel::mccollect(lapply(jobs,`[[`,"process"),wait=FALSE)
+    if(is.null(ready)){Sys.sleep(.1);next}
+    for(pid in names(ready)){
+      job<-jobs[[pid]];jobs[[pid]]<-NULL;value<-ready[[pid]]
+      if(is.null(value)||inherits(value,"try-error"))value<-list(worker_error="Worker exited without a result; retained checkpoints can be resumed.")
+      collect(value,job$task)
+    }
+  }
+  invisible(NULL)
+}
+
+mixedgp_recovery_core_settings <- function(core_budget=4L,chain_workers=4L,competitor_workers=NULL,dataset_workers=NULL){
   core_budget<-mixedgp_validate_scalar_integer(core_budget,"core_budget (--cores)",1L)
-  chain_workers<-mixedgp_validate_scalar_integer(chain_workers,"chain_workers",1L)
-  competitor_workers<-mixedgp_validate_scalar_integer(competitor_workers,"competitor_workers",1L)
-  list(core_budget=core_budget,chain_workers=min(chain_workers,core_budget),
-    competitor_workers=min(competitor_workers,core_budget))
+  chain_workers<-min(mixedgp_validate_scalar_integer(chain_workers,"chain_workers",1L),core_budget)
+  competitor_workers<-if(is.null(competitor_workers))core_budget else
+    min(mixedgp_validate_scalar_integer(competitor_workers,"competitor_workers",1L),core_budget)
+  max_datasets<-max(1L,core_budget %/% chain_workers)
+  dataset_workers<-if(is.null(dataset_workers))max_datasets else
+    min(mixedgp_validate_scalar_integer(dataset_workers,"dataset_workers",1L),max_datasets)
+  list(core_budget=core_budget,chain_workers=chain_workers,
+    competitor_workers=competitor_workers,dataset_workers=dataset_workers)
+}
+
+# Only this audited scheduler-only upgrade can reuse an older runner's outputs.
+mixedgp_recovery_scheduler_upgrade <- function(old,new){
+  runner<-which(basename(names(old$code_md5))=="publication_recovery.R")
+  if(length(runner)!=1L||!unname(old$code_md5[runner])%in%c("2841978643ece443c3a17525459aed6b"))return(FALSE)
+  old$code_md5[runner]<-new$code_md5[names(old$code_md5)[runner]]
+  identical(old,new)
 }
 
 mixedgp_recover_publication <- function(repo, archive_root, data_root, output,
-    action=c("plan","run","check"), chain_workers=4L, studies=c("study1","study2"), competitor_workers=4L, core_budget=4L) {
+    action=c("plan","run","check"), chain_workers=4L, studies=c("study1","study2"), competitor_workers=NULL, core_budget=4L, dataset_workers=NULL) {
   action<-match.arg(action)
-  allocation<-mixedgp_recovery_core_settings(core_budget,chain_workers,competitor_workers)
+  allocation<-mixedgp_recovery_core_settings(core_budget,chain_workers,competitor_workers,dataset_workers)
   chain_workers<-allocation$chain_workers;competitor_workers<-allocation$competitor_workers
   core_budget<-allocation$core_budget
+  dataset_workers<-allocation$dataset_workers
   repo<-normalizePath(repo,mustWork=TRUE)
   archive_root<-normalizePath(archive_root,mustWork=TRUE)
   if(!all(studies%in%c("study1","study2"))||anyDuplicated(studies))stop("Invalid study selection.")
@@ -158,7 +200,7 @@ mixedgp_recover_publication <- function(repo, archive_root, data_root, output,
   on.exit(unlink(lock,recursive=TRUE),add=TRUE)
   saveRDS(list(pid=Sys.getpid(),host=Sys.info()[["nodename"]],created=as.character(Sys.time())),file.path(lock,"owner.rds"))
   engine<-mixedgp_simulation_engine(file.path(repo,"codes"))
-  message("Recovery CPU budget: ",core_budget," cores. Up to ",chain_workers," MCMC chains for one dataset, or ",
+  message("Recovery CPU budget: ",core_budget," cores. Up to ",dataset_workers," datasets x ",chain_workers," MCMC chains, or ",
     competitor_workers," independent competitor fits; phases do not overlap. Backend: ",
     engine$mixedgp_parallel_backend(max(chain_workers,competitor_workers))$backend)
   configs<-sources<-list();state<-list()
@@ -195,7 +237,15 @@ mixedgp_recover_publication <- function(repo, archive_root, data_root, output,
   provenance_file<-file.path(output,"provenance.rds")
   if(file.exists(provenance_file)) {
     previous<-readRDS(provenance_file)
-    if(!identical(previous$identity,identity))stop("Recovery sources/code changed. Use a new output folder; completed results were not overwritten.")
+    if(!identical(previous$identity,identity)){
+      if(!mixedgp_recovery_scheduler_upgrade(previous$identity,identity))
+        stop("Recovery sources/code changed. Use a new output folder; completed results were not overwritten.")
+      history<-file.path(output,"provenance-history");dir.create(history,showWarnings=FALSE)
+      mixedgp_atomic_save_rds(previous,file.path(history,paste0(unname(tools::md5sum(provenance_file)),".rds")))
+      previous$identity<-identity;previous$configs<-configs;previous$session<-sessionInfo()
+      mixedgp_atomic_save_rds(previous,provenance_file)
+      message("Verified scheduler-only upgrade: preserving completed results and fit checkpoints.")
+    }
   } else mixedgp_atomic_save_rds(list(identity=identity,configs=configs,sources=sources,
     rescue_protocol=lapply(studies,engine$mixedgp_competitor_protocol),session=sessionInfo()),provenance_file)
   if(file.exists(file.path(output,"state.rds")))state<-readRDS(file.path(output,"state.rds"))
@@ -251,7 +301,11 @@ mixedgp_recover_publication <- function(repo, archive_root, data_root, output,
     if(length(missing)&&study!="study2")stop("Unexpected missing Study I EIV-GP outputs; this recovery targets the audited Study II failures.")
     model <- if(length(missing))mixedgp_recovery_model(sources[[study]]$run,cell)else NULL
     if(!is.null(model))mixedgp_atomic_save_rds(model,file.path(output,paste0("model_",cell$id,".rds")))
-    for(rep_id in missing){
+    # The outer scheduler owns dataset parallelism. Each dataset driver receives
+    # exactly one replication and may use only its allotted chain workers.
+    cfg$parallel$chain_workers<-min(chain_workers,cfg$mcmc$n_chains)
+    slots<-min(length(missing),dataset_workers,max(1L,core_budget %/% cfg$parallel$chain_workers))
+    recover_eiv<-function(rep_id){
       message("Recovering EIV-GP ",cell$id," dataset ",rep_id," (original calibration grid)")
       directory<-file.path(output,"fits",study,cell$id,sprintf("rep%03d",rep_id))
       env<-new.env(parent=engine);list2env(mixedgp_cell_controls_study2(cfg,cell,directory),env)
@@ -259,22 +313,37 @@ mixedgp_recover_publication <- function(repo, archive_root, data_root, output,
       env$STUDY2_RECOVERY_MODEL<-model
       err<-tryCatch({mixedgp_recovery_source_cell(file.path(repo,"codes","02_study2_monte_carlo.R"),env);NULL},error=function(e)conditionMessage(e))
       fresh<-get0("raw_outputs",envir=env,inherits=FALSE)
-      if(!is.null(fresh))for(name in names(fresh))if(is.data.frame(fresh[[name]])&&nrow(fresh[[name]])&&"rep"%in%names(fresh[[name]])){
-        z<-mixedgp_tag_output(fresh[[name]],cell,study)
-        old<-state[[study]]$raw[[name]];if(is.null(old))old<-data.frame()
-        state[[study]]$raw[[name]]<-mixedgp_recovery_upsert(old,z,c("cell_id","rep"))
-      }
       # Salvage predictive checkpoints even if a later scientific task failed.
       checkpoint_files<-list.files(directory,pattern="^predictive_checkpoint_.*\\.rds$",recursive=TRUE,full.names=TRUE)
+      checkpoints<-list()
       for(file in checkpoint_files){
         z<-readRDS(file);if(!identical(z$identity$cache_spec,env$CACHE_SPEC)||z$identity$rep!=rep_id)stop("Predictive checkpoint provenance mismatch: ",file)
         d<-mixedgp_tag_output(z$metrics,cell,study)
-        state[[study]]$raw$predictive_metrics<-mixedgp_recovery_upsert(state[[study]]$raw$predictive_metrics,d,
-          c("cell_id","rep","method","n_calib","evaluation_stratum"))
+        checkpoints[[length(checkpoints)+1L]]<-d
       }
+      list(fresh=fresh,checkpoints=checkpoints,error=err)
+    }
+    collect_eiv<-function(answer,rep_id){
+      if(!is.null(answer$worker_error)){
+        record(study,cell$id,rep_id,"EIV-GP","worker_error",answer$worker_error)
+        return(invisible(NULL))
+      }
+      fresh<-answer$fresh;err<-answer$error
+      if(!is.null(fresh))for(name in names(fresh))if(is.data.frame(fresh[[name]])&&nrow(fresh[[name]])&&"rep"%in%names(fresh[[name]])){
+        z<-mixedgp_tag_output(fresh[[name]],cell,study)
+        old<-state[[study]]$raw[[name]];if(is.null(old))old<-data.frame()
+        state[[study]]$raw[[name]]<<-mixedgp_recovery_upsert(old,z,c("cell_id","rep"))
+      }
+      for(d in answer$checkpoints)
+        state[[study]]$raw$predictive_metrics<<-mixedgp_recovery_upsert(state[[study]]$raw$predictive_metrics,d,
+          c("cell_id","rep","method","n_calib","evaluation_stratum"))
       record(study,cell$id,rep_id,"EIV-GP",if(is.null(err))"completed"else"downstream_or_fit_error",if(is.null(err))""else err)
       mixedgp_recovery_save(state,output);mixedgp_recovery_tables(state,configs,output,certify=TRUE)
-      rm(env);gc()
+      gc()
+    }
+    if(length(missing)){
+      message("EIV-GP ",cell$id,": ",slots," dataset workers x ",cfg$parallel$chain_workers," chain workers")
+      mixedgp_recovery_dispatch(as.list(missing),recover_eiv,collect_eiv,workers=slots)
     }
     # Workers own distinct method/dataset cache entries. Only the coordinator
     # writes merged state, attempts, and tables, after each bounded batch.

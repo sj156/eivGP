@@ -81,7 +81,7 @@ cleanup; their presence does not establish permission for public distribution.
 
 ADNI outputs default to `ADNI-toledo/outputs/repeat2/` or `repeat3/`; smoke
 outputs use `smoke_repeat2/` etc. `ADNI_OUTPUT_DIR` overrides the output base.
-Four chains run in parallel; folds run sequentially. Production uses 20,000
+Four chains run in parallel; folds can run concurrently within the total core budget. Production uses 20,000
 transitions (4,000 warm-up), with one extension to 30,000 if diagnostics fail.
 Checkpointing begins at iteration 6,000, then occurs every 2,000 transitions.
 Rerun the same command to resume. Copy the entire repeat output directory to
@@ -117,3 +117,44 @@ The original raw-to-prepared scripts are still needed from the collaborator.
 This command checks existing prepared data; it does not reconstruct them.
 The manuscript specifies 100 training plus 300 test ocean records; this updates
 the size description above, but the prepared files remain unavailable to verify.
+
+## Parallel fold scheduling
+
+Use one coordinator for the requested repeats:
+
+```sh
+# Inspect allocation without reading data or fitting:
+Rscript codes/real-data/run_application.R adni --cores 16 --repeats 2,3 --plan
+# Fit both repeats in a shared job pool:
+Rscript codes/real-data/run_application.R adni --cores 16 --repeats 2,3
+# A larger machine uses the same interface:
+Rscript codes/real-data/run_application.R adni --cores 56 --repeats 2,3
+```
+
+`--repeats` defaults to ADNI_REPEATS, then ADNI_REPEAT_ID, then repeat 2. A
+single repeat has three fold jobs (at most 12 chain workers); both repeats have
+six (at most 24). For both repeats: 12 cores -> 3 folds x 4 workers; 16 -> 4 x 4;
+56 -> 6 x 4. Folds are dynamically dispatched as slots become free. Statistical
+chain counts, seeds, sampler controls, and iteration budgets are unchanged.
+The Mac shell launcher also accepts `--repeats 2,3`.
+
+The coordinator holds each selected repeat's `.run-lock`. Each worker holds its
+own `.fold-lock` and writes only that fold's files. Follow `fold_N/worker.log`,
+`PROGRESS.md`, or `CURRENT_STATUS.txt`; the terminal need not print every worker
+message. The coordinator writes combined reports only after requested workers
+finish. `scheduler-repeat2-3-status.csv` in the output base records job status.
+A failure preserves other completed checkpoints, stops combined reporting, and
+records its error; competitor failures handled within a fold remain explicitly
+reported by the existing case-study policy.
+
+An already-running process retains the code it loaded. Do not start the new
+coordinator alongside it. To switch, allow a checkpoint to complete, interrupt
+the old run, confirm its R processes/workers have stopped, and rerun with the
+new command. Remove a stale repeat/fold lock only after confirming its owner is
+gone. Existing compatible checkpoints are reused; an interrupted unsaved segment
+must be recomputed. Changing concurrency does not change checkpoint compatibility.
+
+Direct Rmd rendering supports automatic fold scheduling within its selected
+single repeat via EIVGP_CORES; the R runner coordinates multiple repeats.
+For an all-fold smoke check only, set EIVGP_SMOKE_TEST=1 and
+ADNI_SMOKE_ALL_FOLDS=1; smoke outputs remain separate from production.

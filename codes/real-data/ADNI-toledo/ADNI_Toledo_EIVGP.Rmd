@@ -114,7 +114,8 @@ MCSE_SD_RATIO_LIMIT <- 0.10
 input_path <- tryCatch(knitr::current_input(dir = TRUE), error = function(e) "")
 if (length(input_path) != 1L || is.na(input_path)) input_path <- ""
 PROJECT_DIR <- Sys.getenv("ADNI_PROJECT_DIR", if (nzchar(input_path)) dirname(normalizePath(input_path)) else normalizePath(getwd()))
-DATA_DIR <- Sys.getenv("ADNI_DATA_DIR", file.path(PROJECT_DIR, "data"))
+source(file.path(PROJECT_DIR, "..", "adni_paths.R"), local = TRUE)
+DATA_DIR <- resolve_adni_data_dir(PROJECT_DIR)
 DATA_FILE <- file.path(DATA_DIR, "toledo_adni_cohort_n495.csv")
 FOLD_FILE <- file.path(DATA_DIR, "toledo_adni_balanced_repeated_3fold.csv")
 OUTPUT_ROOT <- file.path(Sys.getenv("ADNI_OUTPUT_DIR", file.path(PROJECT_DIR, "outputs")), paste0(
@@ -152,6 +153,7 @@ adni_write_csv(data.frame(schema = ADNI_CASE_SCHEMA, smoke = SMOKE_TEST,
   file.path(OUTPUT_ROOT, "appendix", "case_config.csv"))
 
 cat("Project:", PROJECT_DIR, "\n")
+cat("Data:", DATA_DIR, "\n")
 cat("Repeat:", REPEAT_ID, " | folds:", paste(FOLDS_TO_RUN, collapse = ","), "\n")
 cat("Mode:", if (SMOKE_TEST) "SMOKE" else "PRODUCTION", "\n")
 cat("eivGP:", as.character(utils::packageVersion("eivGP")), "\n")

@@ -117,3 +117,11 @@ fingerprints reject cache reuse. Full MCMC checkpoint compatibility is unchanged
 `EIV_COMPLETED.txt` marks the original fitting/prediction task;
 `CASE_STUDY_COMPLETED.txt` marks completion of the extended workflow. Both still
 require inspection of convergence and competitor status.
+
+## Data detection for direct R execution
+
+Both `Rscript codes/real-data/run_application.R adni --cores 4` and direct
+rendering of the Rmd detect the two cleaned CSVs in `real-data/adni/`, then
+`real-data/`, then the legacy `codes/real-data/ADNI-toledo/data/`. An explicit
+`ADNI_DATA_DIR` overrides detection and is checked without falling back to a
+different dataset. Missing files now stop before an output lock or MCMC run.

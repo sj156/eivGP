@@ -30,6 +30,10 @@ run <- function(application) {
     if (exists("LOCK_OWNED", env, inherits = FALSE) && isTRUE(env$LOCK_OWNED))
       unlink(env$RUN_LOCK, recursive = TRUE)
   }, add = TRUE)
+  if (application %in% c("adni", "data")) {
+    sys.source(file.path(root, "adni_paths.R"), envir = env)
+    Sys.setenv(ADNI_DATA_DIR = env$resolve_adni_data_dir(file.path(root, "ADNI-toledo")))
+  }
   if (application == "adni") {
     project <- file.path(root, "ADNI-toledo")
     Sys.setenv(ADNI_PROJECT_DIR = project)

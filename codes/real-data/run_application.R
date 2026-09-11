@@ -1,8 +1,22 @@
 #!/usr/bin/env Rscript
 # Execute the R chunks in the selected notebook without RStudio or Pandoc.
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) != 1L || !args %in% c("adni", "ocean", "data"))
-  stop("Usage: Rscript codes/real-data/run_application.R adni|ocean|data")
+usage <- "Usage: Rscript codes/real-data/run_application.R adni|ocean|data [--cores N]"
+if (!length(args) || !args[1L] %in% c("adni", "ocean", "data")) stop(usage)
+application <- args[1L]
+rest <- args[-1L]
+cores <- Sys.getenv("EIVGP_CORES", "")
+if (length(rest)) {
+  if (length(rest) == 2L && rest[1L] == "--cores") cores <- rest[2L]
+  else if (length(rest) == 1L && startsWith(rest, "--cores=")) cores <- sub("^--cores=", "", rest)
+  else stop(usage)
+}
+if (nzchar(cores)) {
+  if (!grepl("^[1-9][0-9]*$", cores) || nchar(cores) > 6L) stop("--cores must be an integer from 1 to 999999.")
+  budget <- as.integer(cores)
+  Sys.setenv(EIVGP_CORES = budget, EIVGP_N_CORES = min(4L, budget), MIXEDGP_CORES = budget)
+  cat("Total core budget:", budget, "| ADNI concurrent chain workers:", min(4L, budget), "\n")
+}
 file_arg <- grep("^--file=", commandArgs(FALSE), value = TRUE)
 root <- dirname(normalizePath(sub("^--file=", "", file_arg[1L]), mustWork = TRUE))
 Sys.setenv(OMP_NUM_THREADS = "1", OPENBLAS_NUM_THREADS = "1",
@@ -30,4 +44,4 @@ run <- function(application) {
   invisible(knitr::purl(notebook, output = code, quiet = TRUE))
   sys.source(code, envir = env)
 }
-run(args[1L])
+run(application)

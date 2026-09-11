@@ -1,0 +1,29 @@
+#!/usr/bin/env Rscript
+f <- grep("^--file=", commandArgs(FALSE), value = TRUE)
+root <- dirname(normalizePath(sub("^--file=", "", f[1])))
+cat("R:", as.character(getRversion()), "| architecture:", R.version$arch,
+    "| OS:", Sys.info()[["sysname"]], "\n")
+cat("Total core budget:", Sys.getenv("EIVGP_CORES", "not specified"), "\n")
+cat("ADNI chain workers:", Sys.getenv("EIVGP_N_CORES", "4"),
+    "| MCMC chains: 4 (unchanged)\n")
+packages <- c("eivGP", "knitr", "ggplot2", "patchwork", "jsonlite", "posterior", "kergp", "LVGP", "EzGP")
+present <- vapply(packages, requireNamespace, logical(1), quietly = TRUE)
+versions <- vapply(packages, function(p) if (requireNamespace(p, quietly = TRUE))
+  as.character(utils::packageVersion(p)) else "MISSING", character(1))
+print(data.frame(package = packages, version = versions), row.names = FALSE)
+cat("ADNI input:", Sys.getenv("ADNI_DATA_DIR"), "\n")
+cat("ADNI output:", Sys.getenv("ADNI_OUTPUT_DIR"), "\n")
+cat("Ocean input:", Sys.getenv("OCEAN_DATA_DIR"), "\n")
+cat("Ocean output:", Sys.getenv("OCEAN_OUTPUT_DIR"), "\n")
+if (!all(present) || versions["eivGP"] != "0.3.1")
+  stop("Dependencies are not ready. Run: bash codes/real-data/run_mac.sh setup")
+code <- tempfile(fileext = ".R")
+invisible(knitr::purl(file.path(root, "Raw_Data_Processing.Rmd"), output = code, quiet = TRUE))
+env <- new.env(parent = globalenv()); env$DATA_WORKFLOW_DIR <- root
+tryCatch(sys.source(code, envir = env), finally = unlink(code))
+adni_dir <- Sys.getenv("ADNI_DATA_DIR", file.path(root, "ADNI-toledo", "data"))
+adni_ready <- all(file.exists(file.path(adni_dir, c("toledo_adni_cohort_n495.csv",
+  "toledo_adni_balanced_repeated_3fold.csv"))))
+cat("ADNI readiness:", if (adni_ready) "data checks passed; ready for smoke test" else "data unavailable", "\n")
+cat("No fitting was started. Ocean availability is reported separately above.\n")
+if (!adni_ready) quit(status = 1L)

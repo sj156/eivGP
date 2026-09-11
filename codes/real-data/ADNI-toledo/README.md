@@ -5,6 +5,21 @@ frozen data, repeats 2/3, four-chain sampler, and checkpoint schedule. Added
 comparison/reporting code is in `adni_case_study_helpers.R`. The installed
 **eivGP 0.3.1** package performs all EIV fitting, prediction, and imputation.
 
+## Mac mini
+
+See [../MAC_MINI.md](../MAC_MINI.md). From the repository root:
+
+```sh
+bash codes/real-data/run_mac.sh check
+bash codes/real-data/run_mac.sh smoke --cores 2
+bash codes/real-data/run_mac.sh adni --cores 4
+```
+
+The launcher uses two workers for four chains and keeps the Mac awake. Set
+`--cores 4` to use up to four chain workers. The same flag is supported by
+`run_application.R` on Linux. Production runs resume compatible
+checkpoints. The `adni` action explicitly disables smoke mode; `smoke` enables it.
+
 ## Linux commands
 
 From the repository root, after obtaining the collaborator's private cleaned data:

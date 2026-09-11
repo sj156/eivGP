@@ -17,3 +17,7 @@ applications/*.html
 .Rhistory
 litr/create-eivGP.md
 litr/create-eivGP.knit.md
+
+/real-data/
+
+/results/

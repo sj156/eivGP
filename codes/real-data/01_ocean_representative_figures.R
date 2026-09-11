@@ -59,10 +59,7 @@ rep_n_chains <- if (OCEAN_QUICK) 1L else 4L
 rep_preset <- if (OCEAN_QUICK) "fast" else "thorough"
 n_pred_draw <- if (OCEAN_QUICK) 80L else 600L
 
-parallel_chains <- (
-  .Platform$OS.type != "windows" &&
-    parallel::detectCores(logical = TRUE) > 2L
-)
+parallel_chains <- mixedgp_parallel_chains_enabled("chains")
 
 class_cols <- setNames(
   c("#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e", "#e6ab02"),

@@ -55,10 +55,7 @@ mc_preset <- if (OCEAN_QUICK) "fast" else "thorough"
 n_pred_draw <- if (OCEAN_QUICK) 80L else 600L
 base_seed <- 20260813L
 
-parallel_chains <- (
-  .Platform$OS.type != "windows" &&
-    parallel::detectCores(logical = TRUE) > 2L
-)
+parallel_chains <- mixedgp_parallel_chains_enabled("chains")
 
 method_cols <- c(
   "EIV-GP" = "firebrick",

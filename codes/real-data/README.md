@@ -8,6 +8,13 @@ and prediction APIs. The notebooks are the runnable analysis entry points:
 - `Ocean_Validation.Rmd`: validation with controlled hiding of measured
   phosphate; univariate deterministic threshold model.
 
+## Mac mini
+
+Use [MAC_MINI.md](MAC_MINI.md) for the Mac launcher, setup, long-run commands,
+and checkpoint resumption. It detects private ADNI data, starts with two chain
+workers, and prevents idle system sleep while R runs. The statistical settings
+and all four chains are unchanged. The Linux commands below remain supported.
+
 ## Linux: pull, then run
 
 From the eivGP repository root:

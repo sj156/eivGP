@@ -33,7 +33,8 @@ dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
 cohort_file <- file.path(data_dir, "toledo_adni_cohort_n495.csv")
 legacy_file <- file.path(data_dir, "toledo_adni_balanced_repeated_3fold.csv")
-plan_file <- file.path(project_dir, "validation_split_plan.csv")
+plan_file <- file.path(output_dir, "validation_split_plan.csv")
+#plan_file <- file.path(project_dir, "validation_split_plan.csv")
 expected_cohort_md5 <- "d10b980253304620efea9f2a013166a9"
 expected_legacy_md5 <- "895a5759c7baf22e1771516c0aa84d70"
 

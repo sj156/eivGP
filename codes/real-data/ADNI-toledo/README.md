@@ -14,7 +14,7 @@ metadata. Generate them locally with:
 
 ```sh
 export ADNI_DATA_DIR="$PWD/real-data/adni"
-Rscript codes/real-data/ADNI-toledo/prepare_validation_splits.R
+Rscript codes/real-data/ADNI-toledo/data_preprocessing/prepare_validation_splits.R
 ```
 
 The files are written to `ADNI_DATA_DIR/validation-splits/` unless

@@ -1,42 +1,72 @@
 #!/usr/bin/env Rscript
-# Rebuild reports without any model fitting. Run after collecting the selected repeats.
-f <- grep("^--file=", commandArgs(FALSE), value = TRUE)
-project <- dirname(normalizePath(sub("^--file=", "", f[1])))
+# Rebuild and combine completed validation reports without model fitting.
+
+file_arg <- grep("^--file=", commandArgs(FALSE), value = TRUE)
+project <- dirname(normalizePath(sub("^--file=", "", file_arg[1L])))
 source(file.path(project, "adni_case_study_helpers.R"))
 base <- Sys.getenv("ADNI_OUTPUT_DIR", file.path(project, "outputs"))
+
+parse_validation_ids <- function(raw) {
+  if (!nzchar(raw)) stop("--validations cannot be empty.")
+  pieces <- strsplit(raw, ",", fixed = TRUE)[[1L]]
+  ids <- unlist(lapply(pieces, function(piece) {
+    if (grepl("^[1-9][0-9]*$", piece)) return(as.integer(piece))
+    if (!grepl("^[1-9][0-9]*-[1-9][0-9]*$", piece)) {
+      stop("Invalid --validations selection: ", raw)
+    }
+    endpoints <- as.integer(strsplit(piece, "-", fixed = TRUE)[[1L]])
+    if (endpoints[1L] > endpoints[2L]) stop("Descending validation ranges are not allowed.")
+    seq.int(endpoints[1L], endpoints[2L])
+  }), use.names = FALSE)
+  if (!length(ids) || anyNA(ids) || any(ids < 1L | ids > 20L)) {
+    stop("--validations must select IDs from 1 to 20.")
+  }
+  if (anyDuplicated(ids)) stop("Duplicate validation IDs are not allowed.")
+  as.integer(ids)
+}
+
 args <- commandArgs(TRUE)
-repeat_spec <- Sys.getenv("ADNI_REPEATS", "2,3")
+spec <- Sys.getenv("ADNI_VALIDATIONS", Sys.getenv("ADNI_VALIDATION_ID", "1-20"))
 if (length(args)) {
-  if (length(args) == 2L && args[1L] == "--repeats") repeat_spec <- args[2L]
-  else if (length(args) == 1L && startsWith(args[1L], "--repeats=")) repeat_spec <- sub("^--repeats=", "", args[1L])
-  else stop("Usage: Rscript report_adni.R [--repeats 1,2,3]")
+  if (length(args) == 2L && args[1L] == "--validations") spec <- args[2L]
+  else if (length(args) == 1L && startsWith(args[1L], "--validations=")) {
+    spec <- sub("^--validations=", "", args[1L])
+  } else stop("Usage: Rscript report_adni.R [--validations 1-20]")
 }
-if (!grepl("^[123](,[123])*$", repeat_spec)) stop("Select repeats from 1,2,3.")
-repeats <- as.integer(strsplit(repeat_spec, ",", fixed = TRUE)[[1]])
-if (anyDuplicated(repeats)) stop("Duplicate repeats are not allowed.")
-tables <- list()
-for (r in repeats) {
-  root <- file.path(base, paste0("repeat", r))
-  if (!dir.exists(root)) stop("Collect all requested repeats first. Missing: ", root)
-  tb <- adni_case_report(root, 1:3, FALSE)
-  if (!"method" %in% names(tb)) stop("Repeat ", r, " has no complete common-fold comparison. See its appendix.")
-  if (!all(tb$complete_comparison)) stop("Repeat ", r, " is incomplete; no combined table produced.")
-  tb$repeat_id <- r; tables[[as.character(r)]] <- tb
-}
+ids <- parse_validation_ids(spec)
+
+tables <- lapply(ids, function(id) {
+  root <- file.path(base, sprintf("validation_%02d", id))
+  if (!dir.exists(root)) stop("Collect every requested output first. Missing: ", root)
+  table <- adni_case_report(root, validation_id = id, smoke = FALSE)
+  if (!"method" %in% names(table) || !all(table$complete_comparison)) {
+    stop("Validation ", id, " is incomplete; no combined table produced.")
+  }
+  table$validation_id <- id
+  table
+})
 x <- do.call(rbind, tables)
-dir.create(file.path(base, "combined"), showWarnings = FALSE)
-adni_write_csv(x, file.path(base, "combined", "all_repeat_main_metrics.csv"))
+combined_dir <- file.path(base, "combined")
+dir.create(combined_dir, recursive = TRUE, showWarnings = FALSE)
+adni_write_csv(x, file.path(combined_dir, "all_validation_main_metrics.csv"))
+
+metric_names <- c("RMSE", "CRPS", "Coverage95", "Width95", "IntervalScore95")
 summary <- do.call(rbind, lapply(split(x, interaction(x$method, x$group)), function(z) {
-  data.frame(method = z$method[1], group = z$group[1], unique_participants = z$n[1],
-    repeats = nrow(z), RMSE = sqrt(mean(z$RMSE^2)), CRPS = mean(z$CRPS),
-    Coverage95 = mean(z$Coverage95), Width95 = mean(z$Width95),
-    IntervalScore95 = mean(z$IntervalScore95), any_diagnostic_flag = any(z$diagnostic_flag))
+  out <- data.frame(
+    method = z$method[1L], group = z$group[1L], validations = nrow(z),
+    mean_test_n = mean(z$n), stringsAsFactors = FALSE
+  )
+  for (metric in metric_names) {
+    out[[paste0(metric, "_mean")]] <- mean(z[[metric]])
+    out[[paste0(metric, "_SD")]] <- stats::sd(z[[metric]])
+  }
+  out$any_diagnostic_flag <- any(z$diagnostic_flag)
+  out
 }))
-adni_write_csv(summary, file.path(base, "combined", "table1_prediction.csv"))
-writeLines(c("# Complete repeated-CV prediction comparison", "",
-  "Equal-repeat averages of participant losses; RMSE is sqrt(mean squared error).",
-  "The same participants recur in each repeat. Repeats are not independent studies; no replication SE or significance claim is implied.",
-  "Inspect repeat-specific tables, diagnostics, and paired loss differences before interpreting apparent advantages.", "",
-  as.character(knitr::kable(summary, format = "pipe", digits = 3))),
-  file.path(base, "combined", "table1_prediction.md"))
-cat("Wrote combined/table1_prediction.csv and .md\n")
+adni_write_csv(summary, file.path(combined_dir, "table1_prediction_20validations.csv"))
+writeLines(c(
+  "# ADNI prediction comparison across validations", "",
+  "Values are the arithmetic mean and descriptive SD of each validation-level metric.", "",
+  as.character(knitr::kable(summary, format = "pipe", digits = 3))
+), file.path(combined_dir, "table1_prediction_20validations.md"))
+cat("Wrote combined/table1_prediction_20validations.csv and .md\n")

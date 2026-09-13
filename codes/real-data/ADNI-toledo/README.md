@@ -1,9 +1,73 @@
 # ADNI comparative case study
 
 `ADNI_Toledo_EIVGP.Rmd` is the analysis entry point. It retains the collaborator's
-frozen data, repeats 2/3, four-chain sampler, and checkpoint schedule. Added
+frozen data, four-chain sampler, and checkpoint schedule. Added
 comparison/reporting code is in `adni_case_study_helpers.R`. The installed
 **eivGP 0.3.1** package performs all EIV fitting, prediction, and imputation.
+
+## Twenty-validation split extension
+
+The 20-validation protocol does not duplicate the private cohort into twenty
+analysis datasets. It keeps one cohort and creates twenty small assignment
+files containing only `RID`, `train`/`test` membership, and reproducibility
+metadata. Generate them locally with:
+
+```sh
+export ADNI_DATA_DIR="$PWD/real-data/adni"
+Rscript codes/real-data/ADNI-toledo/prepare_validation_splits.R
+```
+
+The files are written to `ADNI_DATA_DIR/validation-splits/` unless
+`ADNI_SPLIT_DIR` is set. `validation_01.csv`--`validation_09.csv` copy the
+existing frozen 3 repeats x 3 folds exactly. The original three repeat-level
+assignment seeds are recorded truthfully: the three folds within a repeat were
+generated jointly and therefore do not have independent split seeds.
+`validation_10.csv`--`validation_20.csv` use the frozen seeds in
+`validation_split_plan.csv` to draw separately randomized one-third test holdouts within
+observed-CSF status. The only rejection rule preserves at least two
+observed-CSF training participants in every joint proxy cell; outcome values
+and fitted-model performance are not used to select a new split.
+
+The generated files contain participant identifiers and must be transferred
+only through approved private storage, never committed to this public
+repository. The validations reuse and overlap participants, so the reported SD
+is a descriptive stability summary.
+
+### Preferred 20-validation workflow
+
+The public repository contains the generator and frozen seed registry, not the
+private assignment CSVs. On one trusted machine, generate the assignments once
+and privately copy the complete `validation-splits/` directory to every worker
+machine together with the two existing cleaned input CSVs. Do not regenerate
+or hand-edit individual assignment files on different machines: the private
+manifest is checked before fitting.
+
+Each machine can then claim disjoint validation IDs. For example:
+
+```sh
+# Machine A: inspect its allocation, then run validations 1--5.
+Rscript codes/real-data/run_application.R adni --cores 16 --validations 1-5 --plan
+Rscript codes/real-data/run_application.R adni --cores 16 --validations 1-5
+
+# Machine B (same code, cohort, and validation-splits directory):
+Rscript codes/real-data/run_application.R adni --cores 16 --validations 6-10
+
+# Individual/non-contiguous IDs are also accepted.
+Rscript codes/real-data/run_application.R adni --cores 8 --validations 11,14-16
+```
+
+One validation is one 330-person training fit plus one 165-person test set.
+Its output is self-contained in `ADNI_OUTPUT_DIR/validation_XX/`; copying that
+whole directory does not overwrite any other validation. After collecting all
+20 directories under the same `ADNI_OUTPUT_DIR`, rebuild the combined report:
+
+```sh
+Rscript codes/real-data/ADNI-toledo/report_adni.R --validations 1-20
+```
+
+The combined report writes `combined/all_validation_main_metrics.csv` and
+`combined/table1_prediction_20validations.{csv,md}`. Across-validation SDs are
+descriptive stability summaries only because test sets overlap.
 
 ## Mac mini
 
@@ -11,12 +75,13 @@ See [../MAC_MINI.md](../MAC_MINI.md). From the repository root:
 
 ```sh
 bash codes/real-data/run_mac.sh check
-bash codes/real-data/run_mac.sh smoke --cores 2
-bash codes/real-data/run_mac.sh adni --cores 4
+bash codes/real-data/run_mac.sh smoke --cores 2 --validations 10
+bash codes/real-data/run_mac.sh adni --cores 4 --validations 10-12
+bash codes/real-data/run_mac.sh report --validations 1-20
 ```
 
 The launcher defaults to a two-core budget and keeps the Mac awake. Set
-`--cores N` to divide a larger budget across folds and chains. The same flag is supported by
+`--cores N` to divide a larger budget across validation jobs and chains. The same flag is supported by
 `run_application.R` on Linux. Production runs resume compatible
 checkpoints. The `adni` action explicitly disables smoke mode; `smoke` enables it.
 
@@ -28,10 +93,10 @@ From the repository root, after obtaining the collaborator's private cleaned dat
 Rscript codes/real-data/setup.R   # first setup: also installs kergp, LVGP, EzGP
 export ADNI_DATA_DIR="$PWD/real-data/adni"
 export ADNI_OUTPUT_DIR="$PWD/results/adni"
-EIVGP_SMOKE_TEST=1 EIVGP_N_CORES=4 Rscript codes/real-data/run_application.R adni
-ADNI_REPEAT_ID=2 EIVGP_N_CORES=4 Rscript codes/real-data/run_application.R adni
-# Run repeat 3 on another machine or after repeat 2:
-ADNI_REPEAT_ID=3 EIVGP_N_CORES=4 Rscript codes/real-data/run_application.R adni
+EIVGP_SMOKE_TEST=1 EIVGP_N_CORES=4 Rscript codes/real-data/run_application.R adni --validations 1
+EIVGP_N_CORES=4 Rscript codes/real-data/run_application.R adni --validations 1-5
+# Run disjoint IDs on another machine:
+EIVGP_N_CORES=4 Rscript codes/real-data/run_application.R adni --validations 6-10
 ```
 
 The short smoke run checks paths and plotting with explicitly reduced competitor
@@ -40,18 +105,16 @@ Production competitors use their installed public adapters' default controls.
 All packages must be installed before fitting. Code fingerprints and package
 versions are saved because 0.3.1 development builds may differ internally.
 
-After transferring both complete repeat output directories into ADNI_OUTPUT_DIR:
+For the preferred protocol, collect `validation_01` through `validation_20` in
+the same ADNI_OUTPUT_DIR and run:
 
 ```sh
-Rscript codes/real-data/ADNI-toledo/report_adni.R
+Rscript codes/real-data/ADNI-toledo/report_adni.R --validations 1-20
 ```
 
-This regenerates reports without fitting and writes `combined/table1_prediction.md`
-and CSV. It requires complete common-fold comparisons in repeats 2 and 3. Repeat
-metrics are averaged through participant losses, with no independent-replicate SE.
-The per-repeat figure uses its prespecified fold 1; do not select a favorable
-repeat or fold for the paper. Use repeat 2 as the main illustration and repeat 3
-as the appendix stability check unless the protocol is amended before results.
+This regenerates reports without fitting. It requires complete common-method
+comparisons for every requested validation and reports the arithmetic mean and
+descriptive SD of each validation-level metric.
 
 ## Compact main text
 
@@ -61,7 +124,7 @@ as the appendix stability check unless the protocol is amended before results.
    and outcome variation within joint ordinal patterns.
 3. `main/table1_prediction.md`: common out-of-fold response prediction for EIV-GP,
    UC-GP, LVGP, and EzGP. It reports RMSE, CRPS, 95% coverage/width, and interval
-   score, overall and in the naturally missing-CSF subgroup.
+   score overall and for both R=0 and R=1 subgroups.
 4. `main/fig2_CSF_inference.pdf`: held-out masked-CSF validation and a pointwise
    posterior CSF-coordinate response surface. Neither naturally missing CSF nor
    the true response surface is observed, so those cannot be assigned truth-based
@@ -126,70 +189,34 @@ rendering of the Rmd detect the two cleaned CSVs in `real-data/adni/`, then
 `ADNI_DATA_DIR` overrides detection and is checked without falling back to a
 different dataset. Missing files now stop before an output lock or MCMC run.
 
-## Parallel fold scheduling
+## Parallel validation scheduling
 
-Use one coordinator for the requested repeats:
+The validation interface schedules separate validation jobs:
 
 ```sh
-# Inspect allocation without reading data or fitting:
-Rscript codes/real-data/run_application.R adni --cores 16 --repeats 2,3 --plan
-# Fit both repeats in a shared job pool:
-Rscript codes/real-data/run_application.R adni --cores 16 --repeats 2,3
-# A larger machine uses the same interface:
-Rscript codes/real-data/run_application.R adni --cores 56 --repeats 2,3
+Rscript codes/real-data/run_application.R adni --cores 16 --validations 1-20 --plan
+Rscript codes/real-data/run_application.R adni --cores 16 --validations 1-20
 ```
 
-`--repeats` defaults to ADNI_REPEATS, then ADNI_REPEAT_ID, then repeat 2. A
-single repeat has three fold jobs (at most 12 chain workers); both repeats have
-six (at most 24). For both repeats: 12 cores -> 3 folds x 4 workers; 16 -> 4 x 4;
-56 -> 6 x 4. Folds are dynamically dispatched as slots become free. Statistical
-chain counts, seeds, sampler controls, and iteration budgets are unchanged.
-The Mac shell launcher also accepts `--repeats 2,3`.
+The coordinator treats every validation as one fit unit and dynamically fills
+the available worker slots. For example, 16 cores run four validation fits at a
+time with four chains per fit. Follow `validation_XX/fold_1/worker.log`,
+`PROGRESS.md`, or `CURRENT_STATUS.txt`. The scheduler status file is named
+`scheduler-validation-...-status.csv`.
 
-The coordinator holds each selected repeat's `.run-lock`. Each worker holds its
-own `.fold-lock` and writes only that fold's files. Follow `fold_N/worker.log`,
-`PROGRESS.md`, or `CURRENT_STATUS.txt`; the terminal need not print every worker
-message. The coordinator writes combined reports only after requested workers
-finish. `scheduler-repeat2-3-status.csv` in the output base records job status.
-A failure preserves other completed checkpoints, stops combined reporting, and
-records its error; competitor failures handled within a fold remain explicitly
-reported by the existing case-study policy.
+The coordinator holds each selected validation's `.run-lock`. Each worker holds
+its own `.fold-lock` and writes only that validation's files. Folds are retained
+as an internal directory label (`fold_1`) so existing checkpoint logic remains
+simple. A failure preserves other completed checkpoints, stops combined
+reporting, and records its error.
 
 An already-running process retains the code it loaded. Do not start the new
 coordinator alongside it. To switch, allow a checkpoint to complete, interrupt
 the old run, confirm its R processes/workers have stopped, and rerun with the
-new command. Remove a stale repeat/fold lock only after confirming its owner is
+new command. Remove a stale validation/fold lock only after confirming its owner is
 gone. Existing compatible checkpoints are reused; an interrupted unsaved segment
 must be recomputed. Changing concurrency does not change checkpoint compatibility.
 
-Direct Rmd rendering supports automatic fold scheduling within its selected
-single repeat via EIVGP_CORES; the R runner coordinates multiple repeats.
-For an all-fold smoke check only, set EIVGP_SMOKE_TEST=1 and
-ADNI_SMOKE_ALL_FOLDS=1; smoke outputs remain separate from production.
-
-## Fresh start with all three repeats
-
-Repeats 1, 2, and 3 are supported. All three give nine fold fits per method.
-A 12-core budget runs three folds concurrently with four chain workers each;
-a 56-core budget can run all nine folds with up to 36 chain workers. This does
-not create additional independent participants or remove earlier model-selection
-history associated with any of the frozen repeats.
-
-Stop any old run and confirm its workers have exited first. From the repository
-root, the following deletes prior ADNI outputs from both standard locations,
-including checkpoints and comparator caches, then starts all three repeats:
-
-```sh
-export ADNI_OUTPUT_DIR="$PWD/results/adni"
-rm -rf -- "$ADNI_OUTPUT_DIR" "$PWD/codes/real-data/ADNI-toledo/outputs"
-Rscript codes/real-data/run_application.R adni --cores 12 --repeats 1,2,3 --plan
-EIVGP_SMOKE_TEST=0 Rscript codes/real-data/run_application.R adni --cores 12 --repeats 1,2,3
-# After all fits finish, using the same ADNI_OUTPUT_DIR:
-Rscript codes/real-data/ADNI-toledo/report_adni.R --repeats 1,2,3
-```
-
-Delete outputs only for an intentional fresh restart. To resume an interrupted
-run, keep the same ADNI_OUTPUT_DIR and rerun without the deletion command.
-Custom output directories from earlier runs must be removed separately.
-The `--repeats` flag selects CV assignments; by itself it does not reset existing
-runs. The default repeat remains 2 for backward compatibility.
+Direct Rmd rendering runs one selected validation via `ADNI_VALIDATION_ID`;
+`run_application.R` coordinates multiple validation IDs. Smoke outputs remain
+separate from production outputs.

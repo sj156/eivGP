@@ -12,6 +12,15 @@ toledo_adni_balanced_repeated_3fold.csv
   folds per repeat: 3
   test n per fold: 165
 
+20-validation extension
+  public seed/design registry: validation_split_plan.csv
+  validations 1--9: exact views of the frozen 3 x 3 assignments
+  validations 10--20: R-stratified random 1/3 holdouts
+  test n per validation: 165
+  private combined assignment MD5: d14e32294ca098ad948b342e71caf0f4
+  generator: prepare_validation_splits.R
+  private output: ADNI_DATA_DIR/validation-splits (never commit)
+
 Model variables
   Y: y_centiloid
   U: u_csf_abeta42
@@ -26,4 +35,3 @@ Tested package
   repository: https://github.com/sj156/eivGP
   package version: 0.3.1
   commit: a3aa0f697f97d4bdf027507ac3c9b952644affb9
-

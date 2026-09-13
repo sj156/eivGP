@@ -12,13 +12,24 @@ options(stringsAsFactors = FALSE)
 file_arg <- grep("^--file=", commandArgs(FALSE), value = TRUE)
 if (length(file_arg) != 1L) stop("Run this file with Rscript.")
 script_file <- normalizePath(sub("^--file=", "", file_arg))
-project_dir <- dirname(script_file)
+
+script_dir <- dirname(script_file)
+project_dir <- dirname(script_dir)
+
 source(file.path(project_dir, "..", "adni_paths.R"), local = TRUE)
 data_dir <- resolve_adni_data_dir(project_dir)
+
 output_dir <- Sys.getenv(
-  "ADNI_SPLIT_DIR", unset = file.path(data_dir, "validation-splits")
+  "ADNI_SPLIT_DIR",
+  unset = file.path(data_dir, "validation-splits")
 )
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+
+#data_dir <- resolve_adni_data_dir(project_dir)
+#output_dir <- Sys.getenv(
+#  "ADNI_SPLIT_DIR", unset = file.path(data_dir, "validation-splits")
+#)
+#dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
 cohort_file <- file.path(data_dir, "toledo_adni_cohort_n495.csv")
 legacy_file <- file.path(data_dir, "toledo_adni_balanced_repeated_3fold.csv")

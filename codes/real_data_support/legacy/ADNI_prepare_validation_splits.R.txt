@@ -12,17 +12,29 @@ options(stringsAsFactors = FALSE)
 file_arg <- grep("^--file=", commandArgs(FALSE), value = TRUE)
 if (length(file_arg) != 1L) stop("Run this file with Rscript.")
 script_file <- normalizePath(sub("^--file=", "", file_arg))
-project_dir <- dirname(script_file)
+
+script_dir <- dirname(script_file)
+project_dir <- dirname(script_dir)
+
 source(file.path(project_dir, "..", "adni_paths.R"), local = TRUE)
 data_dir <- resolve_adni_data_dir(project_dir)
+
 output_dir <- Sys.getenv(
-  "ADNI_SPLIT_DIR", unset = file.path(data_dir, "validation-splits")
+  "ADNI_SPLIT_DIR",
+  unset = file.path(data_dir, "validation-splits")
 )
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
+#data_dir <- resolve_adni_data_dir(project_dir)
+#output_dir <- Sys.getenv(
+#  "ADNI_SPLIT_DIR", unset = file.path(data_dir, "validation-splits")
+#)
+#dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+
 cohort_file <- file.path(data_dir, "toledo_adni_cohort_n495.csv")
 legacy_file <- file.path(data_dir, "toledo_adni_balanced_repeated_3fold.csv")
-plan_file <- file.path(project_dir, "validation_split_plan.csv")
+plan_file <- file.path(output_dir, "validation_split_plan.csv")
+#plan_file <- file.path(project_dir, "validation_split_plan.csv")
 expected_cohort_md5 <- "d10b980253304620efea9f2a013166a9"
 expected_legacy_md5 <- "895a5759c7baf22e1771516c0aa84d70"
 

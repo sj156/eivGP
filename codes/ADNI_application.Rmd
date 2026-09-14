@@ -129,9 +129,26 @@ CORE_PLAN <- if (PREPARE_ONLY) get("ADNI_RUN_CORE_PLAN", inherits = FALSE) else
 N_CORES <- CORE_PLAN$chain_workers
 adni_print_core_plan(CORE_PLAN)
 DATA_FILE <- file.path(DATA_DIR, "toledo_adni_cohort_n495.csv")
-OUTPUT_BASE <- application_paths(PROJECT_DIR)$adni_output
-OUTPUT_ROOT <- file.path(OUTPUT_BASE, if (SMOKE_TEST) "smoke" else "five_fold")
-FOLD_FILE <- file.path(OUTPUT_ROOT, "appendix", "fold_assignments.csv")
+if (exists("VALIDATION_ID")) {
+  VALIDATION_PLAN_FILE <- file.path(
+    DATA_DIR,
+    "validation-splits",
+    "validation_split_plan.csv"
+  )
+  validation_plan <- read.csv(VALIDATION_PLAN_FILE, stringsAsFactors = FALSE)
+  VALIDATION_META <- validation_plan[validation_plan$validation_id == VALIDATION_ID, , drop = FALSE]
+  if (nrow(VALIDATION_META) != 1L) stop("Validation ID is absent or duplicated in validation_split_plan.csv")
+  FOLD_FILE <- file.path(DATA_DIR, "validation-splits", sprintf("validation_%02d.csv", VALIDATION_ID))
+  OUTPUT_NAME <- sprintf("validation_%02d", VALIDATION_ID)
+  if (SMOKE_TEST) OUTPUT_NAME <- paste0("smoke_", OUTPUT_NAME)
+  OUTPUT_BASE <- Sys.getenv("ADNI_OUTPUT_DIR", application_paths(PROJECT_DIR)$adni_output)
+  OUTPUT_ROOT <- file.path(OUTPUT_BASE, OUTPUT_NAME)
+} else {
+  OUTPUT_BASE <- application_paths(PROJECT_DIR)$adni_output
+  OUTPUT_ROOT <- file.path(OUTPUT_BASE, if (SMOKE_TEST) "smoke" else "five_fold")
+  FOLD_FILE <- file.path(OUTPUT_ROOT, "appendix", "fold_assignments.csv")
+}
+
 dir.create(OUTPUT_ROOT, recursive = TRUE, showWarnings = FALSE)
 RUN_LOCK <- file.path(OUTPUT_ROOT, ".run-lock")
 LOCK_OWNED <- FALSE

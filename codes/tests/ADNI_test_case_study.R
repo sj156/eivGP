@@ -1,6 +1,6 @@
 f <- grep("^--file=", commandArgs(FALSE), value = TRUE)
 project <- dirname(dirname(normalizePath(sub("^--file=", "", f[1]))))
-source(file.path(project, "adni_case_study_helpers.R"))
+source(file.path(project, "ADNI_case_study_helpers.R"))
 set.seed(91)
 a <- matrix(rnorm(28), 7, 4); y <- c(-1, 0, .5, 1)
 s <- adni_draw_summary(a, y)
@@ -26,11 +26,11 @@ test <- data.frame(RID=1:6, R=c(0,0,0,1,1,1), diagnosis="test", y_centiloid=1:6)
 rows <- do.call(rbind,lapply(ADNI_METHODS, function(m) adni_prediction_rows(
   matrix(rep(1:6, each=8),8,6),test,m,"no_test_CSF",2L,1L,convergence=TRUE)))
 status <- data.frame(method=ADNI_METHODS,status="success",optimization_status="converged",
-                     elapsed_seconds=1,message="",warnings="",repeat_id=2,fold=1)
+                     elapsed_seconds=1,message="",warnings="",cv_folds=5,fold=1)
 adni_write_csv(rows,file.path(root,"fold_1/case-study/predictions.csv"))
 adni_write_csv(status,file.path(root,"fold_1/case-study/method_status.csv"))
 main <- adni_case_report(root,1L,TRUE)
-stopifnot(nrow(main)==8L,all(main$RMSE==0),all(!main$complete_comparison))
+stopifnot(nrow(main)==12L,all(main$RMSE==0),all(!main$complete_comparison))
 # A missing competitor must not silently disappear from a complete-looking comparison.
 adni_write_csv(rows[rows$method!="EzGP",],file.path(root,"fold_1/case-study/predictions.csv"))
 status$status[status$method=="EzGP"] <- "failed"

@@ -1,5 +1,5 @@
 # Reporting and comparison helpers. Inference remains in eivGP 0.3.1.
-ADNI_CASE_SCHEMA <- "case-study-v4-validation"
+ADNI_CASE_SCHEMA <- "case-study-v5-five-fold"
 ADNI_METHODS <- c("EIV-GP", "UC-GP", "LVGP", "EzGP")
 
 adni_write_csv <- function(x, path) {
@@ -14,7 +14,7 @@ adni_case_preflight <- function(smoke = FALSE) {
   pkgs <- c("ggplot2", "patchwork", "kergp", "LVGP", "EzGP")
   tab <- data.frame(package = pkgs,
     installed = vapply(pkgs, requireNamespace, logical(1), quietly = TRUE))
-  if (any(!tab$installed)) stop("Install case-study dependencies via setup.R: ",
+  if (any(!tab$installed)) stop("Install case-study dependencies via setup_real_data.R: ",
                                paste(tab$package[!tab$installed], collapse = ", "))
   tab$version <- vapply(pkgs, function(p) as.character(utils::packageVersion(p)), character(1))
   tab
@@ -86,10 +86,10 @@ adni_draw_summary <- function(draws, truth, point_mean = NULL) {
     covered80 = truth >= apply(draws, 2L, quantile, .10) & truth <= apply(draws, 2L, quantile, .90))
 }
 
-adni_prediction_rows <- function(draws, test, method, scenario, validation_id, fold,
+adni_prediction_rows <- function(draws, test, method, scenario, cv_folds, fold,
                                  convergence = NA, point_mean = NULL) {
   z <- adni_draw_summary(draws, test$y_centiloid, point_mean)
-  data.frame(validation_id = validation_id, fold = fold,
+  data.frame(cv_folds = cv_folds, fold = fold,
     RID = test$RID, R = test$R,
     diagnosis = test$diagnosis, method = method, scenario = scenario,
     convergence_passed = convergence, n_draws = nrow(draws), z)
@@ -169,12 +169,12 @@ adni_competitors <- function(train, test, n_draw, seed, smoke, path) {
   out
 }
 
-adni_extended_fold <- function(fit, train, test, draw_ids, fold_dir, validation_id,
+adni_extended_fold <- function(fit, train, test, draw_ids, fold_dir, cv_folds,
                                 fold, smoke, diagnostic_passed, available_draws,
                                 seed_base = NULL) {
   out_dir <- file.path(fold_dir, "case-study")
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-  seed <- if (is.null(seed_base)) as.integer(202680000 + validation_id) else
+  seed <- if (is.null(seed_base)) as.integer(202680000 + cv_folds) else
     as.integer(seed_base)
   cc <- c("c_ab42_ab40_3", "c_gfap_3")
   xc <- c("x_age_years", "x_female", "x_apoe4_dose")
@@ -191,26 +191,26 @@ adni_extended_fold <- function(fit, train, test, draw_ids, fold_dir, validation_
     cv <- attr(no_csf, "conditional_vars", exact = TRUE)
     if (is.matrix(cm) && nrow(cm) == length(chains)) attr(dd, "conditional_means") <- cm[chains == k, , drop = FALSE]
     if (is.matrix(cv) && nrow(cv) == length(chains)) attr(dd, "conditional_vars") <- cv[chains == k, , drop = FALSE]
-    zz <- adni_prediction_rows(dd, test, "EIV-GP", "no_test_CSF", validation_id, fold,
+    zz <- adni_prediction_rows(dd, test, "EIV-GP", "no_test_CSF", cv_folds, fold,
                                diagnostic_passed)
     mm <- adni_metrics(zz); mm$chain <- k; mm
   }))
   if (nrow(chain_scores)) adni_write_csv(chain_scores, file.path(out_dir, "prediction_scores_by_chain.csv"))
-  rows <- list(adni_prediction_rows(no_csf, test, "EIV-GP", "no_test_CSF", validation_id,
+  rows <- list(adni_prediction_rows(no_csf, test, "EIV-GP", "no_test_CSF", cv_folds,
     fold, diagnostic_passed),
     adni_prediction_rows(available_draws, test, "EIV-GP", "available_CSF",
-      validation_id, fold, diagnostic_passed))
+      cv_folds, fold, diagnostic_passed))
   comparison <- adni_competitors(train, test, nrow(no_csf), seed + 1000L, smoke,
                                 file.path(out_dir, "competitors.rds"))
   for (method in names(comparison$draws)) for (scenario in c("no_test_CSF", "available_CSF")) {
     rows[[length(rows) + 1L]] <- adni_prediction_rows(comparison$draws[[method]], test, method,
-      scenario, validation_id, fold, point_mean = comparison$means[[method]])
+      scenario, cv_folds, fold, point_mean = comparison$means[[method]])
   }
   adni_write_csv(do.call(rbind, rows), file.path(out_dir, "predictions.csv"))
   status <- rbind(data.frame(method = "EIV-GP", status = "success",
     optimization_status = if (diagnostic_passed) "mcmc_gate_passed" else "mcmc_gate_failed",
     elapsed_seconds = NA_real_, message = "Sampling time in PROGRESS.md", warnings = ""), comparison$status)
-  status$validation_id <- validation_id; status$fold <- fold
+  status$cv_folds <- cv_folds; status$fold <- fold
   adni_write_csv(status, file.path(out_dir, "method_status.csv"))
   # Save only the bounded predictive draw subset, not another full MCMC fit.
   atomic_save_rds(list(no_test_CSF = no_csf, available_CSF = available_draws,
@@ -224,7 +224,7 @@ adni_extended_fold <- function(fit, train, test, draw_ids, fold_dir, validation_
     ud <- matrix(ud[, , 1L], nrow = length(draw_ids), ncol = length(observed))
     scores <- adni_draw_summary(ud, test$u_csf_abeta42[observed])
     scores$probability_nonpositive_CSF <- colMeans(ud <= 0)
-    urows <- data.frame(validation_id = validation_id, fold = fold,
+    urows <- data.frame(cv_folds = cv_folds, fold = fold,
       RID = test$RID[observed],
       method = "EIV-GP: prospective U|C", convergence_passed = diagnostic_passed, scores)
     # Simple response-free benchmark illustrates that imputation is not exclusive to EIV-GP.
@@ -242,7 +242,7 @@ adni_extended_fold <- function(fit, train, test, draw_ids, fold_dir, validation_
       result$probability_nonpositive_CSF <- colMeans(v <= 0)
       result
     }, error = function(e) e)
-    if (!inherits(ub, "error")) urows <- rbind(urows, data.frame(validation_id = validation_id,
+    if (!inherits(ub, "error")) urows <- rbind(urows, data.frame(cv_folds = cv_folds,
       fold = fold, RID = test$RID[observed],
       method = "LM-CSF: response-free", convergence_passed = NA, ub))
     writeLines(if (inherits(ub, "error")) conditionMessage(ub) else "success",
@@ -268,7 +268,7 @@ adni_extended_fold <- function(fit, train, test, draw_ids, fold_dir, validation_
       new_U_scale = "raw", target = "surface", draw_ids = draw_ids, seed = seed + 3000L)
     adni_write_csv(data.frame(U = ug, mean = colMeans(fs), lo95 = apply(fs, 2, quantile, .025),
       hi95 = apply(fs, 2, quantile, .975), age = unname(reference[1]), female = 0, apoe4_dose = 1,
-      validation_id = validation_id, fold = fold,
+      cv_folds = cv_folds, fold = fold,
       convergence_passed = diagnostic_passed),
       file.path(out_dir, "CSF_PET_surface.csv"))
   }
@@ -286,9 +286,8 @@ adni_extended_fold <- function(fit, train, test, draw_ids, fold_dir, validation_
   invisible(NULL)
 }
 
-adni_case_report <- function(root, validation_id, smoke = FALSE) {
-  stopifnot(length(validation_id) == 1L, !is.na(validation_id))
-  folds_expected <- 1L
+adni_case_report <- function(root, folds_expected = 1:5, smoke = FALSE) {
+  stopifnot(!anyDuplicated(folds_expected), all(folds_expected %in% 1:5))
   case_dirs <- file.path(root, paste0("fold_", folds_expected), "case-study")
   files <- file.path(case_dirs, "predictions.csv")
   if (!all(file.exists(files))) stop("Missing fold prediction files; reporting requires every requested fold.")
@@ -296,19 +295,30 @@ adni_case_report <- function(root, validation_id, smoke = FALSE) {
   status <- do.call(rbind, lapply(file.path(case_dirs, "method_status.csv"), read.csv,
                                 stringsAsFactors = FALSE))
   adni_write_csv(status, file.path(root, "appendix", "method_status.csv"))
-  stopifnot(!anyDuplicated(z[, c("validation_id", "RID", "method", "scenario")]))
+  stopifnot(!anyDuplicated(z[, c("RID", "method", "scenario")]))
   reference <- z[z$method == "EIV-GP" & z$scenario == "no_test_CSF", c("RID", "fold")]
   for (m in ADNI_METHODS[-1]) {
     a <- z[z$method == m & z$scenario == "no_test_CSF", c("RID", "fold")]
     for (f in unique(a$fold)) if (!setequal(a$RID[a$fold == f], reference$RID[reference$fold == f]))
       stop("Participant mismatch for ", m, " fold ", f)
   }
+  if (!smoke) {
+    assignment_file <- file.path(root, "appendix", "fold_assignments.csv")
+    if (!file.exists(assignment_file)) stop("Missing saved fold assignments.")
+    assignment <- read.csv(assignment_file)
+    stopifnot(nrow(assignment) == 495L, !anyDuplicated(assignment$RID),
+              all(table(factor(assignment$fold, levels = 1:5)) == 99L))
+    expected <- assignment[assignment$fold %in% folds_expected, c("RID", "fold")]
+    if (nrow(reference) != nrow(expected) || !setequal(reference$RID, expected$RID) ||
+        any(reference$fold != expected$fold[match(reference$RID, expected$RID)]))
+      stop("Predictions do not match the saved held-out assignments.")
+  }
   coverage <- do.call(rbind, lapply(ADNI_METHODS, function(m) {
     a <- z[z$method == m & z$scenario == "no_test_CSF", ]
-    complete_unit <- !smoke && nrow(a) == 165L && setequal(unique(a$fold), 1L)
+    complete_unit <- !smoke && nrow(a) == 495L && setequal(unique(a$fold), 1:5)
     data.frame(method = m, n_folds = length(unique(a$fold)), n_predictions = nrow(a),
       all_requested_folds = setequal(unique(a$fold), folds_expected),
-      complete_validation = complete_unit,
+      complete_cv = complete_unit,
       flagged_folds = sum(status$method == m & (status$optimization_status != "converged" &
         status$optimization_status != "mcmc_gate_passed"), na.rm = TRUE))
   }))
@@ -321,7 +331,7 @@ adni_case_report <- function(root, validation_id, smoke = FALSE) {
     a <- z[z$method == m & z$scenario == scenario, ]
     if (!nrow(a)) next
     metric <- adni_metrics(a); metric$method <- m; metric$scenario <- scenario
-    metric$complete_validation <- coverage$complete_validation[coverage$method == m]
+    metric$complete_cv <- coverage$complete_cv[coverage$method == m]
     detailed[[length(detailed) + 1L]] <- metric
     for (f in unique(a$fold)) {
       fm <- adni_metrics(a[a$fold == f, ]); fm$method <- m; fm$scenario <- scenario; fm$fold <- f
@@ -333,8 +343,8 @@ adni_case_report <- function(root, validation_id, smoke = FALSE) {
         mm <- adni_metrics(matched)
         mm <- mm[mm$group %in% c("overall", "R0", "R1"), ]
         mm$method <- m; mm$matched_folds <- length(common_folds)
-        mm$complete_comparison <- !smoke && all(coverage$complete_validation) &&
-          setequal(common_folds, 1L)
+        mm$complete_comparison <- !smoke && all(coverage$complete_cv) &&
+          setequal(common_folds, 1:5)
         mm$diagnostic_flag <- coverage$flagged_folds[coverage$method == m] > 0
         main[[length(main) + 1L]] <- mm
       }
@@ -349,7 +359,7 @@ adni_case_report <- function(root, validation_id, smoke = FALSE) {
   adni_write_csv(main_table, file.path(root, "main", "table1_prediction.csv"))
   writeLines(c("# ADNI prediction comparison", "",
     if (smoke) "SMOKE OUTPUT - no inferential interpretation." else
-      if (!all(coverage$complete_validation) || !setequal(common_folds, 1L))
+      if (!all(coverage$complete_cv) || !setequal(common_folds, 1:5))
         "INCOMPLETE: descriptive common-fit subset only; no full-run superiority claim." else
         "All methods evaluated on the identical held-out participants.", "",
     "Primary task: PET response prediction with no test CSF. Overall, R=0, and R=1 scores are reported.",
@@ -364,7 +374,7 @@ adni_case_report <- function(root, validation_id, smoke = FALSE) {
     e <- z[z$method == "EIV-GP" & z$scenario == "no_test_CSF", ]
     a <- z[z$method == m & z$scenario == "no_test_CSF", ]
     if (group == "R0") { e <- e[e$R == 0, ]; a <- a[a$R == 0, ] }
-    merge_cols <- c("validation_id", "fold", "RID")
+    merge_cols <- c("cv_folds", "fold", "RID")
     p <- merge(e[, c(merge_cols, "CRPS", "absolute_error")],
                a[, c(merge_cols, "CRPS", "absolute_error")], by = merge_cols, suffixes = c("_eiv", "_other"))
     if (!nrow(p)) next
@@ -419,7 +429,7 @@ adni_case_report <- function(root, validation_id, smoke = FALSE) {
   writeLines(c("# Reporting boundaries", "",
     "Do not claim superiority from smoke, incomplete, or inadequately mixed fits.",
     "Positive paired differences favor EIV-GP. Bootstrap intervals are descriptive conditional-on-fits intervals; they omit refitting and model-selection uncertainty.",
-    "Validation test sets overlap; across-validation SD is descriptive.",
+    "Each participant is tested once. Training sets overlap, so fold scores are not independent replications.",
     "The literature competitors do not estimate physical CSF posteriors or a CSF-coordinate surface. Other calibrated models can; these capabilities are not universally unique to EIV-GP.",
     "Background and task specifications are in the notebook. EDA is descriptive and must not drive post-hoc test-set tuning."),
     file.path(root, "appendix", "INTERPRETATION.md"))

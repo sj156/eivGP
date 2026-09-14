@@ -20,7 +20,7 @@ are described in the README.
 knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = TRUE)
 if (!exists("OCEAN_REALDATA_DIR")) {
   input <- knitr::current_input(dir = TRUE)
-  if (length(input) != 1L || !nzchar(input)) stop("Use run_application.R or knit this notebook.")
+  if (length(input) != 1L || !nzchar(input)) stop("Use run_real_data.R or knit this notebook.")
   OCEAN_REALDATA_DIR <- dirname(normalizePath(input))
 }
 ```
@@ -33,7 +33,7 @@ Baseline comparisons use the same kernel family and test information target.
 The full-training-U oracle also integrates test U given its ordinal interval.
 
 ```{r analysis}
-source(file.path(OCEAN_REALDATA_DIR, "run_ocean_all.R"), local = TRUE)
+source(file.path(OCEAN_REALDATA_DIR, "ocean_run_all.R"), local = TRUE)
 ```
 
 ## Reproducibility

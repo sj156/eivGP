@@ -8,4 +8,9 @@ pkg <- if (requireNamespace("eivGP", quietly = TRUE)) utils::packageDescription(
 if (is.null(pkg) || !identical(pkg$Version, "0.3.1") || !identical(pkg$RemoteSha, commit))
   remotes::install_github("sj156/eivGP", subdir = "eivGP", ref = commit,
                           upgrade = "never", dependencies = NA, force = TRUE)
-writeLines(capture.output(sessionInfo()), "setup-sessionInfo.txt")
+f <- sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE)[1])
+if (!file.exists(f)) f <- gsub("~+~", " ", f, fixed = TRUE)
+repo <- dirname(dirname(normalizePath(f, mustWork = TRUE)))
+output <- file.path(repo, "real_data_application_outputs", "setup")
+dir.create(output, recursive = TRUE, showWarnings = FALSE)
+writeLines(capture.output(sessionInfo()), file.path(output, "sessionInfo.txt"))

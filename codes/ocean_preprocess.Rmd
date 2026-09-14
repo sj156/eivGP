@@ -49,25 +49,22 @@ preparation scripts.
 ## 2. Parameters and paths
 
 The default raw-file search includes the path used in the working project:
-`code/New-version/ocean_new/bcodmo_bounded_raw_nitrate_eivgp/data/raw/AllBottle.csv`.
+`real-data/raw/ocean/AllBottle.csv`.
 For a clean checkout, place the downloaded file there or provide an explicit
 path through `OCEAN_RAW_FILE` or `params$raw_file`. By default the output is
-written to the existing class-6 derived-data directory; set
-`OCEAN_OUTPUT_DIR` or `params$output_dir` to write elsewhere.
+written to `real-data/ocean/`; set
+`OCEAN_DATA_DIR` or `params$output_dir` to write elsewhere.
 
 ```{r setup, message=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = TRUE)
 
 rmd_input <- knitr::current_input(dir = TRUE)
 if (is.null(rmd_input) || !length(rmd_input) || !nzchar(rmd_input)) {
-  rmd_input <- file.path("package-match", "notebooks", "ocean_data_preprocessing.Rmd")
+  stop("Render codes/ocean_preprocess.Rmd with rmarkdown::render().")
 }
 rmd_dir <- dirname(normalizePath(rmd_input, mustWork = TRUE))
-repo_dir <- normalizePath(file.path(rmd_dir, "..", ".."), mustWork = TRUE)
-case_dir <- file.path(
-  repo_dir, "code", "New-version", "ocean_new",
-  "bcodmo_np_role_swap_class6_split_2026-08-05"
-)
+repo_dir <- normalizePath(file.path(rmd_dir, ".."), mustWork = TRUE)
+case_dir <- file.path(repo_dir, "real-data", "ocean")
 
 param_or_env <- function(param, env_name) {
   if (!is.null(param) && length(param) == 1L && nzchar(as.character(param))) {
@@ -79,11 +76,7 @@ param_or_env <- function(param, env_name) {
 
 raw_file <- param_or_env(params$raw_file, "OCEAN_RAW_FILE")
 if (!nzchar(raw_file)) {
-  raw_candidates <- c(
-    file.path(repo_dir, "code", "New-version", "ocean_new",
-              "bcodmo_bounded_raw_nitrate_eivgp", "data", "raw", "AllBottle.csv"),
-    file.path(case_dir, "data", "raw", "AllBottle.csv")
-  )
+  raw_candidates <- file.path(repo_dir, "real-data", "raw", "ocean", "AllBottle.csv")
   raw_file <- raw_candidates[file.exists(raw_candidates)][1L]
 }
 if (is.na(raw_file) || !file.exists(raw_file)) {
@@ -94,17 +87,15 @@ if (is.na(raw_file) || !file.exists(raw_file)) {
 }
 raw_file <- normalizePath(raw_file, mustWork = TRUE)
 
-output_dir <- param_or_env(params$output_dir, "OCEAN_OUTPUT_DIR")
+output_dir <- param_or_env(params$output_dir, "OCEAN_DATA_DIR")
 if (!nzchar(output_dir)) {
-  output_dir <- file.path(
-    case_dir, "data", "derived", "positive_primary_np_swap_class6"
-  )
+  output_dir <- case_dir
 }
 output_dir <- normalizePath(output_dir, mustWork = FALSE)
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
-audit_dir <- file.path(dirname(output_dir), "..", "audit")
+audit_dir <- file.path(output_dir, "audit")
 audit_dir <- normalizePath(audit_dir, mustWork = FALSE)
-calibration_dir <- file.path(dirname(output_dir), "..", "calibration_designs")
+calibration_dir <- output_dir
 calibration_dir <- normalizePath(calibration_dir, mustWork = FALSE)
 dir.create(audit_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(calibration_dir, recursive = TRUE, showWarnings = FALSE)

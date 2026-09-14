@@ -21,3 +21,14 @@ litr/create-eivGP.knit.md
 /real-data/
 
 /results/
+
+/real_data_application_outputs/
+/codes/ADNI_*.html
+/codes/ocean_*.html
+/codes/real_data_*.html
+/codes/*_files/
+/codes/*_cache/
+
+.RData
+/setup-sessionInfo.txt
+/codes/setup-sessionInfo.txt

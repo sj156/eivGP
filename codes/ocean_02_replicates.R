@@ -15,16 +15,17 @@ if (!exists("OCEAN_REALDATA_DIR")) {
   }
   OCEAN_REALDATA_DIR <- dirname(script_file)
 }
-source(file.path(OCEAN_REALDATA_DIR, "shared", "require_eivgp.R"))
-source(file.path(OCEAN_REALDATA_DIR, "shared", "00_study1_functions.R"))
+source(file.path(OCEAN_REALDATA_DIR, "real_data_support", "require_eivgp.R"), local = TRUE)
+source(file.path(OCEAN_REALDATA_DIR, "real_data_support", "00_study1_functions.R"), local = TRUE)
 if (!exists("load_ocean_prepared")) {
-  source(file.path(OCEAN_REALDATA_DIR, "ocean_data_helpers.R"))
+  source(file.path(OCEAN_REALDATA_DIR, "ocean_data_helpers.R"), local = TRUE)
 }
 
 if (!exists("OCEAN_QUICK")) OCEAN_QUICK <- FALSE
 if (!exists("OCEAN_USE_CACHE")) OCEAN_USE_CACHE <- TRUE
+source(file.path(OCEAN_REALDATA_DIR, "real_data_paths.R"), local = TRUE)
 if (!exists("OCEAN_OUT_PREFIX")) {
-  OCEAN_OUT_PREFIX <- file.path(OCEAN_REALDATA_DIR, "outputs")
+  OCEAN_OUT_PREFIX <- application_paths(OCEAN_REALDATA_DIR)$ocean_output
 }
 if (!exists("OCEAN_KERNEL")) OCEAN_KERNEL <- "se"
 if (!exists("OCEAN_MATERN_NU")) OCEAN_MATERN_NU <- 2.5
@@ -34,9 +35,9 @@ require_study1_reporting_packages(
   "ocean calibration-redraw analysis"
 )
 
-FIG_DIR <- file.path(OCEAN_OUT_PREFIX, "figures", "ocean")
-TAB_DIR <- file.path(OCEAN_OUT_PREFIX, "tables", "ocean")
-RES_DIR <- file.path(OCEAN_OUT_PREFIX, "results", "ocean")
+FIG_DIR <- file.path(OCEAN_OUT_PREFIX, "figures")
+TAB_DIR <- file.path(OCEAN_OUT_PREFIX, "tables")
+RES_DIR <- file.path(OCEAN_OUT_PREFIX, "fits")
 
 dir.create(FIG_DIR, showWarnings = FALSE, recursive = TRUE)
 dir.create(TAB_DIR, showWarnings = FALSE, recursive = TRUE)

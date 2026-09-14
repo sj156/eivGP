@@ -1,0 +1,18 @@
+Frozen ADNI cohort (2026-09-10)
+  filename: real-data/toledo_adni_cohort_n495.csv
+  MD5: d10b980253304620efea9f2a013166a9
+  participants: 495; columns: 29; observed CSF: 133; missing CSF: 362
+
+Current evaluation: one fixed 5-fold CV
+  generator: codes/ADNI_cv.R
+  seed: 20260914; RNG: Mersenne-Twister / Inversion / Rejection
+  stratification: observed/missing CSF status; no outcome-based split selection
+  test: 99; train: 396; one test prediction per participant per method
+  assignment audit: real_data_application_outputs/adni/five_fold/appendix/fold_assignments.csv
+  old repeated 3-fold and 20-validation assignments are not used
+
+Y: y_centiloid; U: u_csf_abeta42
+X: x_age_years, x_female, x_apoe4_dose
+C: c_ab42_ab40_3, c_gfap_3
+Package: eivGP exactly 0.3.1
+Tested commit: a3aa0f697f97d4bdf027507ac3c9b952644affb9

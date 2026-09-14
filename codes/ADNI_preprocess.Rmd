@@ -60,12 +60,13 @@ Sys.setenv(
   ADNI_RAW_DIR = "/secure/path/to/my/adni-downloads",
   ADNI_TOLEDO_DATA_DIR = "/secure/path/to/my/adni-derived/toledo"
 )
-rmarkdown::render("prepare_adni_toledo_cohort.Rmd")
+rmarkdown::render("ADNI_preprocess.Rmd")
 ```
 
-Alternatively, place the raw downloads in a local `raw-data/` directory beside
-this Rmd. The default output is `local-data/` beside this Rmd. Both directory
-names must be excluded from Git.
+Raw downloads default to `real-data/raw/adni/`; cleaned output defaults to
+`real-data/` at the repository root. This private directory is excluded from Git.
+The historical repeated-fold file produced below is retained for provenance;
+`ADNI_cv.R` generates the current five-fold analysis assignment.
 
 Set `ADNI_STRICT_FROZEN=0` only for an explicitly labelled cohort-update
 sensitivity analysis. Such output is not the frozen n=495 experiment.
@@ -92,10 +93,10 @@ env_flag <- function(name, default = FALSE) {
 }
 
 RAW_DIR <- Sys.getenv(
-  "ADNI_RAW_DIR", unset = file.path(PROJECT_DIR, "raw-data")
+  "ADNI_RAW_DIR", unset = file.path(PROJECT_DIR, "..", "real-data", "raw", "adni")
 )
 OUTPUT_DIR <- Sys.getenv(
-  "ADNI_TOLEDO_DATA_DIR", unset = file.path(PROJECT_DIR, "local-data")
+  "ADNI_TOLEDO_DATA_DIR", unset = file.path(PROJECT_DIR, "..", "real-data")
 )
 STRICT_FROZEN <- env_flag("ADNI_STRICT_FROZEN", TRUE)
 

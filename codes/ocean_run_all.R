@@ -36,16 +36,17 @@ OCEAN_MATERN_NU <- as.numeric(Sys.getenv("OCEAN_MATERN_NU", "2.5"))
 stopifnot(OCEAN_KERNEL %in% c("se", "matern"), OCEAN_MATERN_NU %in% c(0.5, 1.5, 2.5))
 OCEAN_CACHE_VERSION <- "v3_eivGP031"
 
-OCEAN_OUT_PREFIX <- Sys.getenv("OCEAN_OUTPUT_DIR", file.path(OCEAN_REALDATA_DIR, "outputs"))
+source(file.path(OCEAN_REALDATA_DIR, "real_data_paths.R"), local = TRUE)
+OCEAN_OUT_PREFIX <- Sys.getenv("OCEAN_OUTPUT_DIR", application_paths(OCEAN_REALDATA_DIR)$ocean_output)
 
-source(file.path(OCEAN_REALDATA_DIR, "shared", "require_eivgp.R"))
-source(file.path(OCEAN_REALDATA_DIR, "shared", "00_study1_functions.R"))
-source(file.path(OCEAN_REALDATA_DIR, "ocean_data_helpers.R"))
+source(file.path(OCEAN_REALDATA_DIR, "real_data_support", "require_eivgp.R"), local = TRUE)
+source(file.path(OCEAN_REALDATA_DIR, "real_data_support", "00_study1_functions.R"), local = TRUE)
+source(file.path(OCEAN_REALDATA_DIR, "ocean_data_helpers.R"), local = TRUE)
 
 cat("\nRunning representative ocean figures...\n")
-source(file.path(OCEAN_REALDATA_DIR, "01_ocean_representative_figures.R"))
+source(file.path(OCEAN_REALDATA_DIR, "ocean_01_representative_figures.R"), local = TRUE)
 
 cat("\nRunning ocean nested-calibration redraws...\n")
-source(file.path(OCEAN_REALDATA_DIR, "02_ocean_replicates.R"))
+source(file.path(OCEAN_REALDATA_DIR, "ocean_02_replicates.R"), local = TRUE)
 
 cat("\nDone.\n")

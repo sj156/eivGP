@@ -1,7 +1,0 @@
-outputs/
-ADNI-toledo/outputs/
-*.html
-ADNI-toledo/*.html
-setup-sessionInfo.txt
-.Rhistory
-.RData

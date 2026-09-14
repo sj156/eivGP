@@ -1,6 +1,6 @@
 # Fold/chain scheduling. Statistical settings and seed formulas are unchanged.
-adni_core_plan <- function(total_cores, n_folds = 3L, n_chains = 4L,
-                           max_fold_workers = 3L, os_type = .Platform$OS.type) {
+adni_core_plan <- function(total_cores, n_folds = 5L, n_chains = 4L,
+                           max_fold_workers = 5L, os_type = .Platform$OS.type) {
   valid <- function(x) is.numeric(x) && length(x) == 1L && is.finite(x) && x >= 1 && x == floor(x)
   if (!all(vapply(list(total_cores, n_folds, n_chains, max_fold_workers), valid, logical(1))))
     stop("Core, fold, and chain counts must be positive integers.")
@@ -24,7 +24,7 @@ adni_print_core_plan <- function(plan) {
 
 adni_run_jobs <- function(jobs, FUN, plan, status_path) {
   worker <- function(i) {
-    fold <- jobs$fold[i]; validation_id <- jobs$validation_id[i]
+    fold <- jobs$fold[i]
     dir <- file.path(jobs$output_root[i], paste0("fold_", fold))
     dir.create(dir, recursive = TRUE, showWarnings = FALSE)
     lock <- file.path(dir, ".fold-lock")
@@ -38,7 +38,7 @@ adni_run_jobs <- function(jobs, FUN, plan, status_path) {
     cat("\nWorker start:", as.character(Sys.time()), "PID", Sys.getpid(), "fold", fold, "\n")
     unlink(file.path(dir, "WORKER_FAILURE.txt"))
     tryCatch({
-      value <- FUN(validation_id, fold)
+      value <- FUN(fold)
       cat("Worker finished:", as.character(Sys.time()), "\n")
       list(ok = TRUE, fold = fold, value = value)
     }, error = function(e) {
@@ -53,7 +53,7 @@ adni_run_jobs <- function(jobs, FUN, plan, status_path) {
       mc.preschedule = FALSE, mc.set.seed = FALSE, mc.allow.recursive = TRUE)
   } else results <- lapply(seq_len(nrow(jobs)), worker)
   good <- vapply(results, function(x) is.list(x) && isTRUE(x$ok), logical(1))
-  status <- data.frame(validation_id = jobs$validation_id, fold = jobs$fold, success = good,
+  status <- data.frame(fold = jobs$fold, success = good,
     message = vapply(seq_along(results), function(i) {
       x <- results[[i]]
       if (good[i]) "finished" else if (is.list(x) && !is.null(x$message)) x$message else
@@ -65,10 +65,10 @@ adni_run_jobs <- function(jobs, FUN, plan, status_path) {
   lapply(results, `[[`, "value")
 }
 
-# Direct Rmd rendering keeps a single-validation entry point.
+# Rscript and direct Rmd rendering use the same fold scheduler.
 adni_run_folds <- function(folds, FUN, plan, output_root) {
-  jobs <- data.frame(validation_id = 1L, fold = folds, output_root = output_root)
-  values <- adni_run_jobs(jobs, function(validation_id, fold) FUN(fold), plan,
+  jobs <- data.frame(fold = folds, output_root = output_root)
+  values <- adni_run_jobs(jobs, function(fold) FUN(fold), plan,
                          file.path(output_root, "fold_worker_status.csv"))
   setNames(values, as.character(folds))
 }

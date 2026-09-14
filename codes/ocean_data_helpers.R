@@ -18,9 +18,11 @@ if (!exists("OCEAN_REALDATA_DIR")) {
   OCEAN_REALDATA_DIR <- ocean_current_script_dir()
 }
 
+source(file.path(OCEAN_REALDATA_DIR, "real_data_paths.R"), local = TRUE)
+
 default_ocean_profile_dir <- function() {
   explicit <- Sys.getenv("OCEAN_DATA_DIR", "")
-  candidates <- if (nzchar(explicit)) explicit else file.path(OCEAN_REALDATA_DIR, "data", "prepared")
+  candidates <- if (nzchar(explicit)) explicit else application_paths(OCEAN_REALDATA_DIR)$ocean_data
   candidates <- candidates[nzchar(candidates)]
   for (p in candidates) {
     if (file.exists(file.path(p, "study1_data.csv"))) {
@@ -97,14 +99,16 @@ load_ocean_prepared <- function(data_dir = NULL) {
 
 read_ocean_class_allocation <- function(path = NULL) {
   if (is.null(path)) {
-    local <- file.path(
-      OCEAN_REALDATA_DIR, "data", "class6_proportional_calibration_allocation.csv"
-    )
-    parent <- file.path(
-      default_ocean_profile_dir(), "..", "..", "calibration_designs",
-      "class6_proportional_calibration_allocation.csv"
-    )
-    path <- if (file.exists(local)) local else parent
+    path <- file.path(default_ocean_profile_dir(), "class6_proportional_calibration_allocation.csv")
+    if (!file.exists(path)) {
+      meta <- jsonlite::fromJSON(file.path(default_ocean_profile_dir(), "meta.json"))
+      needed <- c("m", "train_class_counts", paste0("calibration_by_class_", c(10,25,50)))
+      if (!all(needed %in% names(meta))) stop("Ocean metadata lack frozen calibration counts.")
+      out <- data.frame(c = seq_len(meta$m), train_n = as.integer(unlist(meta$train_class_counts)))
+      for (n in c(10,25,50)) out[[paste0("n_calib_", n)]] <-
+        as.integer(strsplit(as.character(meta[[paste0("calibration_by_class_", n)]]), "/", fixed = TRUE)[[1]])
+      return(out)
+    }
   }
   path <- normalizePath(path, mustWork = TRUE)
   out <- read.csv(path, stringsAsFactors = FALSE)

@@ -1,0 +1,11 @@
+Frozen train/test IDs inherited from class-6 confirmatory pack.
+Allocation locked from class6_proportional_calibration_allocation.csv.
+C10 seats: 1/2/2/2/1/2 
+C25 seats: 2/5/4/6/3/5 
+C50 seats: 3/10/7/12/7/11 
+n_rep = 10  base_seed = 20260813 
+calib_seed = base_seed * 100 + rep_id
+mcmc_seed  = (base_seed + 1) * 100 + rep_id
+Within-class permutation: set.seed(calib_seed + class).
+Unique C10 sets: 10 / 10 
+Any C10 equals confirmatory 20260805 design: FALSE 

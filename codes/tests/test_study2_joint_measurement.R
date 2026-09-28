@@ -3,7 +3,7 @@
 script_arg <- grep("^--file=", commandArgs(FALSE), value = TRUE)
 stopifnot(length(script_arg) == 1L)
 codes_dir <- dirname(dirname(normalizePath(sub("^--file=", "", script_arg))))
-source(file.path(codes_dir, "00_study2_functions.R"))
+source(file.path(codes_dir, "core/00_study2_functions.R"))
 expect_error <- function(expr, pattern) {
   result <- tryCatch(force(expr), error = identity)
   stopifnot(inherits(result, "error"), grepl(pattern, conditionMessage(result)))
@@ -185,8 +185,8 @@ expect_error(update_loading_transport_ess(y, X, U, S, A, lt, missing, max_try = 
 ## a marginal row update, and calibrated U must never move at any transition.
 run_small <- function(missing, use_schur) {
   env <- new.env(parent = globalenv())
-  source(file.path(codes_dir, "00_parallel_utils.R"), local = env)
-  source(file.path(codes_dir, "00_study2_functions.R"), local = env)
+  source(file.path(codes_dir, "core/00_parallel_utils.R"), local = env)
+  source(file.path(codes_dir, "core/00_study2_functions.R"), local = env)
   n <- 8L
   X <- matrix(seq(-1, 1, length.out = n), ncol = 1L)
   U <- cbind(seq(-1.5, 1.5, length.out = n), sin(seq_len(n)))

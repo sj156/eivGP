@@ -1,0 +1,146 @@
+---
+title: "Ocean silicate: learning from oxygen classes and partial measurements"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    code_folding: hide
+params:
+  profile: "quick"
+  action: "run"
+  data_dir: ""
+  output_dir: ""
+---
+
+Can oxygen categories and a small number of exact oxygen measurements help
+predict silicate? This notebook follows that question from exploratory plots
+to held-out predictions using the frozen GLODAPv2.2023 North Pacific subset.
+The 200 observations represent distinct station profiles at 300–1,500 dbar,
+with oxygen below 180 µmol kg⁻¹. The response is silicate; fully observed inputs
+are salinity and log pressure. Oxygen is treated as partially observed, with
+classes bounded at 50, 100, and 150 µmol kg⁻¹.
+
+## 1. Select the computation
+
+| Profile | Folds | Exact training oxygen | Chains × iterations (warmup) |
+|:--|:--|:--|:--|
+| `quick` (this HTML example) | first fold | 0%, 50% | 1 × 80 (30) |
+| `paper` | all five | 0%, 20%, 50% | 4 × 20,000 (5,000) |
+
+The paper workflow also runs UC-GP, LVGP, and EzGP and includes the recorded
+20,000-iteration continuation step for the selected fits (fold 1/O0,
+fold 3/O20, fold 4/O0). Selection was based on training-chain diagnostics.
+The quick example demonstrates EIV-GP prediction and latent-input uncertainty;
+its short chain cannot establish convergence or comparative performance.
+
+The frozen public subset and train/test files are included in
+`data/ocean_silicate/`. No separate preprocessing notebook is needed.
+`action: "run"` generates the analysis below; `report` rereads saved results;
+`plan` only displays settings. Supporting scripts are in
+`codes/applications/ocean_silicate/`.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, cache = FALSE)
+defaults <- list(profile = "quick", action = "run", data_dir = "", output_dir = "")
+settings <- if (exists("params")) utils::modifyList(defaults, params) else defaults
+profile <- match.arg(settings$profile, c("quick", "paper"))
+action <- match.arg(settings$action, c("plan", "run", "report"))
+input <- knitr::current_input(dir = TRUE)
+repository_dir <- if (length(input) == 1L && nzchar(input)) normalizePath(file.path(dirname(input), "..")) else
+  if (file.exists("codes/load_mixedgp.R")) normalizePath(".") else normalizePath("..")
+source(file.path(repository_dir, "codes", "reporting", "notebook_helpers.R"), local = TRUE)
+source(file.path(repository_dir, "codes", "applications", "ocean_silicate", "workflow.R"), local = TRUE)
+source(file.path(repository_dir, "codes", "applications", "ocean_silicate", "reporting.R"), local = TRUE)
+data_dir <- if (nzchar(settings$data_dir)) settings$data_dir else file.path(repository_dir, "data", "ocean_silicate")
+output_dir <- if (nzchar(settings$output_dir)) settings$output_dir else
+  file.path(repository_dir, "reproduction", "ocean", profile)
+```
+
+```{r selected-profile, echo=FALSE}
+knitr::kable(data.frame(profile = profile, action = action,
+  folds = if (profile == "quick") 1L else 5L,
+  chains = if (profile == "quick") 1L else 4L,
+  initial_iterations = if (profile == "quick") 80L else 20000L))
+```
+
+## 2. Explore the observed data
+
+All source oxygen measurements are retained for checking imputation; exact values
+are withheld according to the fixed calibration masks during fitting. Each fold
+has 160 training and 40 test observations. Calibration masks are nested, and no
+station profile appears in both training and test data in the same fold.
+
+```{r data, eval=action != "plan"}
+cohort <- ocean_read_inputs(data_dir)
+knitr::kable(as.data.frame(table(cohort$oxygen_class)),
+  col.names = c("Oxygen class (µmol/kg)", "Observations"))
+```
+
+```{r exploratory-plots, eval=action != "plan", fig.width=10, fig.height=3.8}
+library(ggplot2)
+library(patchwork)
+p1 <- ggplot(cohort, aes(U, Y, color = oxygen_class)) + geom_point(alpha = .65) +
+  labs(x = "Measured oxygen (µmol/kg)", y = "Silicate (µmol/kg)", color = "Oxygen class") +
+  theme_minimal() + theme(legend.position = "none")
+p2 <- ggplot(cohort, aes(oxygen_class, Y, fill = oxygen_class)) + geom_boxplot(outlier.alpha = .4) +
+  labs(x = "Oxygen class (µmol/kg)", y = "Silicate (µmol/kg)") +
+  theme_minimal() + theme(legend.position = "none")
+p3 <- ggplot(cohort, aes(G2salinity, Y, color = log_pressure)) + geom_point(alpha = .65) +
+  labs(x = "Salinity", y = "Silicate (µmol/kg)", color = "Log pressure") + theme_minimal()
+p1 + p2 + p3
+```
+
+These plots describe the frozen subset. They do not select calibration levels,
+folds, or model settings based on held-out performance.
+
+## 3. Fit and make held-out predictions
+
+The class-only prediction task uses salinity, log pressure, and oxygen class.
+A second, mixed-information task additionally reveals the prespecified fraction
+of exact test oxygen values to EIV-GP. These tasks must be distinguished when
+interpreting scores. At zero calibration, latent oxygen is identified on the
+model scale; it is not scored as raw-concentration recovery.
+
+```{r fit, eval=action == "run"}
+run <- notebook_logged(paste0(output_dir, "-execution.log"),
+  ocean_run_analysis(repository_dir, data_dir, output_dir, profile))
+```
+
+## 4. Inspect predictions and uncertainty
+
+```{r results, eval=action != "plan", echo=FALSE, results="asis"}
+result <- if (profile == "paper") ocean_read_paper_results(output_dir) else ocean_read_results(output_dir, profile)
+shown <- result$metrics[, c("cell", "method", "RMSE", "MAE", "CRPS", "Coverage95")]
+summary <- aggregate(shown[, c("RMSE", "MAE", "CRPS", "Coverage95")],
+  shown[, c("cell", "method")], mean)
+print(knitr::kable(summary, digits = 3))
+```
+
+```{r predictions, eval=action != "plan", fig.width=8, fig.height=3.5}
+ggplot(result$predictions, aes(observed_Y, predicted_Y)) +
+  geom_abline(slope = 1, intercept = 0, linetype = 2, color = "grey50") +
+  geom_point(alpha = .65, color = "#2c7fb8") + facet_wrap(~cell) +
+  labs(x = "Observed held-out silicate", y = "Predicted silicate",
+       title = "Class-only held-out predictions") + theme_minimal()
+```
+
+```{r diagnostic-note, eval=action != "plan", echo=FALSE, results="asis"}
+if (profile == "quick") cat("**Worked example only. One short chain cannot establish convergence; these scores are not paper results.**") else
+  print(knitr::kable(result$diagnostics, digits = 3))
+```
+
+## 5. Reproduce and cite
+
+Choose `profile: "paper"` and rerun this notebook to execute the complete
+five-fold workflow. Saved compatible fits are reused; changed inputs/settings
+require a separate output directory. Full diagnostic and execution logs stay
+in the local result directory, keeping this HTML focused on the analysis.
+
+Data: GLODAPv2.2023 merged and adjusted product, DOI **10.25921/zyrq-ht66**.
+Product reference: Lauvset et al. (2024), *Earth System Science Data* 16,
+2047–2072, DOI **10.5194/essd-16-2047-2024**. See the bundled data README for
+subset provenance and fair-data-use attribution.
+
+```{r reproducibility, echo=FALSE}
+knitr::kable(data.frame(R = as.character(getRversion()), eivGP = as.character(packageVersion("eivGP")), profile = profile))
+```

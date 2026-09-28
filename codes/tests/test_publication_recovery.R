@@ -1,5 +1,5 @@
 source("codes/simulation_helpers.R")
-source("codes/publication_recovery.R")
+source("codes/simulations/publication_recovery.R")
 e <- mixedgp_simulation_engine("codes")
 # Reference errors preserve RNG and never become fictitious numerical truth.
 set.seed(718); before <- .Random.seed

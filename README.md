@@ -5,9 +5,37 @@ for latent continuous inputs, and optional observed calibration inputs. It suppo
 univariate threshold and multivariate ordinal-probit measurement models, prediction,
 latent-input imputation, MCMC diagnostics, and explicit continuation.
 
-The reusable model is in `eivGP/`, built from `codes/` through
-[`litr/create-eivGP.Rmd`](litr/create-eivGP.Rmd). Paper experiments live separately
-in `experiments/`. Real-data reproduction instructions will follow when ready.
+The installable package is in `eivGP/`; `litr/` builds it from `codes/core/`.
+Supporting R code is grouped by purpose under [`codes/`](codes/README.md).
+
+## Read an example, then run the same workflow
+
+There are **two analysis notebooks**. Each starts with a small exploratory
+analysis and computes its displayed results automatically. The bundled HTML
+uses reduced computation to demonstrate the workflow.
+
+| Workflow | Notebook | Worked HTML example |
+| --- | --- | --- |
+| Numerical experiments, Studies I and II | [Notebook](replication/01_numerical_experiments.Rmd) | [HTML](docs/replication/01_numerical_experiments.html) |
+| GLODAP: silicate and partially observed oxygen | [Notebook](replication/02_ocean.Rmd) | [HTML](docs/replication/02_ocean.html) |
+
+After installing dependencies, open a notebook and Knit, or call
+`rmarkdown::render("replication/01_numerical_experiments.Rmd")` from the repository
+root. Defaults are `profile: "quick"` and `action: "run"`. Use `profile: "paper"`
+in the **same notebook** for the full computation. The numerical notebook also
+offers `development`, and `study` selects either or both studies. See the
+[notebook guide](replication/README.md) for data requirements and saved-result reuse.
+
+The paper numerical configuration is 50 datasets per setting, four chains,
+20,000 total iterations per chain, and 5,000 warmup. The quick HTML illustrates
+analysis; short-chain scores are not publication estimates or convergence evidence.
+The ocean notebook lists its full budget and continuation protocol. The GLODAP
+frozen subset is bundled. ADNI is deferred from this reader-facing collection.
+
+`replication/` contains notebook sources; `docs/replication/` contains the selected
+rendered examples; `reproduction/` and application output folders contain local
+fits, logs, and caches. Preprocessing and operational scripts are supporting code,
+not separate reader notebooks.
 
 ## Install and use the package
 
@@ -47,7 +75,7 @@ version alone does not identify the priors or experiment settings.
 ### 1. Set up each machine
 
 ```sh
-Rscript --vanilla experiments/install_eivgp_dependencies.R
+Rscript --vanilla codes/cli/install_eivgp_dependencies.R
 R CMD INSTALL eivGP
 git rev-parse HEAD
 
@@ -87,8 +115,8 @@ ablation budgets are separate; inspect the printed plan and saved configuration.
 Generate publication data once, before publication MCMC or competitor runs:
 
 ```sh
-Rscript --vanilla experiments/run_publication_study.R study1-data
-Rscript --vanilla experiments/run_publication_study.R study2-data
+Rscript --vanilla codes/cli/run_publication_study.R study1-data
+Rscript --vanilla codes/cli/run_publication_study.R study2-data
 ```
 
 Files go to `reproduction/data/synthetic/`. Development MCMC currently prepares
@@ -103,10 +131,10 @@ does not download data or results.
 Start with development mode; run one study at a time:
 
 ```sh
-Rscript --vanilla experiments/run_development_study.R study1 plan
-Rscript --vanilla experiments/run_development_study.R study1 fit
-Rscript --vanilla experiments/run_development_study.R study2 plan
-Rscript --vanilla experiments/run_development_study.R study2 fit
+Rscript --vanilla codes/cli/run_development_study.R study1 plan
+Rscript --vanilla codes/cli/run_development_study.R study1 fit
+Rscript --vanilla codes/cli/run_development_study.R study2 plan
+Rscript --vanilla codes/cli/run_development_study.R study2 fit
 ```
 
 `fit` saves MCMC and evaluation results without plotting. Use `run` instead to
@@ -115,10 +143,10 @@ also report. Neither action fits competitors or reads their caches.
 For publication runs, after reviewing development diagnostics:
 
 ```sh
-EIVGP_RUN_MODE=dry_run Rscript --vanilla experiments/run_publication_study.R study1
-EIVGP_RUN_MODE=publication Rscript --vanilla experiments/run_publication_study.R study1
-EIVGP_RUN_MODE=dry_run Rscript --vanilla experiments/run_publication_study.R study2
-EIVGP_RUN_MODE=publication Rscript --vanilla experiments/run_publication_study.R study2
+EIVGP_RUN_MODE=dry_run Rscript --vanilla codes/cli/run_publication_study.R study1
+EIVGP_RUN_MODE=publication Rscript --vanilla codes/cli/run_publication_study.R study1
+EIVGP_RUN_MODE=dry_run Rscript --vanilla codes/cli/run_publication_study.R study2
+EIVGP_RUN_MODE=publication Rscript --vanilla codes/cli/run_publication_study.R study2
 ```
 
 Keep the exact run-directory path printed at completion. Development results are
@@ -133,10 +161,10 @@ folder; for the author's setup, use the local Dropbox/Overleaf project folder.
 ```sh
 export EIVGP_OVERLEAF_ROOT="/absolute/path/to/your/paper"
 export EIVGP_WORKERS=10
-Rscript --vanilla experiments/run_competitors.R study1 plan publication
-Rscript --vanilla experiments/run_competitors.R study1 run publication
-Rscript --vanilla experiments/run_competitors.R study2 plan publication
-Rscript --vanilla experiments/run_competitors.R study2 run publication
+Rscript --vanilla codes/cli/run_competitors.R study1 plan publication
+Rscript --vanilla codes/cli/run_competitors.R study1 run publication
+Rscript --vanilla codes/cli/run_competitors.R study2 plan publication
+Rscript --vanilla codes/cli/run_competitors.R study2 run publication
 ```
 
 Each worker handles one dataset, fitting UC-GP, LVGP, and EzGP sequentially.
@@ -154,7 +182,7 @@ Generate study tables and figures from a saved MCMC run, without refitting:
 
 ```sh
 RUN_DIR="/absolute/path/to/the/saved/mcmc-run"
-Rscript --vanilla experiments/report_study.R "$RUN_DIR" report
+Rscript --vanilla codes/cli/report_study.R "$RUN_DIR" report
 ```
 
 Review R̂, bulk/tail ESS, MCSE, traces, and failure records before interpreting
@@ -166,7 +194,7 @@ report folder onto one machine. No competitor model cache is needed:
 
 ```sh
 COMPETITOR_REPORT="/absolute/path/to/competitor-reports/study1/publication"
-Rscript --vanilla experiments/combine_results.R "$RUN_DIR" "$COMPETITOR_REPORT" "$EIVGP_OVERLEAF_ROOT/tables/combined/study1"
+Rscript --vanilla codes/cli/combine_results.R "$RUN_DIR" "$COMPETITOR_REPORT" "$EIVGP_OVERLEAF_ROOT/tables/combined/study1"
 ```
 
 Use matching study paths. The merger verifies dataset checksums and writes

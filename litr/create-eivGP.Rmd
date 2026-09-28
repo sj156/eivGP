@@ -10,7 +10,7 @@ params:
 ---
 
 This is the sole active package build. The implementation is maintained in
-`../codes`; the generated installable package is `../eivGP`. Numerical-study
+`../codes/core`; the generated installable package is `../eivGP`. Numerical-study
 designs, frozen data, and launchers remain in the repository experiment layer.
 
 ## Package setup
@@ -54,8 +54,13 @@ if (!file.exists(file.path(package_dir, ".Rbuildignore"))) {
 writeLines(c("YEAR: 2026", paste(
   "COPYRIGHT HOLDER: Penghui Fu, Xinye Chen, Jianhua Z. Huang, and Sheng Jiang"
 )), file.path(package_dir, "LICENSE"))
-stopifnot(file.copy(file.path(repository_dir, "README.md"),
-                   file.path(package_dir, "README.md"), overwrite = TRUE))
+readme <- readLines(file.path(repository_dir, "README.md"), warn = FALSE)
+# The package README is one directory below the repository documentation.
+for (collection in c("codes", "replication", "docs")) {
+  readme <- gsub(paste0("](", collection, "/"),
+                 paste0("](../", collection, "/"), readme, fixed = TRUE)
+}
+writeLines(readme, file.path(package_dir, "README.md"))
 stopifnot(file.copy(file.path(repository_dir, "PACKAGE-UPDATE-0.3.1.md"),
                    file.path(package_dir, "NEWS.md"), overwrite = TRUE))
 dir.create(file.path(package_dir, "inst"), showWarnings = FALSE)
@@ -103,7 +108,7 @@ canonical_modules <- c(
   "00_mcmc_workflow.R"
 )
 dir.create(file.path(package_dir, "R"), showWarnings = FALSE)
-stopifnot(all(file.copy(file.path(canonical_dir, canonical_modules),
+stopifnot(all(file.copy(file.path(canonical_dir, "core", canonical_modules),
   file.path(package_dir, "R", canonical_modules), overwrite = TRUE)))
 write_module_order <- function() {
   description_path <- file.path(package_dir, "DESCRIPTION")

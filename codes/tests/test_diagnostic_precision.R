@@ -2,7 +2,7 @@
 args <- grep("^--file=", commandArgs(FALSE), value = TRUE)
 script <- normalizePath(sub("^--file=", "", args[1L]), mustWork = TRUE)
 code_dir <- dirname(dirname(script))
-for (module in c("00_parallel_utils.R", "00_study2_functions.R", "simulation_helpers.R")) {
+for (module in c("core/00_parallel_utils.R", "core/00_study2_functions.R", "simulation_helpers.R")) {
   source(file.path(code_dir, module))
 }
 

@@ -1,4 +1,4 @@
-source("codes/simulation_helpers.R");source("codes/publication_recovery.R")
+source("codes/simulation_helpers.R");source("codes/simulations/publication_recovery.R")
 real_engine <- mixedgp_simulation_engine
 e <- real_engine("codes")
 root<-tempfile("recovery-integration-");dir.create(root)

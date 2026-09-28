@@ -2,9 +2,9 @@
 if (!exists("continue_eivgp", mode = "function")) {
   cli <- grep("^--file=", commandArgs(FALSE), value = TRUE)
   code_dir <- dirname(dirname(normalizePath(sub("^--file=", "", cli[1L]))))
-  for (module in c("00_parallel_utils.R", "00_study1_functions.R",
-                   "00_study2_functions.R", "00_public_api.R",
-                   "00_diagnostics.R", "00_mcmc_workflow.R")) {
+  for (module in c("core/00_parallel_utils.R", "core/00_study1_functions.R",
+                   "core/00_study2_functions.R", "core/00_public_api.R",
+                   "core/00_diagnostics.R", "core/00_mcmc_workflow.R")) {
     source(file.path(code_dir, module))
   }
 }

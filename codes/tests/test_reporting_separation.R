@@ -1,6 +1,6 @@
-source("codes/00_diagnostics.R")
+source("codes/core/00_diagnostics.R")
 source("codes/simulation_helpers.R")
-source("codes/experiment_reporting.R")
+source("codes/reporting/experiment_reporting.R")
 root <- tempfile("reporting-test-"); dir.create(root)
 config <- study1_simulation_config("development", code_dir = normalizePath("codes"),
   core_budget = 1L, output_root = root, data_root = file.path(root, "data"))

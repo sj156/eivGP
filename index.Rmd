@@ -6,7 +6,7 @@ output: html_document
 # Current package build
 
 The active package is `eivGP` 0.3.0. Its canonical implementation is maintained
-in `codes/`; `litr/create-eivGP.Rmd` is the sole active package build.
+in `codes/core/`; `litr/create-eivGP.Rmd` is the sole active package build.
 
 ```sh
 Rscript --vanilla litr/render-package.R

@@ -2,7 +2,7 @@
 args <- commandArgs(FALSE)
 script <- sub("^--file=", "", args[grepl("^--file=", args)])
 codes <- dirname(dirname(normalizePath(script)))
-for (module in c("00_parallel_utils.R", "00_study1_functions.R", "simulation_helpers.R")) {
+for (module in c("core/00_parallel_utils.R", "core/00_study1_functions.R", "simulation_helpers.R")) {
   source(file.path(codes, module))
 }
 set.seed(415L)

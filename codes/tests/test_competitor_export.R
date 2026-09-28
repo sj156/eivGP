@@ -26,7 +26,7 @@ for (study in c("study1","study2")) {
   }
   log <- file.path(root,paste0(study,".log"))
   status <- system2(file.path(R.home("bin"),"Rscript"),
-    c("--vanilla","experiments/run_competitors.R",study,"export","development"),stdout=log,stderr=log)
+    c("--vanilla","codes/cli/run_competitors.R",study,"export","development"),stdout=log,stderr=log)
   if(status!=0L) stop(paste(readLines(log),collapse="\n"))
   target <- file.path(paper,"tables","competitors",study,"development")
   s <- read.csv(file.path(target,"statuses.csv"))

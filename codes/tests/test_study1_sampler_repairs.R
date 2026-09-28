@@ -5,7 +5,7 @@
 script_arg <- grep("^--file=", commandArgs(FALSE), value = TRUE)
 stopifnot(length(script_arg) == 1L)
 codes_dir <- dirname(dirname(normalizePath(sub("^--file=", "", script_arg))))
-source(file.path(codes_dir, "00_study1_functions.R"))
+source(file.path(codes_dir, "core/00_study1_functions.R"))
 stop_if_not_error <- function(expr, pattern) {
   result <- tryCatch(force(expr), error = conditionMessage)
   stopifnot(is.character(result), grepl(pattern, result, fixed = TRUE))
@@ -186,7 +186,7 @@ stopifnot(block_cache$block_fallbacks==fallback_count+1L,
 
 ## Fit edge cases, asserting calibration before/after every latent transition.
 fit_env <- new.env(parent=globalenv())
-source(file.path(codes_dir, "00_study1_functions.R"),local=fit_env)
+source(file.path(codes_dir, "core/00_study1_functions.R"),local=fit_env)
 u8 <- c(-1.5,-1,-.5,-.2,.2,.5,1,1.5)
 missing <- integer(0)
 calibrated <- seq_len(8)

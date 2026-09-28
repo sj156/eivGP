@@ -1,4 +1,4 @@
-source('codes/simulation_helpers.R');source('codes/publication_recovery.R')
+source('codes/simulation_helpers.R');source('codes/simulations/publication_recovery.R')
 e<-mixedgp_simulation_engine('codes')
 a<-mixedgp_recovery_core_settings(56L)
 stopifnot(a$dataset_workers==14L,a$chain_workers==4L,a$competitor_workers==56L,

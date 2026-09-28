@@ -1,6 +1,6 @@
 f <- grep("^--file=", commandArgs(FALSE), value = TRUE)
 project <- dirname(dirname(normalizePath(sub("^--file=", "", f[1]))))
-source(file.path(project, "ADNI_case_study_helpers.R"))
+source(file.path(project, "applications/ADNI_case_study_helpers.R"))
 set.seed(91)
 a <- matrix(rnorm(28), 7, 4); y <- c(-1, 0, .5, 1)
 s <- adni_draw_summary(a, y)

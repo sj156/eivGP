@@ -1,6 +1,6 @@
 ## Run from the repository root: Rscript codes/tests/test_core_budget_drivers.R
 source("codes/simulation_helpers.R")
-source("codes/00_parallel_utils.R")
+source("codes/core/00_parallel_utils.R")
 for (study in c("study1", "study2")) {
   constructor <- get(paste0(study, "_simulation_config"))
   for (cores in c(1L, 3L, 12L, 16L)) {
@@ -46,8 +46,8 @@ warning_eval <- function(expr, env) {
   })
   stopifnot(length(notices) > 0L, any(grepl("Inspect diagnostic", notices)))
 }
-s1 <- parse("codes/02_study1_monte_carlo.R")
-s2 <- parse("codes/02_study2_monte_carlo.R")
+s1 <- parse("codes/simulations/02_study1_monte_carlo.R")
+s2 <- parse("codes/simulations/02_study2_monte_carlo.R")
 env <- new.env(parent = globalenv())
 env$gate_pass <- FALSE
 env$rep_id <- 1L
@@ -73,7 +73,7 @@ env$measurement_advice <- mixedgp_simulation_diagnostic_advice()
 measurement_blocks <- Filter(function(x) any(grepl("warning\\(", deparse(x))),
                              find_if(s2, "measurement_warning"))
 warning_eval(measurement_blocks[[1L]], env)
-stopifnot(!any(grepl("failed_convergence", readLines("codes/02_study2_monte_carlo.R"))))
+stopifnot(!any(grepl("failed_convergence", readLines("codes/simulations/02_study2_monte_carlo.R"))))
 
 for (study in c("study1", "study2")) {
   ctor <- get(paste0(study, "_simulation_config"))

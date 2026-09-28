@@ -1,0 +1,187 @@
+---
+title: "Numerical experiments: from simulated data to model comparisons"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    code_folding: hide
+params:
+  profile: "quick"
+  study: "both"
+  action: "run"
+  cores: 4
+  artifact_root: ""
+---
+
+This notebook demonstrates the complete numerical workflow: define the study,
+generate and verify frozen data, inspect the data, fit the models, and examine
+predictions and diagnostics. The same notebook handles both studies. After
+installing the dependencies listed in the repository README, select a profile
+above and **Knit**, or run its chunks in order.
+
+## 1. Choose the computation you want
+
+| `profile` | Purpose | Datasets per setting | Chains × iterations (warmup) |
+|:--|:--|--:|:--|
+| `quick` | Worked example, default | 1 | 1 × 120 (40) |
+| `development` | All paper settings with reduced Monte Carlo effort | 3 | 4 × 1,750 (500) |
+| `paper` | Configuration used in the paper | 50 | 4 × 20,000 (5,000) |
+
+`study` is `study1`, `study2`, or `both`. The paper has two Study I settings
+(within-category heterogeneity η = 0 or 1), and three Study II settings
+(two or four ordinal proxies, plus measurement misspecification). Both paper
+studies use 100 training and 100 test observations. The quick profile also
+reduces test sizes and calibration grids; it demonstrates execution and does
+not estimate the paper's Monte Carlo results. Development retains the full
+scientific grid. Paper execution across both studies entails **600 EIV-GP fits**
+plus ablations and 750 standalone competitor fits, before reuse of saved work.
+
+Use `action: "run"` for the complete workflow. `plan` prints the resolved
+settings without fitting; `data` stops after data generation; `fit` saves fits
+without reporting; `report` regenerates summaries from saved fits. The quick
+profile shows EIV-GP and its internal baselines. Development and paper runs also
+fit UC-GP, LVGP, and EzGP on the same frozen datasets, then combine the results.
+The checked-in HTML is a **quick worked example**, not the paper's result table.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, cache = FALSE)
+# These defaults also support running chunks interactively in a clean session.
+defaults <- list(profile = "quick", study = "both", action = "run", cores = 4L,
+                 artifact_root = "")
+settings <- if (exists("params")) utils::modifyList(defaults, params) else defaults
+profile <- match.arg(settings$profile, c("quick", "development", "paper"))
+action <- match.arg(settings$action, c("plan", "data", "fit", "run", "report"))
+studies <- if (settings$study == "both") c("study1", "study2") else
+  match.arg(settings$study, c("study1", "study2"))
+input <- knitr::current_input(dir = TRUE)
+repository_dir <- if (length(input) == 1L && nzchar(input)) {
+  normalizePath(file.path(dirname(input), ".."))
+} else if (file.exists("codes/simulation_helpers.R")) normalizePath(".") else normalizePath("..")
+artifact_root <- if (nzchar(settings$artifact_root)) settings$artifact_root else
+  file.path(repository_dir, "reproduction")
+source(file.path(repository_dir, "codes", "reporting", "notebook_helpers.R"), local = TRUE)
+source(file.path(repository_dir, "codes", "core", "00_diagnostics.R"), local = TRUE)
+source(file.path(repository_dir, "codes", "simulation_helpers.R"), local = TRUE)
+source(file.path(repository_dir, "codes", "simulations", "notebook_workflow.R"), local = TRUE)
+source(file.path(repository_dir, "codes", "simulations", "competitor_workflow.R"), local = TRUE)
+source(file.path(repository_dir, "codes", "reporting", "experiment_reporting.R"), local = TRUE)
+source(file.path(repository_dir, "codes", "reporting", "combine_experiment_results.R"), local = TRUE)
+configs <- setNames(lapply(studies, replication_config, profile = profile,
+  core_budget = as.numeric(settings$cores), repository_dir = repository_dir,
+  artifact_root = artifact_root), studies)
+```
+
+```{r selected-profile, echo=FALSE, results="asis"}
+for (config in configs) {
+  print(knitr::kable(data.frame(study = config$study, profile = profile, action = action,
+    chains = config$mcmc$n_chains, iterations = config$mcmc$n_iter, warmup = config$mcmc$burn)))
+  print(knitr::kable(mixedgp_cell_summary(config)[, c("cell_id", "n", "n_test", "n_rep", "calibration_grid")]))
+}
+```
+
+## 2. Freeze and inspect the datasets
+
+A seed identifies each dataset. Calibration subsets are nested and shared across
+methods. Existing files are verified against their manifests, so rerunning does
+not silently replace a dataset. Quick, development, and paper artifacts use
+separate locations. The figures below use the prespecified first replication
+and show the observed data, rather than fitted GP estimates.
+
+```{r data, fig.width=10, fig.height=7}
+for (config in configs) {
+  if (action == "plan") {
+    preview <- config; preview$mode <- "dry_run"; preview$stages <- character()
+    invisible(notebook_logged(file.path(artifact_root, "logs", paste0(config$study, "-plan.log")), mixedgp_run_simulation(preview)))
+  } else if (action != "report") {
+    data_config <- config; data_config$stages <- "data"
+    frozen <- notebook_logged(file.path(artifact_root, "logs", paste0(config$study, "-data.log")),
+      mixedgp_run_simulation(data_config))
+    example <- mixedgp_read_cell_replication(config, config$cells[[1L]], 1L)$data$train
+    observed <- data.frame(y = example$y,
+      x = if (config$study == "study1") example$x else example$X[, 1L],
+      category = factor(if (config$study == "study1") example$c else example$C[, 1L]))
+    print(ggplot2::ggplot(observed, ggplot2::aes(x, y, color = category)) +
+      ggplot2::geom_point(alpha = .65) + ggplot2::theme_minimal() +
+      ggplot2::labs(title = paste(config$study, "— first frozen training dataset"),
+        x = "Observed covariate", y = "Response", color = "Ordinal category"))
+    print(ggplot2::ggplot(observed, ggplot2::aes(category, y, fill = category)) +
+      ggplot2::geom_boxplot() + ggplot2::theme_minimal() +
+      ggplot2::theme(legend.position = "none") +
+      ggplot2::labs(x = "Ordinal category", y = "Response"))
+  }
+}
+```
+
+## 3. Fit the models
+
+EIV-GP learns from responses, observed covariates, ordinal proxies, and the
+selected exact latent-input measurements. Every method uses the same train/test
+split. Saved fits allow an interrupted run to resume; compatible completed work
+is reused. Short chains can flag poor mixing: those warnings remain visible and
+are not evidence for or against a method.
+
+```{r fit, results="asis"}
+results <- list()
+if (action %in% c("run", "fit")) for (study in studies) {
+  fit_config <- configs[[study]]; fit_config$stages <- "fit"
+  results[[study]] <- notebook_logged(file.path(artifact_root, "logs", paste0(study, "-fit.log")),
+    mixedgp_run_simulation(fit_config))
+  gates <- results[[study]]$gates
+  assessment <- aggregate(gates$pass, list(setting = gates$cell_id), function(x) paste(sum(x), "/", length(x)))
+  names(assessment)[2L] <- "Passed checks"
+  print(knitr::kable(assessment))
+  if (any(!gates$pass)) cat("\nShort-run MCMC checks are flagged; inspect full diagnostics before interpretation.\n")
+}
+```
+
+## 4. Report and compare
+
+Reporting reads saved fits rather than rerunning MCMC. Prediction errors,
+interval coverage, proper scores, imputation, and diagnostics answer different
+questions and should be read together. The full profiles also run the three
+published competitors independently, reuse their caches, and check dataset
+identity before combining results. Outputs remain local under `reproduction/`.
+
+```{r report, results="asis", fig.width=9, fig.height=4}
+if (action %in% c("run", "report")) for (study in studies) {
+  config <- configs[[study]]
+  run_dir <- if (!is.null(results[[study]])) results[[study]]$run_dir else mixedgp_run_directory(config)
+  reporting <- notebook_logged(file.path(artifact_root, "logs", paste0(study, "-report.log")),
+    mixedgp_report_run(run_dir, "report", code_dir = config$code_dir))
+  if (any(reporting$status != "success")) stop("Reporting failed; inspect the saved status table.")
+  if (profile != "quick") {
+    competitor_dir <- file.path(artifact_root, "competitor-reports", study, config$mode)
+    competitors <- notebook_logged(file.path(artifact_root, "logs", paste0(study, "-competitors.log")),
+      mixedgp_run_competitor_workflow(config, competitor_dir,
+        workers = config$parallel$core_budget, action = if (action == "report") "export" else "run"))
+    comparison <- mixedgp_combine_saved_runs(run_dir, competitor_dir,
+      file.path(run_dir, "reporting", "combined-comparisons"))
+    print(knitr::kable(comparison$summary, digits = 3))
+    print(knitr::kable(as.data.frame(table(competitors$status$method, competitors$status$status))))
+  }
+  predictive <- read.csv(file.path(run_dir, "reporting", "combined", "predictive_metrics.csv"))
+  if ("evaluation_stratum" %in% names(predictive)) predictive <- predictive[predictive$evaluation_stratum == "overall", ]
+  selected <- aggregate(predictive[, c("RMSE", "MAE", "Coverage95")],
+    predictive[, c("cell_id", "n_calib", "method")], mean)
+  print(knitr::kable(selected, digits = 3,
+    caption = paste(study, "— held-out predictive summaries")))
+  print(ggplot2::ggplot(selected, ggplot2::aes(factor(n_calib), RMSE, color = method, group = method)) +
+    ggplot2::geom_point(size = 2) + ggplot2::geom_line() + ggplot2::facet_wrap(~cell_id) +
+    ggplot2::theme_minimal() + ggplot2::labs(x = "Exact training inputs", y = "Prediction RMSE", color = "Method"))
+}
+```
+
+## 5. Reproduce the paper configuration
+
+Select `profile: "paper"`, `study: "both"`, and `action: "run"` and rerun this
+same notebook. The displayed configuration is the paper configuration confirmed
+by the authors: 50 datasets per setting, four chains, 20,000 iterations per
+chain, including 5,000 warmup. No automatic chain extension changes that budget.
+Inspect failures, convergence diagnostics, and successful-replication counts
+before comparing tables. Runtime depends on the machine and cannot be inferred
+from the short HTML example. `action: "report"` avoids fitting once the required
+fits and competitor caches exist.
+
+```{r session, echo=FALSE}
+knitr::kable(data.frame(R = as.character(getRversion()), eivGP = as.character(packageVersion("eivGP")), profile = profile))
+```

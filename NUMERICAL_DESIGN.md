@@ -30,12 +30,12 @@ historical inspection; they are not included in new default runs.
 The existing default squared-exponential response kernel is unchanged.
 The proposed pairwise-only kernel is not implemented or selected here.
 Development retains four chains, 500 warmup plus 1,250 sampling iterations
-per chain. **Publication MCMC budgets are not finalized**: existing numeric
-defaults are placeholders, not an approved final publication specification.
+per chain. **The paper uses four chains with 20,000 total iterations and 5,000 warmup
+per chain**, with 50 datasets per setting (author-confirmed 2026-09-28).
 No automatic extension or new prior/sampler change is made by this design update.
 
-Designs live in codes/simulation_helpers.R; the synthetic-data R Markdown
-documents and study masters use that configuration. The reusable eivGP 0.3.0
+Designs live in codes/simulation_helpers.R; the single numerical notebook
+`replication/01_numerical_experiments.Rmd` and study masters use that configuration. The reusable eivGP 0.3.1
 package deliberately excludes study design code and does not need rebuilding
 for this change. Legacy standalone drivers are not the configuration entry point.
 

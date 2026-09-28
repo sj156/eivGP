@@ -2,7 +2,7 @@
 script_arg <- grep("^--file=", commandArgs(FALSE), value = TRUE)
 stopifnot(length(script_arg) == 1L)
 codes_dir <- dirname(dirname(normalizePath(sub("^--file=", "", script_arg))))
-source(file.path(codes_dir, "00_study2_functions.R"))
+source(file.path(codes_dir, "core/00_study2_functions.R"))
 expect_error <- function(expr, pattern) {
   ans <- tryCatch(force(expr), error = identity)
   stopifnot(inherits(ans, "error"), grepl(pattern, conditionMessage(ans)))
@@ -35,8 +35,8 @@ cat("Maximum dense versus Schur log-likelihood error:",max_error,"\n")
 
 ## Count actual calls to Cholesky independently of the evaluator's counters.
 isolated <- new.env(parent=globalenv())
-source(file.path(codes_dir, "00_parallel_utils.R"),local=isolated)
-source(file.path(codes_dir, "00_study2_functions.R"),local=isolated)
+source(file.path(codes_dir, "core/00_parallel_utils.R"),local=isolated)
+source(file.path(codes_dir, "core/00_study2_functions.R"),local=isolated)
 chol_calls <- 0L
 original_chol <- isolated$safe_chol
 isolated$safe_chol <- function(...) {
@@ -69,8 +69,8 @@ cat("Independent factorization counters and noise-update reuse: PASS\n")
 ## Check calibrated coordinates before every transition and density evaluation.
 run_small <- function(missing_idx,strategy,use_schur=TRUE) {
   env <- new.env(parent=globalenv())
-  source(file.path(codes_dir, "00_parallel_utils.R"),local=env)
-  source(file.path(codes_dir, "00_study2_functions.R"),local=env)
+  source(file.path(codes_dir, "core/00_parallel_utils.R"),local=env)
+  source(file.path(codes_dir, "core/00_study2_functions.R"),local=env)
   n <- 8L
   X <- matrix(seq(-1,1,length.out=n),ncol=1L)
   U <- matrix(seq(-1.5,1.5,length.out=n),ncol=1L)

@@ -1,7 +1,7 @@
 f <- grep("^--file=", commandArgs(FALSE), value=TRUE)
 code <- dirname(dirname(normalizePath(sub("^--file=", "", f[1]))))
-source(file.path(code,"ADNI_cv.R"))
-source(file.path(code,"ADNI_case_study_helpers.R"))
+source(file.path(code,"applications/ADNI_cv.R"))
+source(file.path(code,"applications/ADNI_case_study_helpers.R"))
 dat <- data.frame(RID=1:495,R=rep(0:1,c(362,133)),y_centiloid=0,diagnosis="synthetic")
 set.seed(43); old <- .Random.seed
 assignment <- adni_make_folds(dat)

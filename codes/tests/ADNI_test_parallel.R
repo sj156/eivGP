@@ -1,6 +1,6 @@
 f <- grep("^--file=", commandArgs(FALSE), value = TRUE)
 project <- dirname(dirname(normalizePath(sub("^--file=", "", f[1]))))
-source(file.path(project, "ADNI_parallel.R"))
+source(file.path(project, "applications/ADNI_parallel.R"))
 for (n in 1:64) {
   p <- adni_core_plan(n)
   stopifnot(p$active_chain_limit <= n, p$chain_workers >= 1, p$chain_workers <= 4, p$fold_workers <= 5)

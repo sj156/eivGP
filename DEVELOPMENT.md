@@ -41,17 +41,17 @@ From the GitHub repository root (use 16 for the MacBook):
 ```sh
 export MIXEDGP_CORE_BUDGET=12
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1
-Rscript --vanilla experiments/run_development_study.R study1 plan
-Rscript --vanilla experiments/run_development_study.R study2 plan
+Rscript --vanilla codes/cli/run_development_study.R study1 plan
+Rscript --vanilla codes/cli/run_development_study.R study2 plan
 ```
 
 After reviewing settings, replace `plan` with `run`. Numerical-library
 thread controls should be set before R starts; support depends on the linked
 library. These controls do not switch the BLAS implementation.
-The visible wrapper is `experiments/development_numerical_experiment.Rmd`.
+The visible wrapper is `replication/01_numerical_experiments.Rmd`.
 Outputs stay under `reproduction/development/`, separate from publication.
 
-Both `codes/run_study1_simulation.R` and `codes/run_study2_simulation.R`
+Both `codes/simulations/run_study1_simulation.R` and `codes/simulations/run_study2_simulation.R`
 also accept `MIXEDGP_RUN_MODE=development` and `MIXEDGP_CORE_BUDGET`.
 A core budget takes precedence over the old worker setting. Without one,
 the masters retain historical allocation.
@@ -81,7 +81,7 @@ per chain, excluding warmup; `MIXEDGP_DEV_BURN` overrides warmup;
 Fitting/evaluation and reporting now have separate entry points. Use the
 development launcher's `fit` action to save cell-level `report_inputs.rds`
 without figures or publication summaries. `run` performs reporting only after
-the fitting stage. `experiments/report_study.R RUN_DIRECTORY summarize|plot|report`
+the fitting stage. `codes/cli/report_study.R RUN_DIRECTORY summarize|plot|report`
 regenerates outputs from saved data, without any model fitting. It accepts
 older Study II raw bundles as well as the new checkpoints; missing cells are
 listed explicitly. Reporting writes to a separate `reporting/` tree and does
@@ -107,13 +107,13 @@ separation, and recovery from genuine fitting/evaluation exceptions.
 Diagnostic handling is now shared: convergence and completeness checks
 produce flags and warnings in both modes, never gate-triggered stops.
 Competitor availability is not checked by the MCMC fitting stage. Competitor fitting is
-now a standalone experiment stage: run `experiments/install_eivgp_dependencies.R`
-first, then `experiments/run_competitors.R study1 plan publication` (or `study2`).
+now a standalone experiment stage: run `codes/cli/install_eivgp_dependencies.R`
+first, then `codes/cli/run_competitors.R study1 plan publication` (or `study2`).
 Use `run` to prepare missing fits, `retry` to retry failed fits, and `export
 development` to extract the first three publication datasets without fitting.
 Set `EIVGP_OVERLEAF_ROOT` to the existing paper folder for run/export actions.
 
-`codes/competitor_cache.R` owns the shared optimization protocol and per-method
+`codes/simulations/competitor_cache.R` owns the shared optimization protocol and per-method
 cache. The two Monte Carlo drivers do not consume competitor fits or caches.
 The standalone runner alone owns competitor fitting. Calibration and mode are not
 cache keys because these competitors use the same observed training data and
@@ -156,9 +156,9 @@ Changed cache schemas prevent silently reusing old gate-suppressed bundles;
 existing cache files are preserved, but a new run can require recomputation.
 
 Competitor exports can copy tables into the chosen Overleaf folder. Independent
-results are combined by `experiments/combine_results.R`; MCMC never waits for
+results are combined by `codes/cli/combine_results.R`; MCMC never waits for
 competitor synchronization. Nothing is automatically pushed to GitHub.
-`experiments/run_publication_study.R` resolves its study constructors from the
+`codes/cli/run_publication_study.R` resolves its study constructors from the
 same repository helper bundle. Package release validation does not run either
 development or publication studies.
 
@@ -166,7 +166,7 @@ development or publication studies.
 
 The reusable model/MCMC layer is unchanged. Experiment drivers now save their
 own metrics and dataset checksums without competitor cache reads. Run
-`experiments/combine_results.R MCMC_RUN COMPETITOR_REPORT OUTPUT_DIR` only after
+`codes/cli/combine_results.R MCMC_RUN COMPETITOR_REPORT OUTPUT_DIR` only after
 copying the independent outputs to the reporting machine. It verifies shared
 dataset identities and combines overall predictive metrics and paired differences;
 other evaluation tasks remain in the study-specific reports. Old runs lacking

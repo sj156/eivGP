@@ -32,3 +32,10 @@ litr/create-eivGP.knit.md
 .RData
 /setup-sessionInfo.txt
 /codes/setup-sessionInfo.txt
+
+# Rendered replication notebooks and caches
+replication/**/*.html
+replication/**/*_files/
+replication/**/*_cache/
+replication/**/*.knit.md
+replication/**/*.utf8.md

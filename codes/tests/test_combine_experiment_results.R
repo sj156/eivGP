@@ -1,5 +1,5 @@
 source("codes/simulation_helpers.R")
-source("codes/combine_experiment_results.R")
+source("codes/reporting/combine_experiment_results.R")
 cells <- list(list(id="a",n_rep=3L))
 own <- data.frame(cell_id="a",rep=1:2,method="EIV-GP",n_calib=20,RMSE=c(1,2))
 comp <- data.frame(cell_id="a",rep=1:2,method="UC-GP",n_calib=NA_integer_,RMSE=c(2,4))

@@ -4,7 +4,7 @@
 script_arg <- grep("^--file=", commandArgs(FALSE), value = TRUE)
 stopifnot(length(script_arg) == 1L)
 codes_dir <- dirname(dirname(normalizePath(sub("^--file=", "", script_arg))))
-source(file.path(codes_dir, "00_study1_functions.R"))
+source(file.path(codes_dir, "core/00_study1_functions.R"))
 expect_error <- function(expr, pattern) {
   message <- tryCatch(force(expr), error = conditionMessage)
   stopifnot(is.character(message), grepl(pattern, message, fixed = TRUE))
@@ -177,7 +177,7 @@ print(do.call(rbind, target_results), row.names = FALSE)
 ## sigma draw made at its final U/theta, including all-calibrated data and a
 ## singleton missing row. Check SE/Matérn, multivariate X, and thinning.
 fit_env <- new.env(parent = globalenv())
-source(file.path(codes_dir, "00_study1_functions.R"), local = fit_env)
+source(file.path(codes_dir, "core/00_study1_functions.R"), local = fit_env)
 original_noise <- fit_env$sample_sigma2_eps_1d
 noise_records <- list()
 fit_env$sample_sigma2_eps_1d <- function(y, u, Dx_list, logtheta, ...) {

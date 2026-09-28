@@ -3,8 +3,8 @@ args <- commandArgs(trailingOnly = FALSE)
 script <- sub("^--file=", "", args[grepl("^--file=", args)])
 stopifnot(length(script) == 1L)
 codes <- dirname(dirname(normalizePath(script)))
-for (module in c("00_parallel_utils.R", "00_study1_functions.R",
-                 "00_study2_functions.R", "00_public_api.R")) {
+for (module in c("core/00_parallel_utils.R", "core/00_study1_functions.R",
+                 "core/00_study2_functions.R", "core/00_public_api.R")) {
   source(file.path(codes, module))
 }
 expect_error_text <- function(expr, pattern) {

@@ -1,71 +1,59 @@
-# Canonical eivGP 0.3.1 source and repository experiments
+# Supporting R code
 
-The general model implementation in this directory is the source of the
-installable `eivGP/` package. Rebuild it from the repository root with
-`Rscript --vanilla litr/render-package.R`, then install with
-`R CMD INSTALL eivGP`. See the root `README.md` for fitting arbitrary data.
+`core/` is the canonical source used to generate the installable `eivGP/`
+package through `litr/`. Other collections implement repository workflows.
+The model posterior, sampler, study settings, and fitting budgets are not
+changed by this directory reorganization.
 
-The 0.3.0 posterior changes the variance prior, latent-length prior, and
-ordinal threshold prior. Earlier fits, checkpoints, and cached results must
-be refitted. All retained fitting draws are kept, without HMC or thinning.
-Fixed-budget fits return diagnostic warnings; continuation is explicit.
+| Collection | Responsibility |
+| --- | --- |
+| `core/` | Model utilities, current sampler, public API, MCMC diagnostics and published competitors |
+| `simulations/` | Synthetic data, study drivers, setup, ablations, caching and publication recovery |
+| `reporting/` | Reporting saved fits and combining experiment outputs |
+| `applications/` | ADNI and ocean analysis support, shared paths, dependency setup, and runners |
+| `cli/` | Repository-root command-line entry points for numerical workflows |
+| `validation/` | Computational checks and design pilots |
+| `tests/` | Automated regression tests |
+| `setup/` | Project library and thread configuration |
+| `legacy/` | Historical workflows and case-study artifacts retained for provenance |
 
-Version 0.3.1 leaves that posterior unchanged and adds exact threshold cutoff
-Gibbs updates plus exact block-GP acceleration of probit joint moves.
-0.3.0 draws remain draws targeting the same posterior, but continuation must
-use the matching sampler version. Start fresh to use the new transitions.
+Two stable source entry points remain here:
 
-## Model modules
+```r
+source("codes/load_mixedgp.R")       # Canonical model modules in dependency order
+source("codes/simulation_helpers.R") # Study design, data, execution and summaries
+```
 
-Standalone historical prototypes (`Basics.R`, `Demo.R`, `slides.R`,
-`latent-linear-regrssion.r`, and `eivgp_1d_deterministic_example_v3.R`)
-were removed from the active source tree on 2026-09-07. They are not inputs
-to the package build or current study workflows. A byte-preserving local
-backup is stored outside the repository at
-`/Users/sheng/Documents/ChatGPT/mixed-inputGP/cleanup-20260907/archive/`.
-Use `fit_eivgp()` for applications and the study masters below for experiments;
-the old standalone sampler is not the current posterior implementation.
+`simulation_helpers.R` loads `simulations/helpers/` into the caller's environment.
+The helper files separate design, frozen-data management, execution, diagnostic
+gates, summaries, and workflow orchestration. Edit the appropriate helper rather
+than adding another copy. Source the loader, not an individual helper file.
 
-- `00_parallel_utils.R`: reusable deterministic parallel utilities and CPU
-  allocation.
-- `00_study1_functions.R` and `00_study2_functions.R`: shared model,
-  prediction, and numerical helpers; the historical filenames are retained.
-- `00_sampler_v030.R`: current collapsed target, prior transforms,
-  elliptical slice and cutoff Gibbs updates, finite-dictionary updates, and variance recovery.
-- `00_sampler_v030_api.R`: current fitting adapters, diagnostics, and
-  checkpoint state assembly.
-- `00_public_api.R`: reusable fitting, prediction, imputation, and competitor
-  interfaces.
-- `00_diagnostics.R` and `00_mcmc_workflow.R`: shared diagnostics and explicit
-  compatible-checkpoint continuation.
-- `03_study2_published_competitors.R`: optional published-method adapters.
+The historical `00_study1_functions.R` and `00_study2_functions.R` names in
+`core/` describe their origins; both are shared model implementations. Load the
+current sampler and API after these modules using `load_mixedgp.R`. Application
+support uses these same canonical files; duplicate model copies were removed.
 
-The current sampler modules must load after both historical helper files and
-before the public API. `load_mixedgp.R` supplies that order for repository
-development; the package's explicit `Collate` field uses the same model order.
+Use launchers from the repository root, for example:
 
-## Numerical-experiment layer
+```sh
+EIVGP_RUN_MODE=dry_run Rscript codes/cli/run_publication_study.R study1
+MIXEDGP_CORE_BUDGET=4 Rscript codes/cli/run_development_study.R study2 plan
+Rscript codes/applications/run_real_data.R adni --cores 12 --plan
+Rscript codes/tests/test_v031_updates.R
+```
 
-`simulation_helpers.R` owns study designs, seeds, replications, data freezing,
-task eligibility, orchestration, diagnostic flags, aggregation, and output
-paths. `00_synthetic_data.R` owns versioned frozen data and manifests.
-Neither module nor `00_experiment_runner.R` is installed as a package API.
+Low-level study and pilot scripts that use relative `source()` calls retain their
+`codes/` working-directory convention: from `codes/`, source
+`simulations/...` or `validation/...`. Prefer the documented launchers for full
+workflows. `run_study1_all.R` and `run_study2_all.R` remain compatibility aliases
+inside `simulations/`.
 
-`run_study1_simulation.R` and `run_study2_simulation.R` are the repository
-masters and default to read-only dry runs. `run_study1_all.R` and
-`run_study2_all.R` are compatibility aliases. The older
-`run_mixedgp_experiment()` is a repository compatibility workflow.
-The `experiments/` documents import the repository simulation helpers
-explicitly. They do not obtain study settings from the installed package.
+All active analysis notebooks are in `../replication/`; package-building
+notebooks remain in `../litr/`. Generated results stay in the configured output
+directories, usually `../reproduction/` or `../real_data_application_outputs/`.
+Historical material in `legacy/` is not a supported current analysis entry point.
 
-Use `DEVELOPMENT.md` at the repository root for development planning.
-No study result is regenerated by building the package. Scientific runs and
-the full numerical-workflow audit remain separate from package validation.
-
-## Real-data applications
-
-The application notebooks and scripts are directly in this directory, with
-`ADNI_` and `ocean_` prefixes. See [REAL_DATA_APPLICATIONS.md](REAL_DATA_APPLICATIONS.md).
-Run `Rscript codes/run_real_data.R adni --cores 12` from the repository root.
-Cleaned inputs live in `real-data/`; all application outputs default to
-`real_data_application_outputs/` alongside `codes/`. ADNI uses one fixed five-fold CV.
+For details, see [publication simulations](PUBLICATION_SIMULATIONS.md),
+[Study II](README_study2.md), and
+[applications](applications/REAL_DATA_APPLICATIONS.md).

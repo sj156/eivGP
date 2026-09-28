@@ -1,9 +1,9 @@
 ## Optional integration test: supply an existing Study II run with primary_q2 caches.
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) != 1L) stop("Supply the saved Study II run directory.")
-source("codes/00_diagnostics.R")
+source("codes/core/00_diagnostics.R")
 source("codes/simulation_helpers.R")
-source("codes/experiment_reporting.R")
+source("codes/reporting/experiment_reporting.R")
 original <- normalizePath(args[1L], mustWork = TRUE)
 config <- readRDS(file.path(original,"config","resolved_config.rds"))
 stopifnot(config$study == "study2")

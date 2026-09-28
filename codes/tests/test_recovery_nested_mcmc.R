@@ -1,4 +1,4 @@
-source('codes/simulation_helpers.R');source('codes/publication_recovery.R')
+source('codes/simulation_helpers.R');source('codes/simulations/publication_recovery.R')
 results<-list()
 mixedgp_recovery_dispatch(as.list(1:2),function(i){
   set.seed(i)

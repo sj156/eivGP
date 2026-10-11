@@ -1,0 +1,299 @@
+---
+title: "Ocean silicate: ordinal oxygen and partial exact measurements"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    code_folding: hide
+params:
+  profile: "paper"
+  action: "plan"
+  folds: [1, 2, 3, 4, 5]
+  cells: ["O0", "O20", "O50"]
+  modules: ["eiv", "original_baselines", "continuation", "augmented_baselines", "prediction", "diagnostics", "surface_comparison"]
+  augmented_methods: ["UC-GP", "LVGP", "EzGP"]
+  placeholders: [0]
+  task_ids: ""
+  cores: 4
+  run_id: "local"
+  data_dir: ""
+  output_dir: ""
+  import_dirs: ""
+  augmented_output_dir: ""
+  diagnostics_dir: ""
+  diagnostics_workers: 1
+  representative_fold: 1
+  appendix: true
+---
+
+The frozen ocean application contains 200 distinct North Pacific profiles.
+Silicate is the response; salinity and log pressure are fully observed.
+Oxygen is recorded through four bands (boundaries 50, 100, 150 µmol/kg),
+with 0%, 20%, or 50% exact training measurements. The same five folds and
+nested measurement masks are used throughout.
+
+## 1. Choose the work
+
+The default is **paper/plan**, which checks the design and displays selected
+tasks without fitting. Set `action: "run"` to execute selected tasks, or
+`action: "report"` to read available results. A report can be partial;
+each score group shows its completed fold count.
+
+| Selector | Meaning |
+|---|---|
+| `modules` | Choose initial EIV fits, original baselines, continuation, expanded baselines, prediction reporting, diagnostics, or surface displays |
+| `folds`, `cells` | Choose training folds and calibration cases; reporting reads all available outputs |
+| `augmented_methods`, `placeholders` | Choose expanded baseline methods and predeclared b values |
+| `task_ids` | Optional exact task selection, within the other selectors |
+| `output_dir`, `run_id` | Separate device results and identify this execution's logs |
+| `import_dirs` | Compatible result roots to merge before running/reporting |
+
+Each machine should use its own result directory. For example, one machine
+can run folds 1–3 and the other folds 4–5. Transfer their result directories,
+then render with `action="report"`, a fresh output directory, and both roots
+in `import_dirs`. The merger checks input, code, package, and task provenance,
+and refuses conflicting payloads. Runnable examples are in
+`codes/applications/ocean_silicate/README.md`.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE,message=FALSE,warning=TRUE,cache=FALSE,error=FALSE)
+input <- knitr::current_input(dir=TRUE)
+repository_dir <- normalizePath(file.path(dirname(input),".."),mustWork=TRUE)
+source(file.path(repository_dir,"codes/applications/ocean_silicate/01_setup.R"),local=TRUE)
+ocean_source_modules(repository_dir,environment())
+settings <- ocean_settings(profile=params$profile,action=params$action,folds=params$folds,
+  cells=params$cells,modules=params$modules,augmented_methods=params$augmented_methods,
+  placeholders=params$placeholders,task_ids=params$task_ids,cores=params$cores,run_id=params$run_id)
+data_dir <- if(nzchar(params$data_dir)) ocean_resolve_path(params$data_dir,repository_dir) else file.path(repository_dir,"data/ocean_silicate")
+output_dir <- if(nzchar(params$output_dir)) ocean_resolve_path(params$output_dir,repository_dir) else file.path(repository_dir,"reproduction/ocean",settings$profile)
+diagnostics_dir <- if(nzchar(params$diagnostics_dir)) ocean_resolve_path(params$diagnostics_dir,repository_dir) else file.path(output_dir,"diagnostics")
+import_dirs <- as.character(unlist(params$import_dirs)); import_dirs <- import_dirs[nzchar(import_dirs)]
+import_dirs <- ocean_resolve_path(import_dirs,repository_dir)
+augmented_output_dir <- if(nzchar(params$augmented_output_dir)) ocean_resolve_path(params$augmented_output_dir,repository_dir) else ""
+```
+
+```{r task-plan, echo=FALSE}
+knitr::kable(data.frame(profile=settings$profile,action=settings$action,
+  chains=settings$chains,iterations=settings$iter,burn=settings$burn,cores=settings$cores))
+knitr::kable(ocean_select_tasks(settings))
+```
+
+Paper EIV fits use four chains × 20,000 iterations, burn-in 5,000, and
+`u_block_size=8`. Each cell is screened using its own initial-chain results.
+If the maximum finite Rhat exceeds 1.01 or the minimum finite bulk ESS is
+below 400 (or no finite values exist), its saved chains receive one additional
+20,000 iterations. The rule is fixed before fitting; no fold/cell list is fixed.
+Undefined diagnostics and tail ESS are recorded for review. This limited
+screen is not a full convergence assessment. After the one permitted extension,
+remaining screen failures are reported for review, without an automatic loop.
+Continuation restores saved RNG states and requires only its own initial fit.
+The main study has 50 base tasks plus the number of diagnostic-selected
+continuations; the task plan includes all 15 conditional candidates.
+The optional `quick` profile runs fold 1/O0/O50 with one chain × 80 iterations;
+it is a workflow check, not a paper comparison.
+
+### Package calls in the fitting module
+
+`02_fit_models.R` contains the numerical steps: `run_eiv()` prepares X, C
+and an `U_obs` matrix (NA outside the fixed calibration mask), fits EIV-GP,
+predicts held-out Y, and imputes hidden training U. `run_one()` continues
+saved chains for cells selected by the current initial diagnostics. The following snippets are read
+from the **actual executing script**; displaying them does not fit a second model.
+Iterations, burn-in, chain count and seeds use the settings and task listed above.
+
+```{r package-calls, echo=FALSE, results="asis"}
+fit_source <- readLines(file.path(repository_dir,"codes/applications/ocean_silicate/02_fit_models.R"))
+show_package_call <- function(id, title) {
+  start <- which(trimws(fit_source)==paste("# RMD-BEGIN",id))
+  end <- which(trimws(fit_source)==paste("# RMD-END",id))
+  stopifnot(length(start)==1L,length(end)==1L,end>start+1L)
+  lines <- fit_source[seq.int(start+1L,end-1L)]
+  indent <- min(nchar(lines)-nchar(sub("^ *","",lines)))
+  lines <- substring(lines,indent+1L)
+  cat("\n\n**",title,"**\n\n",sep="")
+  child <- c(paste0("```{r call-",id,", eval=FALSE, echo=TRUE, code_folding='show'}"),lines,"```")
+  cat(knitr::knit_child(text=child,quiet=TRUE),sep="\n")
+}
+show_package_call("eiv-fit","1. Fit EIV-GP with partial exact oxygen")
+show_package_call("eiv-predict","2. Predict Y from class-only test inputs")
+show_package_call("eiv-impute","3. Impute hidden training oxygen (O20/O50)")
+show_package_call("eiv-continue","4. Continue chains when the initial diagnostic screen fails")
+show_package_call("native-baselines","5. Fit and predict native baselines with expanded inputs")
+```
+
+For mixed testing, `predict_eivgp(new_U=..., new_U_scale="raw")` replaces
+predictions only at the saved exact-U test rows; other rows keep the
+class-only predictions. At O0, `impute_eivgp(scale="model")` is used.
+
+The baseline snippet uses the package's pinned internal adapter
+(`:::`), which fits and predicts with the native functions below.
+Original baselines use the same adapter with `m_vec=4`, continuous
+X=(salinity, log pressure) and categorical C=oxygen class. Expanded
+baselines use `m_vec=c(4,2)`, X=(salinity, log pressure, W) and
+C=(oxygen class, R). Optimizer controls are specified in the fitting script.
+
+| Method | Native fitting | Native prediction |
+|---|---|---|
+| UC-GP | `kergp::gp` with `kGauss` × `q1Symm` | `stats::predict` |
+| LVGP | `LVGP::LVGP_fit` | `LVGP::LVGP_predict` |
+| EzGP | `EzGP::EzGP_fit`, training-only nugget CV | `EzGP::EzGP_predict` |
+
+`ocean_execute()` below selects/resumes these tasks and records logs and
+receipts. Reporting reads their saved outputs; the fit calls above are
+executed only for selected, unfinished tasks when `action="run"`.
+
+```{r execute, include=FALSE}
+analysis <- if(settings$action=="plan") ocean_execute(repository_dir,data_dir,output_dir,settings) else
+  ocean_logged(file.path(output_dir,"jobs",settings$run_id,"execution.log"),
+    ocean_execute(repository_dir,data_dir,output_dir,settings,
+      import_dirs=import_dirs,augmented_output_dir=augmented_output_dir))
+```
+
+```{r continuation-decisions, eval=settings$action!="plan", echo=FALSE}
+knitr::kable(analysis$continuation_decisions[,c("fold","cell","max_rhat","min_ess_bulk",
+  "n_nonfinite_rhat","n_nonfinite_ess_tail","decision")],digits=3)
+final_fit_status<-ocean_final_eiv_sources(output_dir,settings$profile)
+knitr::kable(final_fit_status[,c("fold","cell","continued","available","final_screen_pass")])
+if(settings$profile=="paper" && any(final_fit_status$available & !final_fit_status$final_screen_pass,na.rm=TRUE))
+  cat("Some final fits remain outside the limited screen; inspect chain diagnostics before treating the analysis as finalized.\n")
+```
+
+## 2. Observed data
+
+Measured oxygen is retained in the source files for offline evaluation.
+Only the fixed calibration rows supply exact training oxygen to the models.
+
+```{r data-design, echo=FALSE}
+knitr::kable(analysis$inputs$audit,digits=3)
+```
+
+```{r original-scatter, eval=settings$action!="plan", fig.width=11, fig.height=3.7}
+library(ggplot2)
+library(patchwork)
+cohort <- analysis$inputs$cohort
+p1 <- ggplot(cohort,aes(U,Y,color=oxygen_class))+geom_point(alpha=.65)+
+  labs(x="Measured oxygen (micromol/kg)",y="Silicate (micromol/kg)")+theme_minimal()+theme(legend.position="none")
+p2 <- ggplot(cohort,aes(G2salinity,Y,color=oxygen_class))+geom_point(alpha=.65)+
+  labs(x="Salinity",y="Silicate (micromol/kg)")+theme_minimal()+theme(legend.position="none")
+p3 <- ggplot(cohort,aes(G2pressure,Y,color=oxygen_class))+geom_point(alpha=.65)+
+  labs(x="Pressure (dbar)",y="Silicate (micromol/kg)",color="Oxygen class")+theme_minimal()
+p1+p2+p3
+```
+
+## 3. Held-out prediction and the information-matched supplement
+
+Original baselines use `(x,c)`. Expanded baselines retain those inputs and
+add categorical observation status `R` and continuous oxygen record `W`.
+Observed W uses the training-calibration mean/SD; hidden W takes b=0,
+with b=-1,+1 as prespecified sensitivities. This is an input expansion,
+without an oxygen-imputation model or changes to native package kernels.
+
+Class-only testing supplies no exact test oxygen. Matched mixed testing
+reveals 20% or 50% under the saved masks, to EIV-GP and expanded baselines
+alike. Both modes use the same fitted model. All responses in the test set
+are withheld from fitting and tuning.
+
+```{r prediction-report, eval=settings$action!="plan" && "prediction" %in% settings$modules, echo=FALSE, results="asis", fig.width=11, fig.height=8}
+ocean_show_predictions(analysis$prediction)
+```
+
+The O20/O50 comparisons use the prespecified primary expanded encoding b=0.
+The original O0 baselines and calibrated expanded baselines are identified
+in the table. Paper-ready CSV/Markdown/LaTeX/HTML tables are exported beside
+the raw scores. Fold SD is descriptive variation
+across the overlapping training sets, not an independent-replicate SE.
+
+## 4. Oxygen imputation and response functions
+
+These displays require the complete original paper fits and all continuations
+selected from their current initial diagnostics. Partial fitting jobs can finish and report predictions
+before this final component is available.
+
+```{r diagnostics-build, eval=settings$action!="plan" && settings$profile=="paper" && "diagnostics" %in% settings$modules, include=FALSE}
+diagnostics <- NULL
+available <- analysis$prediction
+if(is.null(available)) available <- ocean_prediction_report(output_dir,analysis$inputs,"paper",augmented_output_dir)
+baseline_ready <- all(vapply(1:5,function(f) file.exists(file.path(output_dir,"full5_class4",sprintf("fold%02d",f),"baseline_package_outputs.rds")),logical(1)))
+diagnostics_ready <- all(available$availability$available) && baseline_ready
+diagnostic_run <- NULL
+if(diagnostics_ready) diagnostic_run <- ocean_logged(file.path(output_dir,"jobs",settings$run_id,"diagnostics.log"),
+  ocean_run_diagnostics(output_dir,data_dir,report_dir=diagnostics_dir,
+    augmented_output_dir=augmented_output_dir, representative_fold=params$representative_fold,
+    workers=params$diagnostics_workers,build_prediction=FALSE,prediction_report=available,
+    build_surfaces="surface_comparison" %in% settings$modules))
+if(!is.null(diagnostic_run)) diagnostics <- diagnostic_run$diagnostics
+```
+
+```{r diagnostics-display, eval=settings$action!="plan" && settings$profile=="paper" && "diagnostics" %in% settings$modules, echo=FALSE, results="asis", fig.width=13.2, fig.height=6}
+if(is.null(diagnostics)) cat("Final U/m/f diagnostics are pending: complete the five original baseline tasks, all EIV cells, and their diagnostic-selected continuations.\n") else
+  ocean_show_diagnostics(diagnostics,show_prediction=FALSE)
+```
+
+```{r diagnostic-appendix, eval=settings$action!="plan" && settings$profile=="paper" && "diagnostics" %in% settings$modules && isTRUE(params$appendix), echo=FALSE, results="asis", fig.width=13.2, fig.height=14}
+if(!is.null(diagnostics)) {
+  cat("\n\n### Separate fitted folds\n\n")
+  print(diagnostics$plots$u_all_folds);print(diagnostics$plots$m_all_folds);print(diagnostics$plots$fm_all_folds)
+  cat("\n\n### Class-specific imputation scores\n\n")
+  print(knitr::kable(ocean_paper_u_tables(diagnostics$u$summary)$class))
+}
+```
+
+U imputation retains five metrics on the same 80 commonly hidden training
+rows per fold. Its figure shows all training rows at O0/O20/O50, including
+hollow calibration points. O0 stays on the model coordinate and has no raw-U
+recovery score. Mean-function bands include conditional GP uncertainty and
+exclude response noise; they differ from Y prediction intervals.
+
+## 5. Response functions alongside measured profiles
+
+The m comparison uses native `(x,c)` baseline predictors and EIV category
+means on the same grid. EIV O0 supplies the comparison with class-only
+training information; O20/O50 illustrate calibrated fits. An expanded
+baseline slice at `(R=0,W=b)` is not automatically the population category
+mean m, so it is not presented as that target.
+
+```{r surfaces-build, eval=settings$action!="plan" && settings$profile=="paper" && "surface_comparison" %in% settings$modules, include=FALSE}
+surfaces <- if(exists("diagnostic_run") && !is.null(diagnostic_run)) diagnostic_run$surfaces else NULL
+surface_files <- file.path(diagnostics_dir,"tables",c("m_points.csv","f_points.csv"))
+if(is.null(surfaces) && all(file.exists(surface_files)) && all(vapply(1:5,function(f)
+  file.exists(file.path(output_dir,"full5_class4",sprintf("fold%02d",f),"baseline_package_outputs.rds")),logical(1))))
+  surfaces <- ocean_surface_report(output_dir,data_dir,diagnostics_dir,representative_fold=params$representative_fold)
+```
+
+```{r surface-main, eval=settings$action!="plan" && settings$profile=="paper" && "surface_comparison" %in% settings$modules, echo=FALSE, results="asis", fig.width=12, fig.height=7}
+if(is.null(surfaces)) cat("Surface displays are pending: run diagnostics and supply the original baseline fits.\n") else {
+  print(surfaces$plots$m_comparison);print(surfaces$plots$f_with_observations)
+}
+```
+
+```{r surface-appendix, eval=settings$action!="plan" && settings$profile=="paper" && "surface_comparison" %in% settings$modules && isTRUE(params$appendix), echo=FALSE, fig.width=12, fig.height=13}
+if(!is.null(surfaces)) {print(surfaces$plots$m_comparison_all_folds);print(surfaces$plots$f_with_observations_all_folds)}
+```
+
+For the pressure-slice m plot, the local salinity pool is divided
+into six log-pressure bins over the fitted curve range, retaining at most
+three nearest-salinity profiles per bin. This display rule uses inputs only;
+the fitted grids and posterior calculations stay fixed. The same-X combined
+plot adds the original baseline category means on its right panel.
+
+Points are measured silicate at nearby profiles, with training/held-out
+membership distinguished. Their salinity and pressure vary around the fixed
+slice, and their responses include noise. They provide data context; they
+are not true function values for calculating m/f recovery error. No true
+response surface is available in this semi-real application.
+
+## 6. Reproducibility
+
+Task numbers and seeds do not depend on how work is divided. Completed-task
+receipts and file hashes allow reuse and checked merging. Progress and full
+logs are in `output_dir/jobs/run_id/`; predictions, native statuses, draws,
+imputations, and derived figures remain in the result directory.
+
+Data: GLODAPv2.2023 merged and adjusted product, DOI **10.25921/zyrq-ht66**.
+Product reference: Lauvset et al. (2024), *Earth System Science Data* 16,
+2047–2072, DOI **10.5194/essd-16-2047-2024**. See the bundled data README.
+
+```{r environment, echo=FALSE}
+knitr::kable(data.frame(R=as.character(getRversion()),profile=settings$profile,action=settings$action))
+sessionInfo()
+```

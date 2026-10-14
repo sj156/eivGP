@@ -1,0 +1,507 @@
+---
+title: "Ocean silicate: partially observed oxygen inputs"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    code_folding: hide
+params:
+  profile: "paper"
+  action: "plan"
+  folds: [1, 2, 3, 4, 5]
+  cells: ["O0", "O20", "O50"]
+  modules: ["eiv", "original_baselines", "continuation", "complete_case_baselines", "prediction", "diagnostics", "surface_comparison"]
+  task_ids: ""
+  cores: 4
+  run_id: "local"
+  data_dir: ""
+  output_dir: ""
+  import_dirs: ""
+  cc_output_dir: ""
+  diagnostics_dir: ""
+  diagnostics_workers: 1
+  representative_fold: 1
+  appendix: true
+---
+
+This semi-real application evaluates silicate prediction with partially observed
+oxygen inputs. Measured records are retained as references; ordinal records and
+nested measurement masks are constructed on a fixed, class-balanced cohort.
+
+## 1. Computation settings
+
+- **Action:** `plan` lists tasks; `run` fits or resumes; `report` reads saved fits.
+- **Selection:** `folds`, `cells` and `modules` select tasks without changing seeds or numerical settings.
+- **Distributed runs:** use separate result roots and merge compatible tasks through `import_dirs`.
+
+Runnable examples are in `ocean_helpers/README.md`.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE,message=FALSE,warning=TRUE,cache=FALSE,error=FALSE)
+input <- knitr::current_input(dir=TRUE)
+repository_dir <- normalizePath(file.path(dirname(input),"../.."),mustWork=TRUE)
+source(file.path(dirname(input),"ocean.R"),local=TRUE)
+ocean_load_helpers(repository_dir,environment())
+prediction_labels <- ocean_prediction_labels()
+settings <- ocean_settings(profile=params$profile,action=params$action,folds=params$folds,
+  cells=params$cells,modules=params$modules,task_ids=params$task_ids,cores=params$cores,run_id=params$run_id)
+data_dir <- if(nzchar(params$data_dir)) ocean_resolve_path(params$data_dir,repository_dir) else file.path(repository_dir,"data/ocean_silicate")
+output_dir <- if(nzchar(params$output_dir)) ocean_resolve_path(params$output_dir,repository_dir) else file.path(repository_dir,"reproduction/ocean",settings$profile)
+diagnostics_dir <- if(nzchar(params$diagnostics_dir)) ocean_resolve_path(params$diagnostics_dir,repository_dir) else file.path(output_dir,"diagnostics")
+import_dirs <- as.character(unlist(params$import_dirs)); import_dirs <- import_dirs[nzchar(import_dirs)]
+import_dirs <- ocean_resolve_path(import_dirs,repository_dir)
+cc_output_dir <- if(nzchar(params$cc_output_dir)) ocean_resolve_path(params$cc_output_dir,repository_dir) else output_dir
+inputs <- ocean_prepare_inputs(data_dir)
+selected <- ocean_select_tasks(settings)
+```
+
+```{r selected-work, echo=FALSE, results="asis"}
+cat(sprintf("**Profile:** %s; **action:** %s; **folds:** %s; **training calibration:** %s.\n\n",
+  settings$profile,settings$action,paste(settings$folds,collapse=", "),
+  paste(paste0(sub("O","",settings$cells),"%"),collapse=", ")))
+cat(sprintf("Selected work: **%d base tasks** and **%d conditional continuation candidates**.\n\n",
+  sum(selected$module!="continuation"),sum(selected$module=="continuation")))
+```
+
+```{r computation-summary, echo=FALSE, results="asis"}
+cat(sprintf("Initial EIV numerical settings: **%d chains**, **%d iterations per chain**, **%d burn-in iterations**. Native comparator controls are read from saved fitting records and listed with the results.\n\n",
+  settings$chains,settings$iter,settings$burn))
+```
+
+## 2. Data and observation design
+
+### Notation
+
+| Symbol | Application variable |
+|---|---|
+| \(y\) | Silicate response |
+| \(u\) | Continuous oxygen input |
+| \(c\) | Ordinal oxygen record: \([0,50),[50,100),[100,150),[150,180)\) |
+| \(x\) | Salinity and natural-log pressure |
+
+Concentrations are in micromol/kg. In test tables, **\((x,c)\)** denotes inputs
+without observed \(u\); **\((x,u)\)** denotes inputs with observed \(u\).
+
+### Data-use protocols
+
+The suffixes describe how training records and test inputs are used. Native
+comparators retain \(c\) as a categorical input when \(u\) is observed.
+
+```{r protocol-definitions, echo=FALSE, results="asis"}
+cat(ocean_prediction_protocols(prediction_labels),"\n\n")
+```
+
+Test-input percentages are computed from the observation masks; sample counts
+are reported separately in the design and results tables.
+
+### Cohort construction
+
+- **Source:** GLODAPv2.2023 Pacific merged and adjusted product; 10--50 degrees N, 140--240 degrees E.
+- **Quality filters:** finite temperature/salinity, positive oxygen, and oxygen/silicate/nitrate flags equal to 2. Nitrate is not a predictor.
+- **Analysis domain:** pressure 300--1500 dbar and \(0<u<180\).
+- **Sampling unit:** one bottle per cruise--station profile. Selection balances the four \(c\) levels, within-level oxygen quartiles and log-pressure halves.
+
+The class boundaries specify an imposed recording rule, not oceanographic regimes.
+The cohort followed exploratory screening; frozen folds subsequently balanced
+input strata and salinity without using responses.
+
+```{r cohort-range, echo=FALSE, results="asis"}
+cat(sprintf("The selected cohort contains **%d profiles from %d cruises**, with actual ranges %.3f--%.3f degrees N, %.2f--%.2f degrees E and %.1f--%.1f dbar.\n\n",
+  nrow(inputs$cohort),length(unique(inputs$cohort$G2cruise)),
+  min(inputs$cohort$G2latitude),max(inputs$cohort$G2latitude),
+  min(inputs$cohort$G2longitude),max(inputs$cohort$G2longitude),
+  min(inputs$cohort$G2pressure),max(inputs$cohort$G2pressure)))
+```
+
+### Training and test information
+
+- **Per fold:** 160 training and 40 test profiles, with 40/10 per \(c\) level.
+- **Training:** \((x,c,y)\) observed for all 160 profiles. O0/O20/O50 additionally reveal \(u\) for 0/32/80 profiles; nested subsets retain cut-side anchors.
+- **Testing:** either \((x,c)\) for all profiles, or \((x,u)\) for 8/20 profiles and \((x,c)\) for the remainder. Test masks are nested, class-balanced and identical across methods.
+- **Separation:** test \(y\) is excluded from fitting/tuning. Transformations use training data; \(u\) scaling uses training calibration measurements. Hidden reference \(u\) is used only for design, evaluation and offline plots.
+
+```{r observation-information, echo=FALSE, results="asis"}
+design_review <- ocean_design_review(inputs)
+cat(ocean_table_html(design_review$design,"Observed information per fold",
+  "All training y observed; all test y withheld. The partial-u condition is evaluated at O20/O50 only. Test masks use seed 202609260 + fold."))
+```
+
+### EIV-GP targets and comparator scope
+
+The EIV-GP hierarchy defines the targets below; comparators share only the
+applicable response targets.
+
+\[
+m_{f,\psi}(x,c)=\int f(x,u)Q_\psi(du\mid x,c).
+\]
+
+| Target | Evaluation and comparator scope |
+|---|---|
+| **Held-out \(y\) prediction** | All methods are scored on matched profiles and available inputs. EIV-GP uses \(p(y^*\mid x^*,c^*,D)\) or \(p(y^*\mid x^*,u^*,D)\); baselines use native predictors. |
+| **Observable mean \(m(x,c)\)** | EIV-GP integrates its conditional \(u\) law; original \((x,c)\) baselines estimate the recorded-input mean directly. True \(m\) is unavailable. |
+| **Calibrated surface \(f(x,u)\)** | Displayed for EIV-GP. CC comparators define their own response functions of \((x,u,c)\); these are not the same EIV hierarchy. True \(f\) is unavailable. |
+| **Training-input posterior \(p(u_i\mid D)\)** | EIV-GP only; uses training \(y_i\) and is evaluated against masked reference \(u_i\). Baselines provide no individual physical-input posterior. |
+
+Conclusions concern this selected cohort and imposed observation design. Profiles
+are disjoint across training/test sets, but cruises can overlap; new-cruise or
+regional transfer, natural missingness and causal effects are not established.
+
+### Observed data
+
+```{r data-design}
+cohort <- inputs$cohort
+levels(cohort$oxygen_class) <- c("<50","50-100","100-150","150-180")
+knitr::kable(as.data.frame(table(cohort$oxygen_class)),
+  col.names=c("Oxygen class (micromol/kg)","Observations"))
+```
+
+```{r exploratory-plots, eval=settings$action!="plan", fig.width=10, fig.height=3.8}
+library(ggplot2)
+library(patchwork)
+p1 <- ggplot(cohort,aes(U,Y,color=oxygen_class))+geom_point(alpha=.65)+
+  labs(x="Measured oxygen (micromol/kg)",y="Silicate (micromol/kg)",color="Oxygen class")+
+  theme_minimal()+theme(legend.position="none")
+p2 <- ggplot(cohort,aes(oxygen_class,Y,fill=oxygen_class))+geom_boxplot(outlier.alpha=.4)+
+  labs(x="Oxygen class (micromol/kg)",y="Silicate (micromol/kg)")+
+  theme_minimal()+theme(legend.position="none")
+p3 <- ggplot(cohort,aes(G2salinity,Y,color=log_pressure))+geom_point(alpha=.65)+
+  labs(x="Salinity",y="Silicate (micromol/kg)",color="Log pressure")+theme_minimal()
+p1+p2+p3
+```
+
+<details>
+<summary>Supplementary: cruise overlap</summary>
+
+```{r cruise-overlap, echo=FALSE, results="asis"}
+cat(ocean_table_html(design_review$overlap,"Cruise overlap in held-out prediction",
+  "Training and test profile IDs are disjoint. Cruises can span both sets; the evaluation does not establish new-cruise or spatially independent transfer performance."))
+```
+
+</details>
+
+## 3. Model fitting and numerical assessment
+
+The following chunk executes the selected action and saves predictions/imputations.
+
+```{r fit, class.source="fold-show", results="hide"}
+if (settings$action == "plan") {
+  analysis <- ocean_analysis(repository_dir, data_dir, output_dir, settings)
+} else {
+  analysis <- ocean_logged(
+    file.path(output_dir, "jobs", settings$run_id, "execution.log"),
+    ocean_analysis(
+      repository_dir, data_dir, output_dir, settings,
+      import_dirs = import_dirs, cc_output_dir=cc_output_dir,
+      diagnostics_dir=diagnostics_dir,representative_fold=params$representative_fold,
+      diagnostics_workers=params$diagnostics_workers
+    )
+  )
+}
+```
+
+- **EIV-GP:** a joint response/input model with deterministic ordinal thresholds. The working input population is standard Gaussian and independent of \(x\).
+- **Native comparators:** UC-GP, LVGP and EzGP use all training \((x,c,y)\) records for `r prediction_labels[["xc"]]`, or only complete \((x,u,c,y)\) records for `r prediction_labels[["cc"]]`. Complete-case continuous inputs are standardized using that training subset.
+- **Test scope:** complete-case methods and EIV-GP are compared on the same observed-\(u\) test subset. The mixed-input EIV rule additionally predicts the entire test set. No missing test \(u\) is filled for the complete-case methods.
+- **Result roots:** `output_dir` supplies EIV/recorded-input fits; `cc_output_dir` supplies independently verified CC tasks. 
+
+```{r fitting-overview, echo=FALSE, results="asis"}
+ocean_fit_overview(analysis, output_dir)
+```
+
+```{r diagnostics-build, eval=settings$action!="plan" && settings$profile!="quick" && "diagnostics" %in% settings$modules, include=FALSE}
+diagnostics <- analysis$diagnostics
+surfaces <- analysis$surfaces
+diagnostic_run <- analysis$diagnostic_run
+```
+
+```{r surfaces-build, eval=settings$action!="plan" && settings$profile!="quick" && "surface_comparison" %in% settings$modules, include=FALSE}
+if(!exists("diagnostics")) diagnostics <- NULL
+if(!exists("surfaces")) surfaces <- NULL
+if(is.null(surfaces) && all(file.exists(file.path(diagnostics_dir,"tables",c("m_points.csv","f_points.csv")))) &&
+  all(vapply(1:5,function(f) file.exists(file.path(output_dir,"full5_class4",sprintf("fold%02d",f),"baseline_package_outputs.rds")),logical(1))))
+  surfaces <- ocean_surface_report(output_dir,data_dir,diagnostics_dir,representative_fold=params$representative_fold)
+```
+
+```{r saved-review-build, eval=settings$action!="plan" && settings$profile!="quick" && "diagnostics" %in% settings$modules, include=FALSE}
+saved_review <- ocean_refinement_review(output_dir,inputs,diagnostics)
+```
+
+<details>
+<summary>Supplementary: computation and posterior approximation</summary>
+
+- **Package calls:** `run_eiv()` in `02_fit_models.R` calls `fit_eivgp()`, `predict_eivgp()` and `impute_eivgp()`; selected continuations call `continue_eivgp()`.
+- **Native baselines:** the pinned `run_published_mixedgp_competitors()` adapter calls kergp, LVGP and EzGP fitting/prediction routines. CC `package_status.csv` retains optimizer status and warnings. A finite prediction can be returned with a flagged optimizer code; task completion alone does not establish optimizer convergence.
+- **Continuation rule:** one extra `r format(ocean_continuation_policy(settings$profile)$n_iter,big.mark=",",scientific=FALSE)` iterations if initial maximum finite Rhat exceeds 1.01, minimum finite bulk ESS is below 400, or finite values are unavailable; `u_block_size=8`.
+- **Review:** finite diagnostics, tail ESS and undefined values are reported separately. Passing the screen does not establish model adequacy, identification or precision of every functional.
+
+```{r saved-chain-review, eval=settings$action!="plan" && settings$profile!="quick" && "diagnostics" %in% settings$modules, echo=FALSE, results="asis", fig.width=10, fig.height=7.5}
+if(!is.null(saved_review)) {
+  numerical <- diagnostics$provenance$settings
+  cat(sprintf("**Function calculations:** %d posterior states per chain; %d latent integration nodes for m(x,c); %d/%d GP draws per state for m/f intervals.\n\n",
+    numerical$mean_states_per_chain,numerical$n_latent,numerical$mean_gp_draws,numerical$surface_gp_draws))
+  d<-saved_review$mcmc
+  d$max_finite_Rhat<-sprintf("%.4f",d$max_finite_Rhat)
+  d$min_finite_bulk_ESS<-round(d$min_finite_bulk_ESS); d$min_finite_tail_ESS<-round(d$min_finite_tail_ESS)
+  cat(ocean_table_html(d,"Final-fit numerical screen",
+    "Finite screen uses Rhat <= 1.01 and bulk ESS >= 400. Tail ESS and counts of undefined diagnostics are displayed, without retroactively changing the continuation rule."))
+  ex<-saved_review$exceptions
+  cat(sprintf("\n\n**%d parameter-by-fit exceptions** are reviewed separately. Constant indicators include unvisited dictionary states; exploration of rare states is not established. Per-chain assessments are exported in diagnostics/refinement/exceptions.csv.\n\n",nrow(ex)))
+  print(saved_review$trace)
+  q<-saved_review$precision
+  d<-data.frame(Quantity=q$parameter,"Posterior mean"=sprintf("%.3f",q$mean),
+    "Posterior SD"=sprintf("%.3f",q$posterior_sd),"MCSE of mean"=sprintf("%.4f",q$mcse),check.names=FALSE)
+  cat(ocean_table_html(d,"Focused Monte Carlo precision on complete saved chains",
+    sprintf("Same fit and six quantities as the trace plot: fold %d/%s. MCSE uses complete chains and measures precision of posterior means. At O0, u and cutpoints use working-model units. Individual-interval and full prediction/function precision remain unassessed.",saved_review$selected$fold,saved_review$selected$cell)))
+} else cat("Saved-chain checks are pending complete final fits.\n")
+```
+
+</details>
+
+## 4. Response prediction
+
+For EIV-GP, prediction means average \(m(x,c)\) for \((x,c)\) inputs and
+\(f(x,u)\) for \((x,u)\) inputs. The tables score held-out \(y\), not true
+\(m/f\) recovery.
+
+- **RMSE:** point prediction error; **CRPS:** predictive-distribution loss (lower is better).
+- **Coverage/width:** 95% response intervals. EIV-GP includes response noise, posterior uncertainty and unresolved \(u\); native baselines include fitted noise/nugget without integrating missing physical \(u\).
+- **Normalization:** \(s_Y\) is the frozen cohort response SD, used only to scale reported scores/widths.
+Method suffixes follow the data-use protocols defined in Section 2. For EIV-GP,
+`r prediction_labels[["xc"]]` uses \(m(x,c)\); `r prediction_labels[["mixed"]]` routes
+between \(m(x,c)\) and \(f(x,u)\) according to observed test information.
+
+```{r prediction-table, eval=settings$action!="plan" && "prediction" %in% settings$modules, echo=FALSE, results="asis"}
+cc_review <- analysis$cc_review
+cc_review$SD_Y <- inputs$response_sd
+ocean_show_cc_predictions(cc_review,section="full")
+```
+
+### Complete-case comparison
+
+Each CC comparator is fitted only to training profiles with observed \(u\), using
+continuous \((x,u)\), categorical \(c\) and response \(y\). Training profiles without
+measured \(u\) are omitted. EIV-GP retains all training profiles.
+
+Within each calibration condition, all methods are evaluated on the same test
+profiles with observed \(u\). EIV-GP(`r prediction_labels[["mixed"]]`) uses its \(f(x,u)\) route on this subset.
+These subset scores have a different evaluation population from the preceding
+all-profile table.
+
+```{r complete-case-table, eval=settings$action!="plan" && "prediction" %in% settings$modules, echo=FALSE, results="asis"}
+ocean_show_cc_predictions(cc_review,section="cc")
+```
+
+```{r prediction-evidence-build, eval=settings$action!="plan" && "prediction" %in% settings$modules, include=FALSE}
+eiv_report <- analysis$prediction
+eiv_report$fold_metrics <- eiv_report$fold_metrics[eiv_report$fold_metrics$variant=="EIV" & eiv_report$fold_metrics$fold %in% settings$folds,]
+evidence <- ocean_prediction_evidence(output_dir,inputs,eiv_report,
+  profile=settings$profile,dest=file.path(output_dir,"prediction_report","cc_revision","eiv_evidence"))
+if(!is.null(evidence))evidence$expected_folds <- settings$folds
+```
+
+<details>
+<summary>Supplementary: pooled CC prediction errors and fitting details</summary>
+
+```{r cc-pooled-rmse, eval=settings$action!="plan" && "prediction" %in% settings$modules, echo=FALSE, results="asis"}
+ocean_show_cc_pooled(cc_review)
+```
+
+</details>
+
+### EIV-GP: `r prediction_labels[["xc"]]` versus `r prediction_labels[["mixed"]]` on matched test profiles
+
+For the **same observed-\(u\) profiles and trained fit**, compare EIV-GP(`r prediction_labels[["xc"]]`) with EIV-GP(`r prediction_labels[["mixed"]]`). The latter uses its \(f(x,u)\) route on these profiles. Training and evaluation profiles remain fixed.
+
+```{r mixed-subgroups, eval=settings$action!="plan" && "prediction" %in% settings$modules, echo=FALSE, results="asis"}
+if(!is.null(evidence) && nrow(evidence$information)) {
+  d <- ocean_evidence_table(evidence,"information",eiv_only=TRUE,labels=prediction_labels)
+  d <- ocean_table_columns(d,setdiff(names(d),c("Method","Mean delta SE","Mean |prediction change|")))
+  cat(ocean_table_html(d,sprintf("EIV-GP: paired %s-%s comparison",prediction_labels[["xc"]],prediction_labels[["mixed"]]),
+    "Same profiles and trained fit. Bold marks the smaller paired RMSE; negative delta CRPS favors measured u. Descriptive comparison only."))
+}
+```
+
+<details>
+<summary>Supplementary: EIV-GP(`r prediction_labels[["xc"]]`/`r prediction_labels[["mixed"]]`) prediction summaries</summary>
+
+```{r prediction-evidence-details, eval=settings$action!="plan" && "prediction" %in% settings$modules, echo=FALSE, results="asis"}
+if(!is.null(evidence))for(type in c("subgroups","pooled")) {
+  d <- ocean_evidence_table(evidence,type,labels=prediction_labels)
+  if(nrow(d))cat(ocean_table_html(d,if(type=="subgroups")sprintf("EIV-GP(%s): test-input subset scores",prediction_labels[["mixed"]]) else sprintf("EIV-GP(%s/%s): pooled held-out scores",prediction_labels[["xc"]],prediction_labels[["mixed"]]),
+    "Pooled RMSE takes the square root after pooling squared errors. Main tables average fold RMSEs. Evaluation subsets contain different profiles; compare the named protocols on matched profiles in the paired table."),"\n\n")
+}
+```
+
+Fold SD describes variation across overlapping training sets. It is not uncertainty
+from independent replications; calibration-mask and cohort sensitivity remain pending.
+
+</details>
+
+## 5. Response functions
+
+These fitted associations are shown on the representative fold, with nearby
+measured profiles for context. Shading is a pointwise 95% credible interval
+for the mean, excluding response noise; it is not a response prediction interval.
+
+### Observable mean m(x,c)
+
+- **Slice:** salinity 34.20; vary pressure within each \(c\) level.
+- **Comparison:** EIV O0/O20/O50 and original \((x,c)\) baselines; \(m\) integrates the fitted conditional \(u\) distribution.
+
+```{r category-mean-display, eval=settings$action!="plan" && settings$profile!="quick" && "surface_comparison" %in% settings$modules, echo=FALSE, fig.width=12, fig.height=7}
+if(!is.null(surfaces)) print(surfaces$plots$m_comparison) else cat("Category-mean displays are pending complete final fits.\n")
+```
+
+### Calibrated response function f(x,u)
+
+- **Slice:** salinity 34.25, pressure 650 dbar; vary \(u\) over the central range of nearby reference profiles.
+- **Interpretation:** O20/O50 provide calibrated coordinates; nearby observations do not guarantee dense joint support. This differs from the \(x\) slice used for \(m\).
+
+```{r continuous-surface-display, eval=settings$action!="plan" && settings$profile!="quick" && "surface_comparison" %in% settings$modules, echo=FALSE, fig.width=12, fig.height=7}
+if(!is.null(surfaces)) print(surfaces$plots$f_with_observations) else cat("Continuous-response displays are pending calibrated final fits.\n")
+```
+
+**Point markers:** filled = training; hollow = test. Blue rings identify training
+calibration shared by O20/O50; orange rings identify additional O50 calibration.
+Masked \(u\) is positioned using offline references only. Nearby profiles have
+varying \(x\) and noisy responses, so their distance from a mean band is not a
+coverage diagnostic. These plots do not establish true-surface recovery.
+
+<details>
+<summary>Supplementary: response functions across folds</summary>
+
+```{r all-fold-functions, eval=settings$action!="plan" && settings$profile!="quick" && "surface_comparison" %in% settings$modules && isTRUE(params$appendix), echo=FALSE, fig.width=12, fig.height=13}
+if(!is.null(surfaces)) {
+  print(surfaces$plots$m_comparison_all_folds)
+  print(surfaces$plots$f_with_observations_all_folds)
+}
+```
+
+</details>
+
+## 6. Training-input imputation
+
+The posterior \(p(u_i\mid D)\) uses training \(y_i\). Evaluation compares O20/O50
+on the same 80 hidden training profiles per fold; it does not assess prospective
+\(u\) prediction without \(y\). O0 is shown on its unanchored working coordinate.
+
+```{r imputation-display, eval=settings$action!="plan" && settings$profile!="quick" && "diagnostics" %in% settings$modules, echo=FALSE, results="asis", fig.width=13.2, fig.height=6}
+if(is.null(diagnostics)) cat("Imputation displays are pending complete final fits.\n") else {
+  u_tables <- ocean_paper_u_tables(diagnostics$u$summary)
+  cat(ocean_table_html(ocean_table_columns(u_tables$main,setdiff(names(u_tables$main),"MAE")),
+    "Response-informed training oxygen imputation",u_tables$note),"\n\n")
+  print(diagnostics$plots$u_main)
+}
+```
+
+Hollow points are observed calibration inputs; solid points and intervals summarize
+hidden-input posteriors. Overall bias can conceal opposing class biases, and
+narrower intervals alone do not establish better calibration.
+
+### Marginal distribution of hidden training inputs
+
+- **Solid curve:** pool the posterior draws of the same 80 hidden profiles, with equal weight per profile.
+- **Gray histogram:** the actual measured \(u\) values of those 80 profiles, withheld from fitting; bar area represents empirical frequency. Rug marks individual measurements.
+- **O0:** posterior draws remain in model units. There is no training calibration to identify a physical oxygen scale, so raw measured \(u\) cannot be overlaid. O20/O50 use physical units and identical reference histograms.
+
+```{r overall-input-distribution, eval=settings$action!="plan" && settings$profile!="quick" && "diagnostics" %in% settings$modules, echo=FALSE, fig.width=12, fig.height=4.5}
+u_distributions <- ocean_u_distribution_report(output_dir,inputs,params$representative_fold)
+if(!is.null(u_distributions))print(u_distributions$pooled_plot)
+```
+
+Compare location, spread and tails with the measured distribution. This marginal
+check includes between-profile variation; individual interval calibration remains
+assessed by the preceding imputation plot and coverage summaries.
+
+### Class-specific imputation calibration
+
+The model learns cutpoints; its extreme categories are unbounded. Individual-U
+intervals can therefore exceed the constructed \(c\) intervals or cohort bounds.
+Detailed counts are provided below without clipping intervals.
+
+```{r support-and-class-calibration, eval=settings$action!="plan" && settings$profile!="quick" && "diagnostics" %in% settings$modules, echo=FALSE, results="asis"}
+if(!is.null(diagnostics)) {
+  d <- ocean_paper_u_tables(diagnostics$u$summary)$class
+  cat(ocean_table_html(ocean_table_columns(d,setdiff(names(d),"MAE")),"Training-U imputation by c",
+    "Entries are five-fold means (sample SDs) on common-hidden training rows. Bias, RMSE and width use micromol/kg. Aggregate bias can conceal opposing class biases."))
+  z <- diagnostics$u$summary
+  cov <- z[z$metric=="Coverage95" & grepl("^class[0-9]+$",z$group),]
+  lowest <- do.call(rbind,lapply(split(cov,cov$cell),function(a)a[which.min(a$mean),,drop=FALSE]))
+  if(nrow(lowest)) {
+    text <- sprintf("%s: c=%s, %.1f%%",lowest$cell,sub("class","",lowest$group),100*lowest$mean)
+    cat(paste0("\n\nLowest class-specific mean coverage: ",paste(text,collapse="; "),". ",
+      if(any(lowest$mean<.95))"At least one class falls below the nominal 95%; overall bias and response coverage do not establish individual-input calibration." else
+      "All displayed class-specific mean coverage estimates meet or exceed 95%; interval widths remain relevant.","\n\n"))
+  }
+}
+```
+
+<details>
+<summary>Supplementary: class-specific imputed-input distributions</summary>
+
+- **Solid curve:** equally weighted mixture of the individual \(u_i\) posteriors within each \(c\).
+- **Gray histogram / rug:** empirical distribution / individual measured values for the same 20 hidden profiles per class. These values are withheld from fitting.
+- **Columns:** O0/O20/O50 on the same 80 common-hidden profiles. O0 remains in model units; O20/O50 share histogram bins, physical axes and posterior smoothing within each class.
+- **Reading:** compare location, spread and tails with references. Marginal spread includes differences between individuals; it cannot establish individual posterior contraction or coverage. Increasing calibration need not narrow every distribution.
+
+```{r input-distributions, eval=settings$action!="plan" && settings$profile!="quick" && "diagnostics" %in% settings$modules, echo=FALSE, fig.width=12, fig.height=11}
+if(!is.null(u_distributions))print(u_distributions$plot)
+```
+
+</details>
+
+<details>
+<summary>Supplementary: individual-input interval support</summary>
+
+An interval is counted when either endpoint lies outside the constructed
+\(c\) interval. This checks support compatibility, not reference-value coverage
+or posterior probability outside the interval. Learned model cutpoints differ
+from the construction boundaries; the extreme model categories have unbounded
+endpoints and do not enforce \(0<u<180\).
+
+```{r input-support-display, eval=settings$action!="plan" && settings$profile!="quick" && "diagnostics" %in% settings$modules, echo=FALSE, results="asis"}
+if(!is.null(saved_review)) {
+  d <- saved_review$support
+  names(d)<-c("Calibration","c","Fold-row N","Unique profiles","Interval outside c (N)",
+    "Lower < 0 (N)","Upper > 180 (N)","Mean < 0 (N)")
+  d$Calibration <- paste0(sub("O","",d$Calibration),"%")
+  cat(ocean_table_html(d,"Individual-U interval support checks",
+    "Counts include repeated training appearances across folds. These endpoint-exceedance counts are not posterior tail probabilities. Intervals are not clipped."))
+}
+```
+
+</details>
+
+<details>
+<summary>Supplementary: training-input imputation across folds</summary>
+
+```{r all-fold-imputation, eval=settings$action!="plan" && settings$profile!="quick" && "diagnostics" %in% settings$modules && isTRUE(params$appendix), echo=FALSE, fig.width=13.2, fig.height=14}
+if(!is.null(diagnostics)) print(diagnostics$plots$u_all_folds)
+```
+
+</details>
+
+## 7. Reproducibility and references
+
+- **Execution:** task seeds are independent of assignment/order; receipts validate reuse and merging. Logs are under `jobs/<run_id>/`.
+- **Prediction evidence:** `prediction_report/cc_revision/` contains current recorded-input/CC/EIV scores and EIV-only matched-input evidence. Each CC task records the precise training/test IDs, transforms, controls, seed and native status.
+- **Input distributions:** `diagnostics/u_distributions/` records common-hidden profile references and plotted density curves; posterior states are thinned deterministically for visualization only.
+- **Posterior review:** `diagnostics/refinement/` contains input-support checks, diagnostic exceptions and selected full-chain MCSE.
+- **Pending experiments:** PI-GP, additional calibration masks and formal UC-GP optimization are not included in these results.
+
+The HTML embeds its figures. Environment requirements and provenance are in
+`ocean_helpers/README.md`.
+
+Data: GLODAPv2.2023, DOI **10.25921/zyrq-ht66**. Product reference:
+Lauvset et al. (2024), *Earth System Science Data* 16, 2047–2072,
+DOI **10.5194/essd-16-2047-2024**.
+
+<details>
+<summary>Supplementary: session information</summary>
+
+```{r environment, echo=FALSE}
+knitr::kable(data.frame(R=as.character(getRversion()),profile=settings$profile,action=settings$action))
+sessionInfo()
+```
+
+</details>

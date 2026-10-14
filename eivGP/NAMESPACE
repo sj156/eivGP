@@ -44,3 +44,6 @@ export(summarize_diagnostics)
 import(utils)
 import(graphics)
 import(grDevices)
+
+export(ocean_settings)
+export(ocean_workflow_api)

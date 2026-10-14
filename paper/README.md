@@ -67,27 +67,19 @@ for settings. To report a new run, supply its `reporting/combined` directory as
 
 ## Application workflows
 
-The checked-in application HTML files are plans, not final empirical findings.
-Ocean uses the frozen public subset in `data/ocean_silicate`. ADNI requires the
-separately supplied collaborator cohort (`toledo_adni_cohort_n495.csv`). Neither
-application HTML currently supports a final paper claim; those summaries remain
-TODO. Historical application outputs are preserved.
+Ocean uses the same three package implementation modules as the numerical studies and supports 200, 500 and 1000 profiles. See [Ocean instructions](applications/README_ocean.md) for installation, dataset parameters, full-budget execution and saved-report reconstruction. Its `.R` entry calls the same package API as the Rmd.
+
+```r
+rmarkdown::render("paper/applications/ocean.Rmd",params=list(
+  dataset="ocean500",profile="paper",action="plan"))
+```
+
+Set action to run with a fresh external output_dir for fitting, or report with a completed root for reconstruction. Full-budget runs are expensive; pilot and quick budgets only verify the covered workflow. Only ocean.html is versioned as the short-budget example report. Prepare the 1000-profile folds separately using data/ocean_silicate/prepare_folds.R; the Ocean instructions give the command.
+
+ADNI continues to use its existing workflow and separately supplied collaborator cohort:
 
 ```sh
-Rscript paper/applications/ocean.R data/ocean_silicate /external/new-ocean-run plan
 Rscript paper/applications/adni.R /external/adni-data /external/new-adni-run plan
 ```
 
-Replace `plan` with `run` to execute the analysis, or with `report` to process
-completed outputs. Render results with explicit notebook parameters:
-
-```r
-rmarkdown::render("paper/applications/ocean.Rmd", params=list(
-  data_dir=normalizePath("data/ocean_silicate"),
-  output_dir="/external/completed-ocean-run", action="report"))
-```
-
-The ADNI notebook accepts the same parameters. Use separate output directories
-for different package/input identities. Reusable fit storage retains chain
-histories and terminal states needed for diagnostics and exact continuation;
-existing archives are not automatically converted or deleted.
+Use separate output roots for changed package/input identities. Fits retain chain histories and terminal states for diagnostics and continuation. Existing archives are not automatically migrated or deleted.

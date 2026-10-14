@@ -45,3 +45,7 @@ replication/**/*.utf8.md
 /paper/**/*_files/
 /paper/**/*.knit.md
 /paper/**/*.utf8.md
+
+# Local installations and private execution artifacts
+/library/
+*.Rproj

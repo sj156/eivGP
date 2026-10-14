@@ -1,25 +1,48 @@
-# Ocean silicate application
+# Ocean silicate data
 
-This semi-synthetic application predicts silicate from salinity, log pressure, and dissolved oxygen information. It uses 200 North Pacific GLODAPv2.2023 observations, with one observation per station profile, pressure 300–1500 dbar and oxygen below 180 µmol kg⁻¹. Oxygen classes have boundaries at 50, 100, and 150 µmol kg⁻¹. Five fixed folds each contain 160 training and 40 test observations. EIV-GP is fitted with 0%, 20%, or 50% exact training oxygen and compared with UC-GP, LVGP, and EzGP.
+| Folder | Cohort | Included files |
+|---|---:|---|
+| `n200` | 200 profiles | Cohort, five train/test pairs and test-u masks |
+| `n500` | 500 profiles | Updated cohort, five train/test pairs and test-u masks |
+| `n1000` | 1000 profiles | Raw selected cohort and source metadata |
 
-The data and split files are included. Oxygen classes and exact-observation masks are constructed for the experiment; the source oxygen measurements remain in the files.
+Profiles are cruise–station units. The application uses salinity/log pressure x,
+oxygen u, silicate y and an imposed ordinal recording rule c with boundaries
+0, 50, 100, 150 and 180 micromol/kg, within pressure 300–1500 dbar.
 
-## Reproduce
+The updated 500 cohort is `seed_465000_joint_quintile_pressure`; the 1000 cohort
+is `seed_144069_oxygen_interleaved`. These are development cohorts from the earlier
+screening exercise; source identifiers and sampling metadata are retained.
 
-Run `paper/applications/ocean.Rmd` from the repository root. Its quick and paper
-profiles call the installed `eivGP` package.
-The CSVs here are unchanged from the original `ocean_Si_Oxy/data/` bundle.
-`cohort_manifest.csv` stores the frozen cohort; `fold01_train.csv` through
-`fold05_test.csv` store the five fixed splits and nested calibration masks.
+## Fold preparation
 
-The full profile runs four chains, 20,000 initial iterations, 5,000 warmup,
-and the recorded selected 20,000-iteration continuations. Generated fits stay
-under `reproduction/ocean/`, separate from these inputs.
+From the repository root:
 
-Class-only prediction uses salinity, log pressure, and oxygen class. Mixed EIV-GP prediction additionally uses exact oxygen for the designated 20% or 50% of test observations. The comparator implementations use class-only inputs. At 0% calibration, oxygen imputation is reported on the package model scale, not as a raw-concentration error.
+```sh
+Rscript data/ocean_silicate/prepare_folds.R ocean1000
+```
 
-## Data source
+`prepare_folds.R` performs the input-balanced assignment, nested training calibration
+and test-u mask generation entirely in R. It uses `jsonlite` for metadata.
+Output defaults to `reproduction/ocean/prepared/ocean1000` and is selected by
+`dataset="ocean1000"` in the Ocean Rmd. Pass a second argument to choose another
+output directory. `ocean500` can also be regenerated with the same command.
 
-The subset comes from the [GLODAPv2.2023 merged and adjusted data product](https://doi.org/10.25921/zyrq-ht66). The [GLODAPv2.2023 product paper](https://doi.org/10.5194/essd-16-2047-2024) states that the data are available without restrictions and asks users to follow its fair-data-use and attribution principles. Cite the product paper and dataset when using this subset. For work centered on individual cruises, consult the GLODAP cruise summary table for the contributing cruise DOIs and publications.
+R uses its own random-number generator with fixed seeds. New partitions are
+reproducible within this R implementation; the supplied 200/500 folds are preserved.
 
-Lauvset, S. K., et al. (2024). “The annual update GLODAPv2.2023: the global interior ocean biogeochemical data product.” *Earth System Science Data*, 16, 2047–2072. https://doi.org/10.5194/essd-16-2047-2024.
+The 500 method forms oxygen quintiles and pressure-ordered quintets within each c;
+the 1000 method forms successive oxygen-ordered quintets. Every quintet contributes
+one profile per fold. Assignment and within-quintet swaps balance U, log pressure
+and salinity moments. Calibration covers classes/cells and oxygen cutpoint anchors,
+with nested 20%/50% masks. Test masks use R seed `202609260 + fold` and class-balanced
+20%/50% quotas; the 500 design alternates the 12/13 O50 class quotas.
+
+See [Ocean instructions](../../paper/applications/README_ocean.md) for installation
+and fitting/report commands.
+
+## Data attribution
+
+Source: [GLODAPv2.2023 merged and adjusted product](https://doi.org/10.25921/zyrq-ht66).
+Lauvset et al. (2024), *Earth System Science Data* 16, 2047–2072,
+[product paper](https://doi.org/10.5194/essd-16-2047-2024).

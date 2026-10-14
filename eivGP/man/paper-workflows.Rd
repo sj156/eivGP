@@ -8,7 +8,6 @@
 \alias{report_table}
 \alias{read_fit}
 \alias{save_fit}
-\alias{run_ocean_analysis}
 \alias{run_adni_analysis}
 \title{Run analyses and report saved results}
 \description{Package-owned numerical and application workflows, reusable score summaries, plots, tables, and lossless fit storage. Paper scripts select scientific settings and external data/output locations.}
@@ -24,8 +23,6 @@ plot_comparison(summary, metric = "RMSE")
 report_table(x, caption = NULL, digits = 3L)
 read_fit(path)
 save_fit(object, path)
-run_ocean_analysis(data_dir, output_dir, action = c("plan", "run", "report"),
-  profile = c("paper", "quick"), cores = 4L, ...)
 run_adni_analysis(data_dir, output_dir, action = c("plan", "run", "report"),
   profile = c("paper", "quick"), cores = 4L)
 }
@@ -44,7 +41,6 @@ run_adni_analysis(data_dir, output_dir, action = c("plan", "run", "report"),
 \item{x}{Table data.}
 \item{caption, digits}{Table presentation settings.}
 \item{object}{Fit or container to save losslessly.}
-\item{...}{Additional ocean task selectors passed to the fixed workflow settings.}
 }
 \value{Configuration or result lists, summary data frames, a ggplot object, a formatted table, or a restored fit, depending on the function. Saving returns the output path invisibly.}
 \details{Existing result archives are never migrated automatically. Compact saves retain chain-resolved histories and terminal states, rebuilding identical pooled views on read. Replication MCSEs do not quantify within-fit MCMC error. Fitting uses existing package implementations and competitor packages; no automatic chain extension or diagnostic filtering is introduced.}

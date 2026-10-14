@@ -1,0 +1,7 @@
+dataset: "ocean1000"
+profile: "paper"
+action: "plan"
+cores: 4
+diagnostics_workers: 2
+output_dir: "reproduction/ocean/ocean1000/paper"
+run_id: "ocean1000_paper"

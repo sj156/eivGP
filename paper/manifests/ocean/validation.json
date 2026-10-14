@@ -1,0 +1,77 @@
+{
+  "date": "2026-10-15",
+  "package_version": "0.4.0.9002",
+  "base_commit": "677791de6637298ead40d87a534ccd761722d1d5",
+  "protected_non_ocean_function_definitions": 470,
+  "core_sampler_file_unchanged": true,
+  "package_tests": {
+    "pass": 758,
+    "fail": 0,
+    "warn": 0,
+    "skip": 0
+  },
+  "datasets": {
+    "ocean200": {
+      "versioned_folder": "data/ocean_silicate/n200",
+      "stage": "frozen five-fold inputs",
+      "unchanged_csv": 16
+    },
+    "ocean500": {
+      "versioned_folder": "data/ocean_silicate/n500",
+      "candidate": "seed_465000_joint_quintile_pressure",
+      "stage": "frozen five-fold inputs",
+      "source_matching_csv": 16
+    },
+    "ocean1000": {
+      "versioned_folder": "data/ocean_silicate/n1000",
+      "candidate": "seed_144069_oxygen_interleaved",
+      "stage": "raw selected cohort",
+      "fold_column_in_raw": false,
+      "fold_files_versioned": false
+    }
+  },
+  "fold_preparation": {
+    "implementation": "base-R-v1",
+    "datasets": [
+      "ocean500",
+      "ocean1000"
+    ],
+    "folds": 5,
+    "grouping_and_input_balance_rules_retained": true,
+    "class_counts_and_calibration_coverage_verified": true,
+    "response_independence_verified": true,
+    "temporary_generated_files_ignored_by_git": true,
+    "python_dependency": false
+  },
+  "task_plans": {
+    "ocean200": 65,
+    "ocean500": 65,
+    "ocean1000_after_preparation": 65
+  },
+  "fresh_rmd_run": {
+    "dataset": "ocean200",
+    "profile": "quick",
+    "folds": [
+      1
+    ],
+    "chains": 1,
+    "iterations": 80,
+    "burn_in": 30,
+    "completed_tasks": 9,
+    "html_generated": true
+  },
+  "versioned_ocean_html": [
+    "paper/applications/ocean.html"
+  ],
+  "larger_dataset_fitting": "not performed in this revision",
+  "full_budget_runs": "pending collaborator execution",
+  "model_theory_sampler_changes": false,
+  "rmd_preparation_check": {
+    "dataset": "ocean1000",
+    "action": "plan",
+    "R_generated_inputs": true,
+    "html_generated": true
+  },
+  "revision_scope": "Fold preparation rewritten in R; frozen input CSVs and the existing 200-profile quick example are preserved. No new model fitting.",
+  "verification_context": "Public integration checkout: 758 passing tests, three complete task plans and a fresh 200-profile quick Rmd run with nine EIV/CC tasks completed."
+}

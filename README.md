@@ -1,5 +1,7 @@
 # eivGP
 
+Ocean workflows and the 200/500/1000-profile inputs follow the shared package and paper-analysis structure. See [Ocean instructions](paper/applications/README_ocean.md) for data preparation, fitting and reporting.
+
 Gaussian process regression with ordinal measurements and potentially available
 continuous measurements associated with those inputs. The package provides
 fitting, prediction, imputation, diagnostics, continuation, and reporting.
@@ -11,18 +13,22 @@ eivGP/R/
   helpers.R     # data preparation, kernels, prediction, storage, workflow helpers
   mcmc.R        # posterior sampling, fitting, continuation, sampler diagnostics
   plotting.R    # summaries, comparison tables, figures, report generation
+data/ocean_silicate/
+  n200/         # frozen 200-profile data and five-fold inputs
+  n500/         # updated 500-profile data and five-fold inputs
+  n1000/        # raw selected 1000-profile cohort
+  prepare_folds.R # standalone fold preparation entrypoint
 paper/
   numerical/    # study1 and study2: one .R, .Rmd, and .html each
   applications/ # ocean and adni: one .R, .Rmd, and .html each
-  manifests/    # exact historical runs and fits used for the paper
+  config/       # Ocean dataset/compute parameter templates
+  manifests/    # selected numerical runs and frozen Ocean input identities
 tools/
   build_package.R
   render_reports.R
 ```
 
-`eivGP/R/` is the authoritative implementation. The three modules are installed
-together as one package; the other two R files contain package metadata and
-static-analysis declarations. Analysis scripts call package APIs and select
+`eivGP/R/` is the authoritative implementation. The three implementation modules are installed together as one package, following the upstream structure. Metadata and static-analysis declarations remain separate. Analysis scripts call package APIs and select
 settings, inputs, and output locations. Competitor adapters call `kergp`, `LVGP`,
 and `EzGP`. Reporting functions also live in the package.
 
@@ -49,9 +55,7 @@ the version included with RStudio.
 ## Reproduce and read the paper analyses
 
 See [paper/README.md](paper/README.md) for the four workflows and exact commands.
-The numerical HTML reports read the selected saved paper exports. Application
-HTML reports currently describe the plans; the final application findings remain
-pending. Rendering does not run MCMC unless `action="run"` is explicitly selected.
+The numerical HTML reports read the selected saved paper exports. The Ocean HTML examples use short-budget results; full-budget application findings remain pending. Rendering does not run MCMC unless `action="run"` is explicitly selected.
 
 Large data, fits, restart checkpoints, and caches stay in the external results
 folder configured by `EIVGP_RESULTS_ROOT`. Existing results are not migrated or

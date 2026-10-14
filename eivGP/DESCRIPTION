@@ -1,6 +1,6 @@
 Package: eivGP
 Title: Gaussian Process Regression with Ordinal Mixed Inputs
-Version: 0.4.0
+Version: 0.4.0.9002
 Authors@R: c( person("Penghui", "Fu", role = "aut"), person("Xinye",
         "Chen", role = "aut"), person("Jianhua Z.", "Huang", role =
         "aut"), person("Sheng", "Jiang", , "jiangsheng@cuhk.edu.cn",

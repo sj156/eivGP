@@ -14,6 +14,7 @@ params:
   task_ids: ""
   cores: 4
   run_id: "local"
+  dataset: "ocean200"
   data_dir: ""
   output_dir: ""
   import_dirs: ""
@@ -31,22 +32,24 @@ nested measurement masks are constructed on a fixed, class-balanced cohort.
 ## 1. Computation settings
 
 - **Action:** `plan` lists tasks; `run` fits or resumes; `report` reads saved fits.
+- **Dataset:** `ocean200`, `ocean500` or `ocean1000`; prepare the 1000-profile folds once using `data/ocean_silicate/prepare_folds.R`.
 - **Selection:** `folds`, `cells` and `modules` select tasks without changing seeds or numerical settings.
 - **Distributed runs:** use separate result roots and merge compatible tasks through `import_dirs`.
 
-Runnable examples are in `ocean_helpers/README.md`.
+Runnable examples are in `README_ocean.md`.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo=TRUE,message=FALSE,warning=TRUE,cache=FALSE,error=FALSE)
+dataset<-match.arg(params$dataset,c("ocean200","ocean500","ocean1000"))
 input <- knitr::current_input(dir=TRUE)
 repository_dir <- normalizePath(file.path(dirname(input),"../.."),mustWork=TRUE)
 source(file.path(dirname(input),"ocean.R"),local=TRUE)
-ocean_load_helpers(repository_dir,environment())
+ocean_load_api(repository_dir,environment())
 prediction_labels <- ocean_prediction_labels()
 settings <- ocean_settings(profile=params$profile,action=params$action,folds=params$folds,
   cells=params$cells,modules=params$modules,task_ids=params$task_ids,cores=params$cores,run_id=params$run_id)
-data_dir <- if(nzchar(params$data_dir)) ocean_resolve_path(params$data_dir,repository_dir) else file.path(repository_dir,"data/ocean_silicate")
-output_dir <- if(nzchar(params$output_dir)) ocean_resolve_path(params$output_dir,repository_dir) else file.path(repository_dir,"reproduction/ocean",settings$profile)
+data_dir <- ocean_dataset_dir(repository_dir,dataset,params$data_dir)
+output_dir <- if(nzchar(params$output_dir)) ocean_resolve_path(params$output_dir,repository_dir) else file.path(repository_dir,"reproduction/ocean",params$dataset,settings$profile)
 diagnostics_dir <- if(nzchar(params$diagnostics_dir)) ocean_resolve_path(params$diagnostics_dir,repository_dir) else file.path(output_dir,"diagnostics")
 import_dirs <- as.character(unlist(params$import_dirs)); import_dirs <- import_dirs[nzchar(import_dirs)]
 import_dirs <- ocean_resolve_path(import_dirs,repository_dir)
@@ -115,9 +118,9 @@ cat(sprintf("The selected cohort contains **%d profiles from %d cruises**, with 
 
 ### Training and test information
 
-- **Per fold:** 160 training and 40 test profiles, with 40/10 per \(c\) level.
-- **Training:** \((x,c,y)\) observed for all 160 profiles. O0/O20/O50 additionally reveal \(u\) for 0/32/80 profiles; nested subsets retain cut-side anchors.
-- **Testing:** either \((x,c)\) for all profiles, or \((x,u)\) for 8/20 profiles and \((x,c)\) for the remainder. Test masks are nested, class-balanced and identical across methods.
+- **Per fold:** `r inputs$design$n_train` training and `r inputs$design$n_test` test profiles, with `r inputs$design$n_train/4`/`r inputs$design$n_test/4` per \(c\) level.
+- **Training:** \((x,c,y)\) observed for all `r inputs$design$n_train` profiles. O0/O20/O50 additionally reveal \(u\) for `r paste(inputs$design$train_exact,collapse="/")` profiles; nested subsets retain cut-side anchors.
+- **Testing:** either \((x,c)\) for all profiles, or \((x,u)\) for `r paste(inputs$design$test_exact[-1],collapse="/")` profiles and \((x,c)\) for the remainder. Test masks are nested, class-balanced up to integer rounding, and identical across methods.
 - **Separation:** test \(y\) is excluded from fitting/tuning. Transformations use training data; \(u\) scaling uses training calibration measurements. Hidden reference \(u\) is used only for design, evaluation and offline plots.
 
 ```{r observation-information, echo=FALSE, results="asis"}
@@ -229,7 +232,7 @@ saved_review <- ocean_refinement_review(output_dir,inputs,diagnostics)
 <details>
 <summary>Supplementary: computation and posterior approximation</summary>
 
-- **Package calls:** `run_eiv()` in `02_fit_models.R` calls `fit_eivgp()`, `predict_eivgp()` and `impute_eivgp()`; selected continuations call `continue_eivgp()`.
+- **Package calls:** the `run_eiv()` routine created by `ocean_initial_functions()` in the Ocean section of `eivGP/R/helpers.R` calls `fit_eivgp()`, `predict_eivgp()` and `impute_eivgp()`; selected continuations call `continue_eivgp()`.
 - **Native baselines:** the pinned `run_published_mixedgp_competitors()` adapter calls kergp, LVGP and EzGP fitting/prediction routines. CC `package_status.csv` retains optimizer status and warnings. A finite prediction can be returned with a flagged optimizer code; task completion alone does not establish optimizer convergence.
 - **Continuation rule:** one extra `r format(ocean_continuation_policy(settings$profile)$n_iter,big.mark=",",scientific=FALSE)` iterations if initial maximum finite Rhat exceeds 1.01, minimum finite bulk ESS is below 400, or finite values are unavailable; `u_block_size=8`.
 - **Review:** finite diagnostics, tail ESS and undefined values are reported separately. Passing the screen does not establish model adequacy, identification or precision of every functional.
@@ -382,7 +385,7 @@ if(!is.null(surfaces)) {
 ## 6. Training-input imputation
 
 The posterior \(p(u_i\mid D)\) uses training \(y_i\). Evaluation compares O20/O50
-on the same 80 hidden training profiles per fold; it does not assess prospective
+on the same `r inputs$design$n_common_hidden` hidden training profiles per fold; it does not assess prospective
 \(u\) prediction without \(y\). O0 is shown on its unanchored working coordinate.
 
 ```{r imputation-display, eval=settings$action!="plan" && settings$profile!="quick" && "diagnostics" %in% settings$modules, echo=FALSE, results="asis", fig.width=13.2, fig.height=6}
@@ -400,8 +403,8 @@ narrower intervals alone do not establish better calibration.
 
 ### Marginal distribution of hidden training inputs
 
-- **Solid curve:** pool the posterior draws of the same 80 hidden profiles, with equal weight per profile.
-- **Gray histogram:** the actual measured \(u\) values of those 80 profiles, withheld from fitting; bar area represents empirical frequency. Rug marks individual measurements.
+- **Solid curve:** pool the posterior draws of the same `r inputs$design$n_common_hidden` hidden profiles, with equal weight per profile.
+- **Gray histogram:** the actual measured \(u\) values of those `r inputs$design$n_common_hidden` profiles, withheld from fitting; bar area represents empirical frequency. Rug marks individual measurements.
 - **O0:** posterior draws remain in model units. There is no training calibration to identify a physical oxygen scale, so raw measured \(u\) cannot be overlaid. O20/O50 use physical units and identical reference histograms.
 
 ```{r overall-input-distribution, eval=settings$action!="plan" && settings$profile!="quick" && "diagnostics" %in% settings$modules, echo=FALSE, fig.width=12, fig.height=4.5}
@@ -440,8 +443,8 @@ if(!is.null(diagnostics)) {
 <summary>Supplementary: class-specific imputed-input distributions</summary>
 
 - **Solid curve:** equally weighted mixture of the individual \(u_i\) posteriors within each \(c\).
-- **Gray histogram / rug:** empirical distribution / individual measured values for the same 20 hidden profiles per class. These values are withheld from fitting.
-- **Columns:** O0/O20/O50 on the same 80 common-hidden profiles. O0 remains in model units; O20/O50 share histogram bins, physical axes and posterior smoothing within each class.
+- **Gray histogram / rug:** empirical distribution / individual measured values for the same `r inputs$design$n_common_hidden/4` hidden profiles per class. These values are withheld from fitting.
+- **Columns:** O0/O20/O50 on the same `r inputs$design$n_common_hidden` common-hidden profiles. O0 remains in model units; O20/O50 share histogram bins, physical axes and posterior smoothing within each class.
 - **Reading:** compare location, spread and tails with references. Marginal spread includes differences between individuals; it cannot establish individual posterior contraction or coverage. Increasing calibration need not narrow every distribution.
 
 ```{r input-distributions, eval=settings$action!="plan" && settings$profile!="quick" && "diagnostics" %in% settings$modules, echo=FALSE, fig.width=12, fig.height=11}
@@ -490,7 +493,7 @@ if(!is.null(diagnostics)) print(diagnostics$plots$u_all_folds)
 - **Pending experiments:** PI-GP, additional calibration masks and formal UC-GP optimization are not included in these results.
 
 The HTML embeds its figures. Environment requirements and provenance are in
-`ocean_helpers/README.md`.
+`README_ocean.md`.
 
 Data: GLODAPv2.2023, DOI **10.25921/zyrq-ht66**. Product reference:
 Lauvset et al. (2024), *Earth System Science Data* 16, 2047–2072,

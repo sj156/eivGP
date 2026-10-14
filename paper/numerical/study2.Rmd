@@ -1,0 +1,67 @@
+---
+title: "Study 2: numerical comparisons"
+output:
+  html_document:
+    toc: true
+    code_folding: hide
+params:
+  results_root: ""
+  action: "report"
+  profile: "paper"
+  cores: 4
+  tables_dir: ""
+  competitor_dir: ""
+---
+
+This report reads the selected merged paper export by default. It includes all
+completed fits, including diagnostic warnings. It does not rerun MCMC to render
+saved results. The source manifest is in `../manifests/study2/`.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE,message=FALSE,warning=TRUE)
+here<-dirname(knitr::current_input(dir=TRUE))
+source(file.path(here,"study2.R"),local=TRUE)
+root<-if(nzchar(params$results_root)) params$results_root else Sys.getenv("EIVGP_RESULTS_ROOT")
+if(!nzchar(root))stop("Set results_root or EIVGP_RESULTS_ROOT.")
+result<-study2_analysis(root,params$action,params$profile,params$cores,
+  tables_dir=if(nzchar(params$tables_dir))params$tables_dir else NULL,
+  competitor_dir=if(nzchar(params$competitor_dir))params$competitor_dir else NULL)
+```
+
+## Method comparison
+
+EIV-GP is fitted by our package. UC-GP, LVGP, and EzGP use their respective
+packages through the package's comparison adapters. PI-GP and CC-GP are internal
+ablations. MCSEs describe variation across replications, not within-fit MCMC error.
+
+```{r scores, results='asis'}
+if(params$action=="report") {
+  cat("Selected source:",result$source,"\n\n")
+  print(eivGP::report_table(result$summary,caption="Scores and replication MCSEs"))
+} else print(result)
+```
+
+```{r comparison, fig.width=10, fig.height=5}
+if(params$action=="report") print(eivGP::plot_comparison(result$summary,"RMSE"))
+```
+
+## Diagnostics
+
+Passing one diagnostic does not establish convergence for every estimand.
+No fits are excluded from the score summaries on the basis of diagnostics.
+
+```{r diagnostics, results='asis'}
+if(params$action=="report") print(eivGP::report_table(eivGP::summarize_diagnostics(result$diagnostics)))
+```
+
+## Reproduction
+
+Use `study2.R` for batch execution or change this notebook's action to `plan`,
+`data`, `fit`, or `run`. New runs preserve the selected profile's scientific
+settings and write to the external results folder. New package identities may
+produce new run IDs; do not rename old caches to force compatibility.
+
+```{r session, echo=FALSE}
+packageVersion("eivGP")
+sessionInfo()
+```

@@ -1,4 +1,12 @@
-# Development: publication recovery
+# eivGP 0.4.0
+
+- Consolidate reusable implementation into helpers, MCMC, and plotting/reporting modules.
+- Add package APIs for numerical studies, application workflows, summaries and reports.
+- Add lossless compact fit storage with legacy reads and exact continuation.
+- Retain the 0.3.1 posterior sampler and scientific settings.
+- Replace duplicated repository implementation with four thin R/Rmd/HTML analyses.
+
+## Publication recovery
 
 - UC-GP and EzGP now support documented, bounded optimizer rescue sequences;
   original successful fits return immediately and attempt histories are retained.

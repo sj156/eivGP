@@ -1,0 +1,62 @@
+---
+title: "Ocean silicate analysis"
+output:
+  html_document:
+    toc: true
+    code_folding: hide
+params:
+  data_dir: "../../data/ocean_silicate"
+  output_dir: ""
+  action: "plan"
+  profile: "paper"
+  cores: 4
+---
+
+This executable report separates planning, fitting, and reporting saved results.
+The checked-in HTML records the **analysis plan**, not new empirical findings.
+The paper's application summary remains pending. Select `report` with a verified
+completed output directory to render results; select `run` explicitly to fit.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE,message=FALSE,warning=TRUE)
+here<-dirname(knitr::current_input(dir=TRUE))
+source(file.path(here,"ocean.R"),local=TRUE)
+data_dir<-params$data_dir
+if(nzchar(data_dir)&&!grepl("^/",data_dir)) data_dir<-file.path(here,data_dir)
+output_dir<-params$output_dir
+if(!nzchar(output_dir)) {
+  if(params$action!="plan")stop("Set output_dir for run/report.")
+  output_dir<-file.path(tempdir(),"ocean-plan")
+}
+result<-ocean_analysis(data_dir,output_dir,params$action,params$profile,params$cores)
+```
+
+## Selected analysis
+
+```{r settings, results='asis'}
+if(params$action=="plan") {
+  selected<-if(is.data.frame(result))result else result$tasks
+  print(eivGP::report_table(selected))
+} else {
+  print(eivGP::report_table(result$prediction$summary))
+  print(eivGP::report_table(result$prediction$availability))
+}
+```
+
+```{r figures, fig.width=10, fig.height=6}
+if(params$action!="plan" && length(result$prediction$plots))
+  for(p in result$prediction$plots) print(p)
+```
+
+## Interpretation and provenance
+
+The public frozen cohort and fold assignments are included under data/ocean_silicate. The analysis compares predictive performance and inference for incompletely observed oxygen inputs.
+
+All reusable fitting, diagnostics, comparison, tables, and plotting functions
+come from `eivGP`. Large output files remain outside Git. This report is generated
+from the accompanying `.Rmd`, which calls the same `.R` workflow as batch runs.
+
+```{r session, echo=FALSE}
+packageVersion("eivGP")
+sessionInfo()
+```

@@ -6,8 +6,8 @@ The data and split files are included. Oxygen classes and exact-observation mask
 
 ## Reproduce
 
-Run `replication/02_ocean.Rmd` from the repository root. Its quick and paper
-profiles call the scientific code in `codes/applications/ocean_silicate/`.
+Run `paper/applications/ocean.Rmd` from the repository root. Its quick and paper
+profiles call the installed `eivGP` package.
 The CSVs here are unchanged from the original `ocean_Si_Oxy/data/` bundle.
 `cohort_manifest.csv` stores the frozen cohort; `fold01_train.csv` through
 `fold05_test.csv` store the five fixed splits and nested calibration masks.

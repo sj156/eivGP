@@ -1,20 +1,15 @@
 ---
-title: "eivGP package development"
+title: "eivGP: package and paper analyses"
 output: html_document
 ---
 
-# Current package build
+The implementation is maintained in three modules under `eivGP/R/`:
+helpers, MCMC, and plotting/reporting. Install the package before running analyses.
 
-The active package is `eivGP` 0.3.0. Its canonical implementation is maintained
-in `codes/core/`; `litr/create-eivGP.Rmd` is the sole active package build.
+See [installation and development](README.md) and the
+[paper reproduction guide](paper/README.md).
 
-```sh
-Rscript --vanilla litr/render-package.R
-R CMD build eivGP
-R CMD check --no-manual eivGP_0.3.0.tar.gz
-```
-
-Obsolete package/book sources have been removed from the working tree.
-Use only the active literate build above to regenerate `eivGP/`.
-See `README.md` for the current package interface and `DEVELOPMENT.md`
-for the separate repository experiment workflow.
+- [Study I report](paper/numerical/study1.html)
+- [Study II report](paper/numerical/study2.html)
+- [Ocean analysis plan](paper/applications/ocean.html)
+- [ADNI analysis plan](paper/applications/adni.html)

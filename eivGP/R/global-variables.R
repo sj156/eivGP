@@ -1,4 +1,4 @@
-# Generated from create-eivGP.Rmd: do not edit by hand
+# Static-analysis declarations for sampler bookkeeping and plot columns.
 
 utils::globalVariables(c(
   "block", "chain", "ess", "global_u_accept_total", "global_u_eval_total",

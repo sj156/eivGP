@@ -39,3 +39,9 @@ replication/**/*_files/
 replication/**/*_cache/
 replication/**/*.knit.md
 replication/**/*.utf8.md
+
+# Paper HTML reports are intentional versioned outputs; ignore only intermediates.
+/paper/**/*_cache/
+/paper/**/*_files/
+/paper/**/*.knit.md
+/paper/**/*.utf8.md

@@ -34,10 +34,10 @@ per chain. **The paper uses four chains with 20,000 total iterations and 5,000 w
 per chain**, with 50 datasets per setting (author-confirmed 2026-09-28).
 No automatic extension or new prior/sampler change is made by this design update.
 
-Designs live in codes/simulation_helpers.R; the single numerical notebook
-`replication/01_numerical_experiments.Rmd` and study masters use that configuration. The reusable eivGP 0.3.1
-package deliberately excludes study design code and does not need rebuilding
-for this change. Legacy standalone drivers are not the configuration entry point.
+Designs are exposed by `eivGP::study_config()`. The two entrypoints in
+`paper/numerical/` select the design and call the installed package.
+See `paper/README.md` for saved-paper reporting and new-run instructions.
+The selected historical runs are identified in `paper/manifests/`.
 
 ## Frozen-data transition
 

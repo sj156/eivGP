@@ -1,0 +1,29 @@
+{
+  "schema": "paper-results-v1",
+  "audited": "2026-10-14",
+  "study": "study1",
+  "selected_merged_run": "study1/runs/recovery-publication-mini",
+  "raw_tables": "study1/runs/recovery-publication-mini/study1",
+  "original_run": "study1/runs/study1-publication-v2-a043ddbaa2e7",
+  "competitor_reports": "shared/competitor-reports/study1",
+  "frozen_data": "data/synthetic/study1",
+  "n_eiv_fits": 300,
+  "origins": {
+    "retained-original": 300
+  },
+  "replication_ids": "1\u201350 in each of six groups",
+  "mcmc": {
+    "chains": 4,
+    "iterations": 20000,
+    "warmup": 5000
+  },
+  "code_provenance": "study1/runs/recovery-publication-mini/provenance.rds: identity.code_md5; original execution commit not inferred from current checkout",
+  "selection": "Use merged export once; do not append original results. Include all completed fits regardless of diagnostic pass.",
+  "sha256": {
+    "study1/runs/recovery-publication-mini/study1/predictive_metrics.csv": "9b50178057eb5e358dad38e243f2e4231b494e55ecca922450fc5752a8b5e19b",
+    "study1/runs/recovery-publication-mini/study1/mcmc_diagnostics.csv": "8ada3462550cabcda98af5798313329404ab0340084ca6e718c9f6c2d2f90a98",
+    "study1/runs/recovery-publication-mini/provenance.rds": "cbddae89b07f24de28c78788cd21d9be9a54dd31db80286e6c79d6d704223577",
+    "study1/runs/recovery-publication-mini/state.rds": "22b0cc45415d40064ceeec1a62b6e93879acb7e6296f125764363d6d237f5ff9"
+  },
+  "scope": "Numerical results audited against paper summaries on 2026-10-14. Historical rendered reports may predate current diagnostic wording."
+}

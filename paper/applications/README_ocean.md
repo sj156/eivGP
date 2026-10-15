@@ -10,7 +10,7 @@ Ocean execution lives in `helpers.R`, reporting in `plotting.R`; the shared
 
 ## Install
 
-From the repository root, install this checkout (eivGP 0.4.0.9007):
+From the repository root, install this checkout (eivGP 0.4.0.9008):
 
 ```sh
 Rscript tools/build_package.R
@@ -74,68 +74,47 @@ salinity, their squares and cross-products. Training calibration is nested at
 
 ## Fit and explicitly continue
 
-Run from the repository root. These commands default to the 500-profile cohort.
+Run from the repository root. The main application uses ocean500.
 
 ```sh
-# Inspect the tasks and resource plan without fitting.
-Rscript paper/applications/ocean.R --action=plan --profile=paper --dataset=ocean500 --cores=16 --chains=4 --iter=100000
-
-# Fit, then analyze using one worker and generate HTML.
-Rscript paper/applications/ocean.R --action=fit --profile=paper --dataset=ocean500 --cores=16 --chains=4 --iter=100000
-
-# Extend initially flagged fits, then update analysis and HTML automatically.
+Rscript paper/applications/ocean.R --action=plan --profile=paper --dataset=ocean500 --cores=16
+Rscript paper/applications/ocean.R --action=fit --profile=paper --dataset=ocean500 --cores=16
 Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=16
 ```
 
-`--cores` is a total fitting budget. A shared queue runs independent
-fold/calibration tasks and assigns up to `--chains` cores to each EIV fit;
-comparator tasks receive one core each. All active allocations together stay
-within the total budget. Completed tasks free resources for the next task.
-The four-chain examples can use 12, 16 or 56 cores for 3, 4 or 14 simultaneous
-EIV fits when enough work is pending. More chains can be selected explicitly
-before fitting; the resource planner never changes the statistical chain count.
-Windows falls back to serial execution.
+Results default to `~/eivGP-ocean/<dataset>/<profile>/`; use `--output` for a custom directory.
 
-After the fitting queue finishes, the coordinator analyzes saved chains using
-one worker and renders `ocean.html` in the result root. There is no analysis-worker
-option or overlap between fitting and analysis. Low-level package fit/analyze
-stages remain separately callable. `run` aliases `fit`.
+Sampling is fixed by profile:
 
-Defaults: paper uses four chains, 100,000 initial iterations per chain and 5,000
-burn-in; pilot uses four chains, 80 initial iterations and 30 burn-in. `quick`
-uses one chain and fold 1. Set `--chains` and `--iter` before starting a new
-paper/pilot fit; `--burn` is optional. `iter` counts total iterations per chain,
-including burn-in, and must exceed `burn`. For example, a new fit can use:
+| Profile | Chains | Initial iterations per chain | Burn-in |
+|---|---:|---:|---:|
+| paper | 4 | 50,000 | 5,000 |
+| pilot | 4 | 80 | 30 |
+| quick | 1 | 80 | 30 |
 
-```sh
-Rscript paper/applications/ocean.R --action=fit --profile=paper --dataset=ocean500 --chains=8 --iter=60000 --burn=5000 --cores=16 --output=results/ocean/ocean500/custom
-```
+Initial iterations include burn-in. The CLI does not accept `--chains`, `--iter`
+or `--burn`. Use `pilot` or `quick` for workflow checks, not formal results.
 
-Later commands infer the saved initial chain count, iteration count and burn-in.
-`continue` retains these settings: requesting a different `--chains`, `--iter`
-or `--burn` is rejected. Use `--continuation-iter` for **additional iterations
-per existing chain**; burn-in is not repeated. `cores` can change between stages.
+`cores` is a total fitting budget shared across fold/calibration tasks and their
+chains. EIV fits receive up to their profile's chain count; comparators receive
+one core. All active reservations stay within the budget. With four chains and
+enough tasks, 12/16/56 cores support 3/4/14 simultaneous EIV fits. Windows uses
+serial execution. After fitting, analysis and HTML use one worker. `run` aliases
+`fit`; low-level fitting and analysis remain separate stages.
 
-`continue` performs at most one explicit extension on fits flagged by the initial
-finite-Rhat/bulk-ESS screen; it never runs automatically. Passing fits are skipped.
-The default added iterations per chain are paper 20,000 and pilot 80. Choose a
-different length at the continuation step:
+`continue` explicitly extends initially screen-flagged fits, then updates analysis
+and HTML. It preserves chain count and initial settings; burn-in is not repeated.
+Each fit supports one extension, with paper default +20,000 iterations per chain
+and pilot default +80. `--continuation-iter` may choose another added length:
 
 ```sh
 Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=10000 --cores=16
 ```
 
-Saved extension lengths drive reuse and report labels. Requesting a different
-length for an already-started extension fails. Verified checkpoints survive
-analysis/report failures; rerun `analyze` or `report` after correcting the issue.
-
-Results default to `results/ocean/<dataset>/<profile>/`; `--output` overrides it.
-`--folds`, `--cells`, `--modules` and `--task-ids` select tasks. Keep one owner per
-output root; changed source, data or initial-fit numerical settings require a
-fresh root. `--import-dirs` imports compatible verified tasks; `--data-root`
-selects custom prepared inputs. Task logs are under `jobs/<run_id>/tasks/`;
-`task_status.csv` and `execution_schedule.csv` retain PIDs, core allocations,
-completion and failures.
+Passing fits are skipped; conflicting saved extension lengths are rejected.
+`--folds`, `--cells`, `--modules` and `--task-ids` select tasks. `--import-dirs`
+imports compatible verified tasks; `--data-root` selects prepared inputs.
+Per-task logs, core allocations and status are under `jobs/<run_id>/`.
 
 ## Generate HTML from saved results
 
@@ -152,7 +131,7 @@ reads saved predictions and renders HTML. Direct Rmd rendering is also available
 ```r
 rmarkdown::render("paper/applications/ocean.Rmd",
   params=list(dataset="ocean500",profile="paper",action="report",
-    output_dir="results/ocean/ocean500/paper",
+    output_dir="",
     run_id="ocean500_paper_report",appendix=TRUE))
 ```
 
@@ -165,6 +144,5 @@ templates. Read one with `yaml::read_yaml()` and pass it as `params`.
 
 OI/CC/MI protocols and scoring scopes are defined in the report. Masks, counts
 and eligible best-score emphasis are computed from inputs/results. Keep fitted
-objects and chains in external output roots; use a fresh root when inputs,
-package identity or numerical settings change. Input hashes and validation scope
+objects and chains in external output roots. Input hashes and validation scope
 are recorded in `paper/manifests/ocean/`.

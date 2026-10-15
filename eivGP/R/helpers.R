@@ -11100,7 +11100,7 @@ ocean_settings <- function(profile = "paper", action = "plan", folds = 1:5,
   profile <- match.arg(profile, c("paper", "quick", "pilot"))
   action <- match.arg(action, c("plan", "fit", "run", "analyze", "continue", "report"))
   if(action=="run")action<-"fit"
-  if(is.null(iter))iter<-if(profile=="paper")100000L else 80L
+  if(is.null(iter))iter<-if(profile=="paper")50000L else 80L
   if(is.null(burn))burn<-if(profile=="paper")5000L else 30L
   iter<-mixedgp_as_integer_strict(iter,"iter",1L,1L)
   burn<-mixedgp_as_integer_strict(burn,"burn",0L,1L)
@@ -11108,6 +11108,9 @@ ocean_settings <- function(profile = "paper", action = "plan", folds = 1:5,
   if(is.null(chains))chains<-if(profile=="quick")1L else 4L
   chains<-mixedgp_as_integer_strict(chains,"chains",1L,1L)
   if(profile=="quick" && chains!=1L)stop("quick uses one chain; choose pilot or paper for multiple chains.")
+  if(profile=="paper" && action%in%c("plan","fit","continue") &&
+     !identical(c(chains,iter,burn),c(4L,50000L,5000L)))
+    stop("paper fixes chains=4, iter=50000 and burn=5000; use the profile settings.")
   if(!is.null(continuation_iter))
     continuation_iter <- ocean_continuation_policy(profile,continuation_iter)$n_iter
   folds <- as.integer(unlist(folds)); cells <- as.character(unlist(cells))
@@ -11361,6 +11364,33 @@ ocean_identity <- function(repository_dir,data_dir,settings) {
     RNG=c("Mersenne-Twister","Inversion","Rejection"))
 }
 
+
+# Explain incompatible saved results before any task or checkpoint is changed.
+ocean_assert_identity <- function(saved,current,output_dir) {
+  if(identical(saved,current))return(invisible(TRUE))
+  fields<-union(names(saved),names(current))
+  changed<-fields[!vapply(fields,function(n)identical(saved[[n]],current[[n]]),logical(1))]
+  details<-character()
+  for(key in c("chains","iter","burn")) {
+    old<-saved$numerics[[key]];new<-current$numerics[[key]]
+    if(!identical(old,new)) {
+      show<-function(x)if(is.null(x))"missing" else paste(x,collapse=",")
+      details<-c(details,paste0("  ",key,": saved=",show(old),"; requested=",show(new)))
+    }
+  }
+  # Suggest a fresh root without creating, renaming or deleting any directory.
+  fresh<-paste0(output_dir,"_new");i<-1L
+  while(file.exists(fresh)) {i<-i+1L;fresh<-paste0(output_dir,"_new",i)}
+  stop(paste(c("Existing Ocean results are incompatible with this run.",
+    paste0("Output directory: ",output_dir),
+    paste0("Changed identity fields: ",paste(changed,collapse=", ")),details,
+    "Existing fits and metadata have been preserved; no fitting started.",
+    "To start a separate run, repeat your command with:",
+    paste0("  --output=",shQuote(fresh)),
+    "To resume the existing run, use its original data, package/code and initial sampling settings.",
+    "Do not delete workflow_identity.rds to bypass this check."),collapse="\n"),call.=FALSE)
+}
+
 ocean_task_files <- function(task,profile="paper",stage="analyze") {
   if(stage %in% c("fit","continue") && task$module %in% c("eiv","continuation")) {
     sub<-file.path(if(task$module=="continuation")"continuation_plus20k" else
@@ -11498,7 +11528,7 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
     on.exit(unlink(lock,recursive=TRUE),add=TRUE)
     idfile <- file.path(output_dir,"workflow_identity.rds")
     if(file.exists(idfile)) {
-      if(!identical(readRDS(idfile),identity)) stop("Changed inputs/code/package/settings; choose a new output_dir.")
+      ocean_assert_identity(readRDS(idfile),identity,output_dir)
     } else {
       if(length(setdiff(list.files(output_dir,all.files=TRUE,no..=TRUE),c(".workflow.lock","jobs"))))
         stop("Existing outputs lack distributed provenance. Read them with action=report, or use a fresh directory.")

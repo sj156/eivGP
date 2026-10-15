@@ -230,66 +230,55 @@ separate application installation and dataset guide, see
 #### Fit and analyze the Ocean experiment
 
 ```sh
-Rscript paper/applications/ocean.R --action=plan --profile=paper --dataset=ocean500 --cores=16 --chains=4 --iter=100000
+Rscript paper/applications/ocean.R --action=plan --profile=paper --dataset=ocean500 --cores=16
 
 # Fit, save checkpoints, analyze using one worker, and generate HTML.
-Rscript paper/applications/ocean.R --action=fit --profile=paper --dataset=ocean500 --cores=16 --chains=4 --iter=100000
+Rscript paper/applications/ocean.R --action=fit --profile=paper --dataset=ocean500 --cores=16
 
-# Explicitly extend flagged fits, then automatically update analysis and HTML.
+# Explicitly extend flagged fits, then update analysis and HTML.
 Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=16
 ```
 
-`--cores` is the total fitting budget shared across independent fold/calibration
-fits and their chains. A coordinator assigns at most `--chains` cores per EIV fit
-and one per comparator task; all active reservations together stay within the
-budget. On macOS/Linux, 12, 16 or 56 cores can run 3, 4 or 14 EIV fits at once
-when four chains and enough tasks are selected. Fewer pending tasks leave some
-cores idle. Analysis and HTML always use one worker after all fits finish.
-Task logs and allocations are saved under `jobs/<run_id>/`.
+Sampling settings are fixed by profile. `paper` uses four chains, 50,000 initial
+iterations per chain including 5,000 burn-in; `pilot` uses four chains and 80/30;
+`quick` uses one chain and 80/30. `--chains`, `--iter` and `--burn` are not CLI
+options. Use `pilot` or `quick` for workflow checks.
 
-The `paper` defaults are four chains, 100,000 initial iterations per chain and
-5,000 burn-in. Set `--chains`, `--iter` and optionally `--burn` before a new fit;
-`iter` includes burn-in and must exceed `burn`. Reports read actual saved settings.
-Continuation defaults to 20,000 additional iterations per chain. It inherits
-initial settings; a different `--chains`, `--iter` or `--burn` is rejected. Set another
-extension length at the continuation step, for example:
+`--cores` is the total fitting budget shared across fold/calibration fits and
+their chains. Each EIV fit receives at most its profile's chain count; each
+comparator receives one core. With four chains and enough tasks, 12, 16 or 56
+cores can run 3, 4 or 14 EIV fits concurrently. Analysis and HTML use one worker
+after all fits finish. Allocation logs are saved under `jobs/<run_id>/`.
 
-```sh
-Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=10000 --cores=16
-```
-
-Each fit supports one explicit extension; passing fits are skipped. Repeating a
-command reuses verified results and rebuilds analysis/HTML. A conflicting saved
-extension budget is rejected. `run` aliases `fit`. Changed source, data or
-initial-fit numerical settings require a fresh output root. `pilot` defaults to
-four short chains (80 initial, 30 burn-in); `quick` uses one chain. Choose the
-core budget to match the resources allocated to this job.
+Continuation keeps the original chains and adds 20,000 iterations per chain by
+default in paper mode. `--continuation-iter=10000` requests another extension
+length. Each fit supports one explicit extension; passing fits are skipped.
+`run` aliases `fit`. Independent `analyze` and `report` actions remain available.
 
 #### Minimal command-line workflow check
 
-Run these commands at the repository root after installation. They use the
-200-profile inputs, two folds and O20, with three CC comparators per fold. The
-8-core budget exercises simultaneous EIV fits. The main analysis uses ocean500.
-Use a fresh output root after changing source or numerical settings.
+Run these commands after installation. They use ocean200, two folds/O20, three
+CC comparators per fold and an 8-core fitting budget. A temporary result folder
+keeps this check separate from the formal ocean500 analysis.
 
 ```sh
-Rscript paper/applications/ocean.R --action=fit --profile=pilot --dataset=ocean200 --folds=1,2 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --cores=8 --chains=4 --iter=80 --burn=30 --output=results/ocean/ocean200/terminal-check
-Rscript paper/applications/ocean.R --action=continue --profile=pilot --dataset=ocean200 --folds=1,2 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --continuation-iter=40 --cores=8 --output=results/ocean/ocean200/terminal-check
+OCEAN_CHECK_OUTPUT="$(mktemp -d "${TMPDIR:-/tmp}/eivGP-ocean-check.XXXXXX")"
+Rscript paper/applications/ocean.R --action=fit --profile=pilot --dataset=ocean200 --folds=1,2 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --cores=8 --output="$OCEAN_CHECK_OUTPUT"
+Rscript paper/applications/ocean.R --action=continue --profile=pilot --dataset=ocean200 --folds=1,2 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --continuation-iter=40 --cores=8 --output="$OCEAN_CHECK_OUTPUT"
 ```
 
-Each command finishes with single-worker analysis and generates or updates
-`results/ocean/ocean200/terminal-check/ocean.html`. Continuation is requested only
-by the second command. The CLI finds a custom library through `EIVGP_R_LIBRARY`,
-otherwise through `.r-library/` or R's standard library paths. Pandoc must be
-available before fitting starts.
+Both commands finish with single-worker analysis and generate or update
+`$OCEAN_CHECK_OUTPUT/ocean.html`. Only the second requests continuation. The CLI
+finds a custom library through `EIVGP_R_LIBRARY`, otherwise through `.r-library/`
+or standard library paths. Pandoc must be available before fitting starts.
 
 #### Where Ocean results are saved
 
 | Path | Contents |
 | --- | --- |
 | `data/ocean_silicate/n500/` | Frozen 500-profile cohort, five-fold inputs and masks |
-| `results/ocean/ocean500/paper/` | Formal-budget fits, predictions, receipts, diagnostics and `ocean.html` |
-| `results/ocean/ocean500/pilot/` | Separate short-chain workflow results |
+| `~/eivGP-ocean/ocean500/paper/` (or printed run folder) | Formal-budget fits, predictions, receipts, diagnostics and `ocean.html` |
+| `~/eivGP-ocean/ocean500/pilot/` | Separate short-chain workflow results |
 | `paper/applications/ocean.html` | Reader-facing example report generated from the Rmd |
 
 `--output=/absolute/path/ocean500-paper` overrides the result root;
@@ -315,7 +304,7 @@ The CLI already generates HTML. Direct Rmd rendering remains available using the
 ```r
 rmarkdown::render("paper/applications/ocean.Rmd",
   params=list(dataset="ocean500",profile="paper",action="report",
-    output_dir="results/ocean/ocean500/paper"))
+    output_dir=""))
 ```
 
 The `.R` script calls separate fitting and analysis stages in sequence; the `.Rmd` reads saved results and produces

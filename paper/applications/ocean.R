@@ -1,6 +1,6 @@
 # Ocean application entrypoint: implementation is provided by the installed package.
 ocean_load_api <- function(repository_dir=NULL,envir=parent.frame()) {
-  if(!requireNamespace("eivGP",quietly=TRUE)||utils::packageVersion("eivGP")<"0.4.0.9007")
+  if(!requireNamespace("eivGP",quietly=TRUE)||utils::packageVersion("eivGP")<"0.4.0.9008")
     stop("Install this checkout with Rscript tools/build_package.R and R CMD INSTALL eivGP.")
   if(!is.null(repository_dir)) {
     installed<-utils::read.csv(system.file("module-manifest.csv",package="eivGP"))
@@ -25,16 +25,46 @@ ocean_dataset_dir <- function(repository_dir,dataset="ocean500",data_dir="") {
   }
   file.path(repository_dir,"data/ocean_silicate",sub("ocean","n",dataset))
 }
+ocean_default_output <- function(dataset,profile) {
+  file.path(path.expand("~/eivGP-ocean"),dataset,profile)
+}
 ocean_output_dir <- function(repository_dir,dataset,profile,output_dir="") {
-  if(nzchar(output_dir))ocean_resolve_path(output_dir,repository_dir) else
-    file.path(repository_dir,"results/ocean",dataset,profile)
+  if(nzchar(output_dir))return(ocean_resolve_path(output_dir,repository_dir))
+  base<-ocean_default_output(dataset,profile)
+  marker<-paste0(base,".latest-run.rds")
+  if(!file.exists(marker))return(base)
+  latest<-readRDS(marker)
+  if(!is.character(latest)||length(latest)!=1L||!dir.exists(latest))
+    stop("Latest run is unavailable. Specify an existing run with --output=...: ",marker)
+  latest
+}
+
+# Only initial fitting may select a fresh root. Old fits remain untouched.
+ocean_choose_fit_output <- function(output_dir,identity,new_base=output_dir) {
+  idfile<-file.path(output_dir,"workflow_identity.rds")
+  if(file.exists(idfile)) {
+    if(identical(readRDS(idfile),identity))return(output_dir)
+  } else {
+    existing<-if(dir.exists(output_dir))list.files(output_dir,all.files=TRUE,no..=TRUE) else character()
+    if(!length(setdiff(existing,c("jobs",".workflow.lock"))))return(output_dir)
+  }
+  stem<-paste0(new_base,"_run_",format(Sys.time(),"%Y%m%d_%H%M%S"))
+  candidate<-stem;i<-1L
+  repeat {
+    if(dir.create(candidate,showWarnings=FALSE))break
+    if(!file.exists(candidate))stop("Cannot create output directory: ",candidate)
+    i<-i+1L;candidate<-paste0(stem,"_",i)
+  }
+  cat("Existing results preserved: ",output_dir,"\nNew run directory: ",candidate,"\n",
+    "For subsequent commands targeting this run, use --output=",shQuote(candidate),"\n",sep="")
+  candidate
 }
 
 # CLI options select the existing workflow; they do not alter model fitting.
 ocean_cli_params <- function(args=character()) {
   if(length(args)==1L && !startsWith(args,"--"))return(readRDS(args))
   aliases<-c("data-root"="data_dir","output"="output_dir")
-  allowed<-c("action","profile","dataset","cores","chains","iter","burn","data_dir","output_dir",
+  allowed<-c("action","profile","dataset","cores","data_dir","output_dir",
     "folds","cells","modules","task_ids","run_id","import_dirs","cc_output_dir",
     "diagnostics_dir","representative_fold","continuation_iter")
   p<-list()
@@ -42,6 +72,7 @@ ocean_cli_params <- function(args=character()) {
     if(!grepl("^--[^=]+=.+$",arg))stop("Use --name=value: ",arg)
     key<-sub("^--([^=]+)=.*$","\\1",arg)
     key<-if(key%in%names(aliases))unname(aliases[[key]]) else gsub("-","_",key)
+    if(key%in%c("chains","iter","burn"))stop("Sampling settings are fixed by --profile; remove --",key,". Use --profile=pilot for a short check.")
     if(!key%in%allowed)stop("Unknown option: ",key)
     if(key%in%names(p))stop("Repeated option: ",key)
     p[[key]]<-sub("^--[^=]+=","",arg)
@@ -69,13 +100,13 @@ ocean_cli_params <- function(args=character()) {
 ocean_restore_fit_settings <- function(params,output_dir) {
   path<-file.path(output_dir,"workflow_identity.rds")
   if(!file.exists(path))return(params)
+  # New fits always use their profile, never inherit old numerical settings.
+  if(params$action%in%c("fit","run","plan"))return(params)
   saved<-readRDS(path)$numerics
-  for(key in c("chains","iter","burn")) {
-    if(is.null(params[[key]]))params[[key]]<-saved[[key]] else
-      if(identical(params$action,"continue") && !identical(as.double(params[[key]]),as.double(saved[[key]])))
-        stop("Cannot change ",key," during continuation (saved ",saved[[key]],
-          "). Use --continuation-iter to add iterations per existing chain.")
-  }
+  if(params$action=="continue" && identical(params$profile,"paper") &&
+     !identical(as.integer(unlist(saved[c("chains","iter","burn")])),c(4L,50000L,5000L)))
+    stop("This saved run does not use the fixed paper sampling settings; use analyze/report to inspect it or start a new paper fit.")
+  for(key in c("chains","iter","burn"))params[[key]]<-saved[[key]]
   params
 }
 
@@ -111,6 +142,8 @@ ocean_cli_workflow <- function(settings,execute,render) {
 }
 
 ocean_run_cli <- function(repository_dir,params=list()) {
+  if(any(c("chains","iter","burn")%in%names(params)))
+    stop("Sampling settings are fixed by --profile; remove --chains, --iter and --burn.")
   if("diagnostics_workers"%in%names(params))stop("diagnostics_workers was removed; analysis always uses one worker.")
   api<-new.env(parent=environment())
   ocean_load_api(repository_dir,api)
@@ -123,6 +156,8 @@ ocean_run_cli <- function(repository_dir,params=list()) {
   environment(ocean_output_dir)<-api
   data_dir<-ocean_dataset_dir(repository_dir,dataset,getp("data_dir",""))
   output_dir<-ocean_output_dir(repository_dir,dataset,profile,getp("output_dir",""))
+  params$profile<-profile
+  params$action<-getp("action","plan")
   params<-ocean_restore_fit_settings(params,output_dir)
   settings<-do.call(api$ocean_settings,
     params[intersect(names(params),names(formals(api$ocean_settings)))])
@@ -130,11 +165,27 @@ ocean_run_cli <- function(repository_dir,params=list()) {
   resolve<-function(paths)vapply(paths,function(path)
     if(nzchar(path))api$ocean_resolve_path(path,repository_dir) else "",
     character(1),USE.NAMES=FALSE)
-  execute<-function(stage_settings,import=TRUE)ocean_analysis(repository_dir,data_dir,output_dir,stage_settings,
+  run_identity<-NULL
+  if(settings$action=="fit") {
+    ocean_check_report_dependencies()
+    run_identity<-api$ocean_identity(repository_dir,data_dir,settings)
+    output_dir<-ocean_choose_fit_output(output_dir,run_identity,
+      if(nzchar(getp("output_dir","")))output_dir else ocean_default_output(dataset,profile))
+  }
+  cat("Output directory:",output_dir,"\n")
+  execute<-function(stage_settings,import=TRUE) {
+    if(stage_settings$action=="fit" && !nzchar(getp("output_dir","")))
+      on.exit({
+        identity_path<-file.path(output_dir,"workflow_identity.rds")
+        if(file.exists(identity_path) && identical(readRDS(identity_path),run_identity))
+          api$ocean_atomic_rds(output_dir,paste0(ocean_default_output(dataset,profile),".latest-run.rds"))
+      },add=TRUE)
+    ocean_analysis(repository_dir,data_dir,output_dir,stage_settings,
     import_dirs=if(import)resolve(getp("import_dirs",character())) else character(),
     cc_output_dir=resolve(getp("cc_output_dir","")),
     diagnostics_dir=resolve(getp("diagnostics_dir","")),
     representative_fold=getp("representative_fold",1L))
+  }
   render<-function()ocean_render_report(repository_dir,output_dir,settings,dataset,data_dir,
     resolve(getp("cc_output_dir","")),resolve(getp("diagnostics_dir","")),
     getp("representative_fold",1L))
@@ -158,10 +209,12 @@ if(sys.nframe()==0L) {
   args<-commandArgs(TRUE)
   if(identical(args,"--help")) {
     cat("Rscript paper/applications/ocean.R --action=plan|fit|analyze|continue|report --profile=paper|pilot|quick\n",
-      "  --dataset=ocean200|ocean500|ocean1000 --cores=16 --chains=4 --iter=100000 --output=/path/to/results\n",
+      "  --dataset=ocean200|ocean500|ocean1000 --cores=16 --output=/path/to/results\n",
+      "  Default output: ~/eivGP-ocean/<dataset>/<profile>/; override with --output=...\n",
       "  Optional: --data-root=... --folds=1:5 --cells=O0,O20,O50 --modules=...\n",
-      "  --run-id=... --diagnostics-dir=... --burn=5000 (paper default)\n",
-      "  --iter: initial total iterations per chain (paper 100000; pilot/quick 80)\n",
+      "  --run-id=... --diagnostics-dir=...\n",
+      "  Sampling is fixed by profile: paper 4 chains/50000 iterations/5000 burn-in; pilot 4/80/30; quick 1/80/30.\n",
+      "  Incompatible initial-fit results are preserved; a new folder is selected and printed.\n",
       "  --continuation-iter=20000 (additional iterations per existing chain; pilot default: 80)\n",
       "  --task-ids=... --import-dirs=... --cc-output-dir=... --representative-fold=1\n",
       "No arguments: validate inputs and print the paper-profile ocean500 plan.\n",

@@ -8,7 +8,7 @@ test_that("Ocean resource plans accept different machines and configurable chain
   expect_identical(vapply(c(12L,16L,56L),function(x)ocean_core_plan(x,15L)$concurrent_fits,integer(1)),c(3L,4L,14L))
   expect_equal(ocean_core_plan(56,5,4)$active_cores,20)
   expect_identical(ocean_core_plan(56,5,12)$task_cores,c(12L,12L,12L,12L,8L))
-  expect_identical(ocean_settings(chains=8)$chains,8L)
+  expect_identical(ocean_settings(profile="pilot",chains=8)$chains,8L)
   expect_error(ocean_settings(chains=0),"chains")
   expect_error(ocean_settings(chains=1.5),"chains")
   expect_error(ocean_settings(profile="quick",chains=4),"quick")

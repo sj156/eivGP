@@ -34,6 +34,7 @@ nested measurement masks are constructed on a fixed, class-balanced cohort.
 - **Action:** `report` reads saved fits; `plan` displays the proposed analysis without fitting.
 - **Dataset:** `ocean200`, `ocean500` or `ocean1000`; prepare the 1000-profile folds once using `data/ocean_silicate/prepare_folds.R`.
 - **Selection:** `folds`, `cells` and `modules` select tasks without changing seeds or numerical settings.
+- **Results:** default to the latest run under `~/eivGP-ocean/`; set `output_dir` to select a specific saved run.
 - **Distributed runs:** use separate result roots and merge compatible tasks through `import_dirs`.
 
 Runnable examples are in `README_ocean.md`.

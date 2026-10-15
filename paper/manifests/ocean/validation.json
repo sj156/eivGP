@@ -1,11 +1,11 @@
 {
   "date": "2026-10-15",
-  "package_version": "0.4.0.9007",
+  "package_version": "0.4.0.9008",
   "base_commit": "677791de6637298ead40d87a534ccd761722d1d5",
   "protected_non_ocean_function_definitions": 470,
   "core_sampler_file_unchanged": true,
   "package_tests": {
-    "pass": 916,
+    "pass": 954,
     "fail": 0,
     "warn": 0,
     "skip": 0
@@ -60,7 +60,7 @@
     "R_generated_inputs": true,
     "html_generated": true
   },
-  "revision_scope": "Public integration of verified private one-command workflows, shared CPU scheduling, and configurable initial sampling budgets.",
+  "revision_scope": "Public Ocean workflow refinement: fixed paper50k protocol, home-directory result handling, and concise README instructions.",
   "continuation_regression": {
     "fix": "Parenthesize the sum of training and test row counts before membership checking.",
     "supported_sizes_tested": [
@@ -317,41 +317,212 @@
     "formal_100000_iteration_run_performed": false,
     "public_repository_updated": false
   },
-  "public_release_validation": {
-    "date": "2026-10-15",
-    "private_source_commit": "258365696792adb5fb3a75a53444ed0b76d5e6e3",
-    "public_base_commit": "8cbf0c0f6b940c3a595f88e78d85c177c61d9ae5",
-    "package_tests_pass": 916,
-    "literal_readme_workflow": {
+  "identity_recovery_validation": {
+    "saved_100k_requested_50k_rejected_before_fit": true,
+    "checkpoint_hashes_and_mtimes_unchanged": true,
+    "suggested_directory_not_created": true,
+    "paper500_50k_plan_pass": true,
+    "literal_readme_commands": 2,
+    "fit_tasks_done": 8,
+    "continuation_tasks_done": 2,
+    "serial_analysis_and_automatic_html": true,
+    "package_tests_pass": 930,
+    "public_repository_updated": false,
+    "private_remote_updated": false,
+    "automatic_new_directory_selection": false,
+    "identity_safety_check_retained": true,
+    "results_directory_already_ignored_by_git": true
+  },
+  "default_output": "~/eivGP-ocean/<dataset>/<profile>/",
+  "home_output_validation": {
+    "cli_rmd_and_config_defaults_aligned": true,
+    "cli_prints_resolved_path_before_execution": true,
+    "home_and_relative_and_absolute_overrides_tested": true,
+    "paper500_50k_cli_plan_pass": true,
+    "home_directory_results_written": false,
+    "automatic_run_directory_switching": false,
+    "public_repository_updated": false,
+    "private_remote_updated": false
+  },
+  "historical_fixed_profile_100k_validation": {
+    "literal_readme": {
       "literal_readme_commands": 2,
-      "folds": [
-        1,
-        2
-      ],
-      "fit_tasks_done": 8,
-      "continuation_tasks_done": 2,
-      "observed_peak_core_reservations": 8,
-      "analysis_core_limit": 1,
+      "sampling_override_flags_used": false,
+      "fits_done": 8,
+      "continuations_done": 2,
+      "peak_core_budget": 8,
+      "analysis_single_worker": true,
       "analysis_after_fit_barrier": true,
-      "html_after_both_commands": true,
-      "analyze_and_report_rebuilds_pass": true,
-      "chain_hashes_and_mtimes_unchanged": true,
-      "sampler_draw_counts": [
+      "html_generated": true,
+      "pooled_draws": [
         200,
         360
       ]
     },
-    "complete_saved_report": {
+    "reroute_and_latest_run": {
+      "old_directory_preserved": true,
+      "old_hashes_and_mtimes_unchanged": true,
+      "new_directory_created": true,
+      "default_latest_run_followed_by_continuation": true,
+      "initial_pooled_draws": 200,
+      "continued_pooled_draws": 220,
+      "html_after_both_stages": true,
+      "paper_defaults": [
+        4,
+        100000,
+        5000
+      ],
+      "cli_sampling_overrides_rejected": true,
+      "no_formal_paper_fitting": true
+    },
+    "sampling_cli_flags_removed": [
+      "chains",
+      "iter",
+      "burn"
+    ],
+    "continuation_iter_remains_configurable": true,
+    "public_repository_updated": false,
+    "private_remote_updated": false,
+    "guarded_complete_saved_report": {
       "tables": 19,
       "embedded_images": 10,
       "supplementary_blocks": 9
+    }
+  },
+  "fixed_profile_and_output_validation": {
+    "paper_defaults": {
+      "chains": 4,
+      "iterations_per_chain": 50000,
+      "burn_in": 5000,
+      "continuation_iterations_per_chain": 20000
     },
-    "guarded_render_no_fitting": true,
-    "saved_fits_and_receipts_unchanged": true,
+    "literal_readme": {
+      "literal_readme_commands": 2,
+      "sampling_override_flags_used": false,
+      "fits_done": 8,
+      "continuations_done": 2,
+      "peak_core_budget": 8,
+      "analysis_single_worker": true,
+      "analysis_after_fit_barrier": true,
+      "html_generated": true,
+      "pooled_draws": [
+        200,
+        360
+      ]
+    },
+    "fitting_equivalence": {
+      "sampler_file_identical": true,
+      "protected_fitting_functions_identical": [
+        "ocean_initial_functions",
+        "ocean_run_task",
+        "ocean_continuation_functions",
+        "ocean_run_complete_case",
+        "ocean_cc_controls",
+        "ocean_controls",
+        "ocean_test_masks",
+        "ocean_prepare_inputs",
+        "ocean_task_catalogue",
+        "ocean_schedule"
+      ],
+      "non_ocean_helper_functions_identical": 215,
+      "old_cli_4chains_50000_vs_new_paper_settings_identical": true,
+      "actual_initial_and_continued_short_chain_draws_identical": true,
+      "folds": [
+        1,
+        2
+      ],
+      "fields_compared": [
+        "samples_u",
+        "samples_tau",
+        "samples_logtheta",
+        "samples_sigma2",
+        "samples_V",
+        "samples_r",
+        "samples_J",
+        "samples_pi",
+        "samples_by_chain"
+      ],
+      "formal_50000_fitting_performed": false
+    },
+    "sampling_cli_flags_removed": [
+      "chains",
+      "iter",
+      "burn"
+    ],
+    "previous_real_reroute_and_default_continuation_verified": true,
+    "formal_50000_iteration_run_performed": false,
+    "public_repository_updated": false,
+    "guarded_complete_saved_report": {
+      "tables": 19,
+      "embedded_images": 10,
+      "supplementary_blocks": 9
+    }
+  },
+  "public_release_validation_v9008": {
+    "public_base_commit": "a501571f31c7044726a477fa7061bb75a4da0838",
+    "integrated_private_commit": "9eab51b",
+    "package_tests_pass": 954,
+    "literal_readme": {
+      "literal_readme_commands": 2,
+      "sampling_override_flags_used": false,
+      "fits_done": 8,
+      "continuations_done": 2,
+      "peak_core_budget": 8,
+      "analysis_single_worker": true,
+      "analysis_after_fit_barrier": true,
+      "html_generated": true,
+      "pooled_draws": [
+        200,
+        360
+      ]
+    },
+    "fitting_equivalence": {
+      "sampler_file_identical": true,
+      "protected_fitting_functions_identical": [
+        "ocean_initial_functions",
+        "ocean_run_task",
+        "ocean_continuation_functions",
+        "ocean_run_complete_case",
+        "ocean_cc_controls",
+        "ocean_controls",
+        "ocean_test_masks",
+        "ocean_prepare_inputs",
+        "ocean_task_catalogue",
+        "ocean_schedule"
+      ],
+      "non_ocean_helper_functions_identical": 215,
+      "old_cli_4chains_50000_vs_new_paper_settings_identical": true,
+      "actual_initial_and_continued_short_chain_draws_identical": true,
+      "folds": [
+        1,
+        2
+      ],
+      "fields_compared": [
+        "samples_u",
+        "samples_tau",
+        "samples_logtheta",
+        "samples_sigma2",
+        "samples_V",
+        "samples_r",
+        "samples_J",
+        "samples_pi",
+        "samples_by_chain"
+      ],
+      "formal_50000_fitting_performed": false
+    },
+    "verbose_output_sections_removed": true,
+    "paper_defaults": {
+      "chains": 4,
+      "iterations_per_chain": 50000,
+      "burn_in": 5000
+    },
     "sampler_synthetic_data_unchanged": true,
-    "runtime_platform": "macOS",
     "linux_runtime_tested": false,
-    "formal_100000_iteration_run_performed": false,
-    "ram_scheduler_added": false
+    "formal_50000_iteration_run_performed": false,
+    "guarded_complete_saved_report": {
+      "tables": 19,
+      "embedded_images": 10,
+      "supplementary_blocks": 9
+    }
   }
 }

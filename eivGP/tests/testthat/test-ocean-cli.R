@@ -42,7 +42,7 @@ test_that("unspecified Ocean result directories keep their workflow defaults", {
   expect_identical(called$cc_output_dir,"")
   expect_identical(called$diagnostics_dir,"")
   expect_identical(called$import_dirs,c(file.path(root,"relative-import"),""))
-  expect_identical(called[[3]],file.path(root,"results/ocean/ocean500/paper"))
+  expect_identical(called[[3]],file.path(path.expand("~/eivGP-ocean"),"ocean500","paper"))
 })
 
 
@@ -68,7 +68,7 @@ test_that("one-click fitting and continuation analyze serially before rendering"
       imports<<-c(imports,import);chains<<-c(chains,settings$chains);list()
     }
     render<-function() {stages<<-c(stages,"render");"report.html"}
-    settings<-ocean_settings(action=action,cores=12,chains=8)
+    settings<-ocean_settings(profile="pilot",action=action,cores=12,chains=8)
     result<-env$ocean_cli_workflow(settings,execute,render)
     expected<-if(action%in%c("fit","continue"))c(action,"analyze","render") else
       if(action=="plan")"plan" else c(action,"render")
@@ -86,32 +86,45 @@ test_that("one-click fitting and continuation analyze serially before rendering"
 })
 
 
-test_that("initial sampling budgets are configurable and extensions keep the original fit", {
-  expect_identical(ocean_settings()$iter,100000L)
-  expect_identical(ocean_settings()$chains,4L)
-  expect_identical(ocean_settings()$burn,5000L)
-  s<-ocean_settings(iter=60000,chains=8,burn=10000)
-  expect_identical(c(s$iter,s$chains,s$burn),c(60000L,8L,10000L))
-  expect_error(ocean_settings(iter=5000),"burn must be smaller")
-  expect_error(ocean_settings(iter=0),"iter")
-  expect_error(ocean_settings(iter=1.5),"iter")
-  expect_error(ocean_settings(burn=-1),"burn")
+test_that("paper sampling settings are fixed and CLI exposes profiles instead of sampling knobs", {
+  expect_identical(c(ocean_settings()$chains,ocean_settings()$iter,ocean_settings()$burn),c(4L,50000L,5000L))
+  for(action in c("plan","fit","continue")) {
+    expect_error(ocean_settings(action=action,iter=100000),"paper fixes")
+    expect_error(ocean_settings(action=action,chains=8),"paper fixes")
+    expect_error(ocean_settings(action=action,burn=1000),"paper fixes")
+  }
   root<-normalizePath(testthat::test_path("../../.."),mustWork=TRUE)
   env<-new.env(parent=globalenv());sys.source(file.path(root,"paper/applications/ocean.R"),env)
-  p<-env$ocean_cli_params(c("--chains=8","--iter=60000","--burn=0"))
-  expect_identical(p,list(chains=8L,iter=60000L,burn=0L))
-  expect_error(env$ocean_cli_params("--iter=1.5"),"positive integer")
-  expect_error(env$ocean_cli_params("--burn=-1"),"non-negative integer")
+  for(flag in c("--chains=4","--iter=50000","--burn=5000"))
+    expect_error(env$ocean_cli_params(flag),"fixed by --profile")
   output<-tempfile();dir.create(output);on.exit(unlink(output,recursive=TRUE),add=TRUE)
   saveRDS(list(numerics=list(iter=80L,burn=30L,chains=2L)),file.path(output,"workflow_identity.rds"))
-  for(action in c("fit","continue","analyze","report")) {
-    restored<-env$ocean_restore_fit_settings(list(action=action),output)
-    expect_identical(c(restored$iter,restored$burn,restored$chains),c(80L,30L,2L))
+  p<-env$ocean_restore_fit_settings(list(action="fit",profile="paper"),output)
+  expect_null(p$iter);expect_null(p$chains)
+  expect_error(env$ocean_restore_fit_settings(list(action="continue",profile="paper"),output),"fixed paper")
+  for(action in c("analyze","report")) {
+    p<-env$ocean_restore_fit_settings(list(action=action,profile="paper"),output)
+    expect_identical(c(p$chains,p$iter,p$burn),c(2L,80L,30L))
   }
-  expect_error(env$ocean_restore_fit_settings(list(action="continue",chains=4L),output),"Cannot change chains")
-  expect_error(env$ocean_restore_fit_settings(list(action="continue",iter=100L),output),"continuation-iter")
-  expect_error(env$ocean_restore_fit_settings(list(action="continue",burn=0L),output),"Cannot change burn")
-  p<-env$ocean_restore_fit_settings(list(action="continue",chains=2L,continuation_iter=7L),output)
-  expect_identical(p$continuation_iter,7L)
-  expect_identical(p$iter,80L)
+  p<-env$ocean_restore_fit_settings(list(action="continue",profile="pilot",continuation_iter=7L),output)
+  expect_identical(c(p$chains,p$iter,p$burn),c(2L,80L,30L));expect_identical(p$continuation_iter,7L)
+})
+
+
+test_that("Ocean CLI and Rmd defaults share an external home-directory root", {
+  root<-normalizePath(testthat::test_path("../../.."),mustWork=TRUE)
+  env<-new.env(parent=globalenv());sys.source(file.path(root,"paper/applications/ocean.R"),env)
+  env$ocean_resolve_path<-getFromNamespace("ocean_resolve_path","eivGP")
+  for(dataset in c("ocean200","ocean500","ocean1000")) {
+    expected<-file.path(path.expand("~/eivGP-ocean"),dataset,"paper")
+    expect_identical(env$ocean_output_dir(root,dataset,"paper"),expected)
+    lines<-readLines(file.path(root,"paper/config",paste0(dataset,".yml")))
+    configured<-strsplit(lines[startsWith(lines,"output_dir:")],'"',fixed=TRUE)[[1]][2]
+    expect_identical(env$ocean_output_dir(root,dataset,"paper",configured),expected)
+  }
+  expect_identical(env$ocean_output_dir(root,"ocean500","pilot"),
+    file.path(path.expand("~/eivGP-ocean"),"ocean500","pilot"))
+  expect_identical(env$ocean_output_dir(root,"ocean500","paper","~/custom-ocean"),path.expand("~/custom-ocean"))
+  expect_identical(env$ocean_output_dir(root,"ocean500","paper","relative-run"),file.path(root,"relative-run"))
+  expect_identical(env$ocean_output_dir(root,"ocean500","paper","/external/run"),"/external/run")
 })

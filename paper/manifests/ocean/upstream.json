@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/sj156/eivGP",
   "base_commit": "677791de6637298ead40d87a534ccd761722d1d5",
-  "package_version": "0.4.0.9007",
+  "package_version": "0.4.0.9008",
   "core_sampler_version": "0.3.1",
   "private_repository": "https://github.com/Taichi719/eivGP-private",
   "cleanup_scope": "Replace obsolete Ocean/starred blocks and duplicate application helpers; consolidate Ocean execution in helpers.R and reporting/diagnostics in plotting.R, following the upstream three-module structure. Retain all non-Ocean implementations.",
@@ -19,13 +19,16 @@
     "html": "ocean.Rmd (saved-result report)"
   },
   "default_dataset": "ocean500",
-  "resource_budget": "cores shared across fits/chains; configurable chains; analysis single worker",
+  "resource_budget": "cores shared across fits/chains fixed by profile; analysis single worker",
   "ocean_paper_defaults": {
     "chains": 4,
-    "iter": 100000,
+    "iter": 50000,
     "burn": 5000,
     "continuation_iter": 20000
   },
-  "public_base_commit": "8cbf0c0f6b940c3a595f88e78d85c177c61d9ae5",
-  "integrated_private_commit": "258365696792adb5fb3a75a53444ed0b76d5e6e3"
+  "identity_recovery": "Initial fit preserves incompatible old output and selects a new timestamped directory, printing the actual path. Default later actions follow the latest run marker.",
+  "default_output": "~/eivGP-ocean/<dataset>/<profile>/",
+  "initial_sampling_cli_overrides": false,
+  "public_base_commit": "a501571f31c7044726a477fa7061bb75a4da0838",
+  "integrated_private_commit": "9eab51beef9b3e7f06ca8a7a9475d61fe936d3d5"
 }

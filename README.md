@@ -62,8 +62,8 @@ Linux. No archived fits or private datasets are needed. Run:
 
 ```sh
 Rscript tools/setup_numerical.R
-Rscript paper/numerical/supplement.R --action=plan
-Rscript paper/numerical/supplement.R --action=data
+Rscript paper/numerical/study2.R --component=mechanism --action=plan
+Rscript paper/numerical/study2.R --component=mechanism --action=data
 ```
 
 The setup restores `renv.lock` and installs this package into `.r-library/`.

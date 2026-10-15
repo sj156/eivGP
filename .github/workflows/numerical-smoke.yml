@@ -30,4 +30,4 @@ jobs:
           Rscript tools/setup_numerical.R --check
           Rscript paper/numerical/check-portability.R
       - name: Exercise model and prediction interfaces
-        run: Rscript paper/numerical/check-supplement.R
+        run: Rscript paper/numerical/check-numerical.R

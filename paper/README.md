@@ -2,7 +2,7 @@
 
 Numerical experiments now have a [fresh-checkout workflow](numerical/README.md)
 for macOS and Linux: `Rscript tools/setup_numerical.R`, then
-`Rscript paper/numerical/supplement.R --action=plan`. It generates synthetic
+`Rscript paper/numerical/study2.R --component=mechanism --action=plan`. It generates synthetic
 data and needs no historical exports. The package supplies model fitting;
 the numerical runners define the study-specific comparisons and scoring.
 

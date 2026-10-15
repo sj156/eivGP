@@ -1,3 +1,15 @@
+# Permanent numerical study workflows
+
+`study1.R` and `study2.R` are the only experiment entrypoints. With no arguments they print plans. `--action=run` executes the complete selected study; `--action=report` rebuilds available reports without fitting. Scientific implementation lives in the installed package, not in temporary analysis scripts.
+
+```sh
+Rscript tools/setup_numerical.R
+Rscript paper/numerical/study1.R --action=run --profile=paper
+Rscript paper/numerical/study2.R --action=run --profile=paper
+```
+
+Study II defaults to both components. To perform only the minimal new work, use `--component=mechanism` and the selections below. The original grid retains its fixed profile; `--reps`, `--methods` and mechanism sampler controls require that explicit component. Rerunning identical commands reuses compatible outputs. The package refactor changes provenance, so pre-refactor output roots must remain separate. Pending publication displays and scientific validation remain TBD; orchestration does not manufacture missing findings.
+
 # Numerical experiments from a fresh checkout
 
 All numerical data, priors, seeds, fitting code and scoring code are in this repository. No Dropbox folder, saved fit, private CSV, Overleaf project, or user-specific library is required. Standard public R dependencies are restored from CRAN using `renv.lock`. This is a source-and-environment reproduction workflow; it does not claim bitwise-identical floating-point results across hardware.
@@ -12,7 +24,7 @@ cd eivGP
 Rscript tools/setup_numerical.R
 Rscript tools/setup_numerical.R --check
 Rscript paper/numerical/check-portability.R
-Rscript paper/numerical/check-supplement.R
+Rscript paper/numerical/check-numerical.R
 ```
 
 The setup restores the versioned dependency lock into `.r-library/`, then installs the checkout's `eivGP` source there. Runners locate that library and the repository from their own paths, including when invoked from another working directory. `EIVGP_R_LIBRARY` overrides the library location. `--install-local` reinstalls source using already verified dependencies; it does not download dependencies. `--check` checks dependency versions and source identity without running simulations. Keep the Git commit and any local patch with a publication run. The macOS/Linux GitHub Actions workflow runs these small validation checks; publication experiments are never launched by CI.
@@ -23,34 +35,34 @@ The additional design has only two settings: Study II, Gaussian four-proxy measu
 
 ```sh
 # Safe default: print the plan. No data or models are needed beforehand.
-Rscript paper/numerical/supplement.R --action=plan
+Rscript paper/numerical/study2.R --component=mechanism --action=plan
 
 # Generate the original fixed-seed datasets, without fitting any model.
-Rscript paper/numerical/supplement.R --action=data
+Rscript paper/numerical/study2.R --component=mechanism --action=data
 
 # First paper-profile replication: assess cost, convergence and integration error.
-Rscript paper/numerical/supplement.R --action=run --reps=1 --cores=4
+Rscript paper/numerical/study2.R --component=mechanism --action=run --reps=1 --cores=4
 
 # Then complete the same protocol. Finished jobs are skipped automatically.
-Rscript paper/numerical/supplement.R --action=run --reps=1:50 --cores=4
+Rscript paper/numerical/study2.R --component=mechanism --action=run --reps=1:50 --cores=4
 
 # Regenerate summaries only.
-Rscript paper/numerical/supplement.R --action=report
+Rscript paper/numerical/study2.R --component=mechanism --action=report
 ```
 
-Data default to `results/data/study2/`; results default to `results/supplement/`. Missing datasets are also generated automatically by `--action=run`. Data generation always uses the original n=100, n_test=100, q=4, m=4 design and calibration grid 0/20/50/80; the supplement fits only 20/50. Dataset seed is `1000000 + 10000*rep + 1`, with calibration seed one higher. Sampling seeds are recorded separately. A `--profile=quick` run keeps this DGP but uses deliberately inadequate MCMC and optimizer budgets, in a separate `--output=results/quick` directory. It tests software, not the scientific claims.
+Data default to `results/data/study2/`; results default to `results/study2/mechanism/`. Missing datasets are also generated automatically by `--action=run`. Data generation always uses the original n=100, n_test=100, q=4, m=4 design and calibration grid 0/20/50/80; the mechanism component fits only 20/50. Dataset seed is `1000000 + 10000*rep + 1`, with calibration seed one higher. Sampling seeds are recorded separately. A `--profile=quick` run keeps this DGP but uses deliberately inadequate MCMC and optimizer budgets, in a separate `--output=results/quick` directory. It tests software, not the scientific claims.
 
 To run **only the new work** when compatible old FULL/categorical results are available:
 
 ```sh
-Rscript paper/numerical/supplement.R --action=run --reps=1:50 --cores=4 \
+Rscript paper/numerical/study2.R --component=mechanism --action=run --reps=1:50 --cores=4 \
   --methods=CUT,UC-GP-CC,LVGP-CC,EzGP-CC --output=results/additions
 ```
 
 This is the 300-complete-case-plus-100-CUT plan. Fresh reproduction should use the full default above so it does not depend on those old results. To refit or complete only one failed job:
 
 ```sh
-Rscript paper/numerical/supplement.R --action=run --reps=7 --calib=20 \
+Rscript paper/numerical/study2.R --component=mechanism --action=run --reps=7 --calib=20 \
   --methods=LVGP-CC --cores=4
 ```
 
@@ -81,7 +93,7 @@ Saved FULL fits are an optional optimization, not a requirement. `--full-fit-map
 
 ## Original univariate and multivariate grids
 
-The earlier DGPs and broader calibration/robustness settings remain reproducible from local generation. These are optional full rebuilds, not new experimental factors:
+The default Study I workflow runs its original univariate grid. The default Study II workflow runs both its original multivariate grid and the targeted mechanism comparisons. Select `--component=core` or `--component=mechanism` to run or report one part independently; Study I supports core only.
 
 ```sh
 Rscript paper/numerical/study1.R --action=plan --profile=paper --cores=4
@@ -89,12 +101,12 @@ Rscript paper/numerical/study2.R --action=plan --profile=paper --cores=4
 # Change plan to data to generate, or to run to generate, fit and aggregate.
 ```
 
-Defaults are `results/data/study1`, `results/data/study2`, and separate `results/study1`, `results/study2` run roots. Explicit `--data-root` and `--output` remain available. The old positional report APIs and notebooks are optional readers for historical exports; they are not prerequisites for these fresh-run commands. Local data, fit and build directories are ignored by Git. No experimental output is written to Overleaf.
+Defaults are `results/data/study1`, `results/data/study2`, and separate `results/study1`, `results/study2` run roots, with `core/` and (Study II) `mechanism/` subdirectories. An explicit `--output` sets the parent root for both components. Explicit `--data-root` and `--output` remain available. The old positional report APIs and notebooks are optional readers for historical exports; they are not prerequisites for these fresh-run commands. Local data, fit and build directories are ignored by Git. No experimental output is written to Overleaf.
 
 ## Output retention
 
 Study fit checkpoints use lossless compact storage: pooled copies of chain
-histories are reconstructed on read. The supplement uses the same storage.
+histories are reconstructed on read. The mechanism component uses the same storage.
 CUT stores selected prediction states and diagnostic CSVs for each conditional
 fit, then removes that fit only when its MCMC screening passes. Failed fits
 remain available for investigation. Selected states support deterministic

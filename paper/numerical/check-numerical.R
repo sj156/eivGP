@@ -1,5 +1,8 @@
 args<-commandArgs(FALSE);here<-dirname(normalizePath(sub("^--file=","",grep("^--file=",args,value=TRUE)[1])))
-source(file.path(here,"supplement.R"))
+source(file.path(here,"common.R"))
+numerical_package_check()
+api<-getFromNamespace("eivgp_numerical_api","eivGP")(NUMERICAL_REPO_ROOT)
+invisible(list2env(as.list(api),envir=environment()))
 cfg<-settings(list("data-root"="unused",output=tempdir(),profile="quick"))
 z<-F("simulate_study2_data")(n=30,n_test=3,seed=31)
 obs<-z$train$U;obs[21:30,]<-NA

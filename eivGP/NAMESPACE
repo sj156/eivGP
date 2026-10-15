@@ -47,3 +47,5 @@ import(grDevices)
 
 export(ocean_settings)
 export(ocean_workflow_api)
+
+export(run_paper_study)

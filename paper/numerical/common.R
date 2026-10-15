@@ -28,3 +28,16 @@ numerical_package_check <- function() {
   if(!identical(unname(tools::md5sum(paths)),unname(installed)))
     stop("Installed eivGP differs from this checkout; rerun tools/setup_numerical.R")
 }
+
+# Shared CLI bootstrap; scientific orchestration is implemented in the package.
+run_study_cli <- function(study,args=commandArgs(TRUE)) {
+  a<-list()
+  for(x in args) {
+    if(!grepl("^--[^=]+=.+$",x))stop("Use --name=value")
+    key<-sub("^--([^=]+)=.*$","\\1",x)
+    if(key%in%names(a))stop("Repeated option: ",key)
+    a[[key]]<-sub("^--[^=]+=","",x)
+  }
+  numerical_package_check()
+  eivGP::run_paper_study(study,a,NUMERICAL_REPO_ROOT)
+}

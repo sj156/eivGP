@@ -11,19 +11,17 @@ study2_analysis <- function(results_root, action=c("report","plan","data","fit",
     results<-eivGP::read_study_results(source,competitor_dir)
     return(list(source=source,summary=eivGP::summarize_comparison(results),diagnostics=results$diagnostics))
   }
-  config<-eivGP::study_config("study2",profile,
-    output_root=file.path(results_root,"study2/runs"),
-    data_root=file.path(results_root,"data/synthetic/study2"),cores=cores)
-  eivGP::run_numerical_study(config,action,
-    competitors=if(profile=="quick")character() else c("UC-GP","LVGP","EzGP"))
+  eivGP::run_paper_study("study2",list(action=action,profile=profile,
+    cores=as.character(cores),output=file.path(results_root,"study2")),
+    repo_root=Sys.getenv("EIVGP_REPO_ROOT",getwd()))
 }
 if(sys.nframe()==0L) {
   args<-commandArgs(trailingOnly=TRUE)
-  if(length(args)&&all(grepl("^--",args))) {
+  if(!length(args)||all(grepl("^--",args))) {
     script<-sub("^--file=","",grep("^--file=",commandArgs(FALSE),value=TRUE)[1])
     env<-new.env(parent=globalenv())
-    sys.source(file.path(dirname(normalizePath(script)),"run-study.R"),envir=env)
-    env$run_study_cli(c("--study=study2",args))
+    sys.source(file.path(dirname(normalizePath(script)),"common.R"),envir=env)
+    env$run_study_cli("study2",args)
   } else {
     root<-Sys.getenv("EIVGP_RESULTS_ROOT")
     if(!nzchar(root))stop("Set EIVGP_RESULTS_ROOT, or use --action=plan --data-root=... --output=...")

@@ -2912,7 +2912,7 @@ ocean_build_diagnostics <- function(output_dir, data_dir = file.path(output_dir,
   workers = 1L, overwrite = FALSE) {
   for (package in c("eivGP", "ggplot2", "patchwork"))
     ocean_diag_require(requireNamespace(package, quietly = TRUE), paste("Required package:", package))
-  ocean_diag_require(utils::packageVersion("eivGP") >= "0.4.0.9002",
+  ocean_diag_require(utils::packageVersion("eivGP") >= "0.4.0.9003",
     "Install this checkout of eivGP before running the Ocean workflow.")
   ocean_diag_require(length(representative_fold) == 1L && representative_fold %in% 1:5,
     "representative_fold must be one of 1:5; the default main display uses fold 1.")

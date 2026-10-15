@@ -1,4 +1,4 @@
-# eivGP 0.4.0.9002
+# eivGP 0.4.0.9003
 
 The package fits errors-in-variables Gaussian processes with ordinal inputs.
 Public APIs support fitting, prediction, imputation, diagnostics, continuation,

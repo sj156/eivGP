@@ -1,7 +1,7 @@
 dataset: "ocean200"
 profile: "paper"
-action: "plan"
+action: "report"
 cores: 4
 diagnostics_workers: 2
-output_dir: "reproduction/ocean/ocean200/paper"
+output_dir: "results/ocean/ocean200/paper"
 run_id: "ocean200_paper"

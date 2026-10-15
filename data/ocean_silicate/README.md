@@ -25,7 +25,7 @@ Rscript data/ocean_silicate/prepare_folds.R ocean1000
 `prepare_folds.R` performs the input-balanced assignment, nested training calibration
 and test-u mask generation entirely in R. It uses `jsonlite` for metadata.
 Output defaults to `reproduction/ocean/prepared/ocean1000` and is selected by
-`dataset="ocean1000"` in the Ocean Rmd. Pass a second argument to choose another
+`--dataset=ocean1000` in `ocean.R` and `dataset="ocean1000"` in the Rmd. Pass a second argument to choose another
 output directory. `ocean500` can also be regenerated with the same command.
 
 R uses its own random-number generator with fixed seeds. New partitions are

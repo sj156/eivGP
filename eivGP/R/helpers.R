@@ -11746,7 +11746,7 @@ run_one <- function(fold, cell) {
   test <- read.csv(file.path(root, "data", sprintf("fold%02d_test.csv", fold)))
   train$C <- as.integer(findInterval(train$U, c(50, 100, 150)) + 1L)
   test$C <- as.integer(findInterval(test$U, c(50, 100, 150)) + 1L)
-  stopifnot(nrow(train)+nrow(test)%in%c(200L,500L,1000L),
+  stopifnot((nrow(train)+nrow(test))%in%c(200L,500L,1000L),
     !length(intersect(train$profile,test$profile)),all(table(test$C)==nrow(test)/4))
   x_test <- as.matrix(test[, c("G2salinity", "log_pressure")])
   c_test <- matrix(as.integer(test$C), ncol = 1L,

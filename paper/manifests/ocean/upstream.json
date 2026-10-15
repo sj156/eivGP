@@ -1,14 +1,20 @@
 {
   "repository": "https://github.com/sj156/eivGP",
   "base_commit": "677791de6637298ead40d87a534ccd761722d1d5",
-  "package_version": "0.4.0.9002",
+  "package_version": "0.4.0.9003",
   "core_sampler_version": "0.3.1",
-  "integration_repository": "https://github.com/sj156/eivGP",
   "cleanup_scope": "Replace obsolete Ocean/starred blocks and duplicate application helpers; consolidate Ocean execution in helpers.R and reporting/diagnostics in plotting.R, following the upstream three-module structure. Retain all non-Ocean implementations.",
   "structure_alignment_date": "2026-10-15",
   "dataset500_candidate": "seed_465000_joint_quintile_pressure",
   "dataset1000_candidate": "seed_144069_oxygen_interleaved",
   "dataset1000_stage": "raw selected cohort",
   "data_layout": "data/ocean_silicate/n200, n500, n1000",
-  "fold_preparation": "data/ocean_silicate/prepare_folds.R (R assignment, calibration and test masks)"
+  "fold_preparation": "data/ocean_silicate/prepare_folds.R (R assignment, calibration and test masks)",
+  "merged_upstream_commit": "ebc297b4f7901f0acbb4329658753327204122a5",
+  "workflow_entrypoints": {
+    "experiment": "paper/applications/ocean.R --action=run",
+    "html": "paper/applications/ocean.Rmd (action=report)"
+  },
+  "default_dataset": "ocean500",
+  "integration_repository": "https://github.com/sj156/eivGP"
 }

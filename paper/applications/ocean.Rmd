@@ -7,14 +7,14 @@ output:
     code_folding: hide
 params:
   profile: "paper"
-  action: "plan"
+  action: "report"
   folds: [1, 2, 3, 4, 5]
   cells: ["O0", "O20", "O50"]
   modules: ["eiv", "original_baselines", "continuation", "complete_case_baselines", "prediction", "diagnostics", "surface_comparison"]
   task_ids: ""
   cores: 4
   run_id: "local"
-  dataset: "ocean200"
+  dataset: "ocean500"
   data_dir: ""
   output_dir: ""
   import_dirs: ""
@@ -31,7 +31,8 @@ nested measurement masks are constructed on a fixed, class-balanced cohort.
 
 ## 1. Computation settings
 
-- **Action:** `plan` lists tasks; `run` fits or resumes; `report` reads saved fits.
+- **Workflow:** run `ocean.R` from the command line to fit or resume; this notebook reads saved results and renders the report.
+- **Action:** `report` reads saved fits; `plan` displays the proposed analysis without fitting.
 - **Dataset:** `ocean200`, `ocean500` or `ocean1000`; prepare the 1000-profile folds once using `data/ocean_silicate/prepare_folds.R`.
 - **Selection:** `folds`, `cells` and `modules` select tasks without changing seeds or numerical settings.
 - **Distributed runs:** use separate result roots and merge compatible tasks through `import_dirs`.
@@ -40,6 +41,10 @@ Runnable examples are in `README_ocean.md`.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo=TRUE,message=FALSE,warning=TRUE,cache=FALSE,error=FALSE)
+if(!params$action %in% c("report","plan"))
+  stop("Run experiments with Rscript paper/applications/ocean.R --action=run; render this Rmd with action='report'.")
+if(any(nzchar(as.character(unlist(params$import_dirs)))))
+  stop("Import results with ocean.R --import-dirs=... before rendering the report.")
 dataset<-match.arg(params$dataset,c("ocean200","ocean500","ocean1000"))
 input <- knitr::current_input(dir=TRUE)
 repository_dir <- normalizePath(file.path(dirname(input),"../.."),mustWork=TRUE)
@@ -49,7 +54,9 @@ prediction_labels <- ocean_prediction_labels()
 settings <- ocean_settings(profile=params$profile,action=params$action,folds=params$folds,
   cells=params$cells,modules=params$modules,task_ids=params$task_ids,cores=params$cores,run_id=params$run_id)
 data_dir <- ocean_dataset_dir(repository_dir,dataset,params$data_dir)
-output_dir <- if(nzchar(params$output_dir)) ocean_resolve_path(params$output_dir,repository_dir) else file.path(repository_dir,"reproduction/ocean",params$dataset,settings$profile)
+output_dir <- ocean_output_dir(repository_dir,dataset,settings$profile,params$output_dir)
+if(settings$action=="report" && !dir.exists(output_dir))
+  stop("Saved results not found: ",output_dir,". Run ocean.R first, or specify the existing output_dir.")
 diagnostics_dir <- if(nzchar(params$diagnostics_dir)) ocean_resolve_path(params$diagnostics_dir,repository_dir) else file.path(output_dir,"diagnostics")
 import_dirs <- as.character(unlist(params$import_dirs)); import_dirs <- import_dirs[nzchar(import_dirs)]
 import_dirs <- ocean_resolve_path(import_dirs,repository_dir)
@@ -184,22 +191,16 @@ cat(ocean_table_html(design_review$overlap,"Cruise overlap in held-out predictio
 
 ## 3. Model fitting and numerical assessment
 
-The following chunk executes the selected action and saves predictions/imputations.
+The following chunk reads saved fits, predictions and imputations. Model fitting
+and continuation are performed separately by `ocean.R`.
 
-```{r fit, class.source="fold-show", results="hide"}
-if (settings$action == "plan") {
-  analysis <- ocean_analysis(repository_dir, data_dir, output_dir, settings)
-} else {
-  analysis <- ocean_logged(
-    file.path(output_dir, "jobs", settings$run_id, "execution.log"),
-    ocean_analysis(
-      repository_dir, data_dir, output_dir, settings,
-      import_dirs = import_dirs, cc_output_dir=cc_output_dir,
-      diagnostics_dir=diagnostics_dir,representative_fold=params$representative_fold,
-      diagnostics_workers=params$diagnostics_workers
-    )
-  )
-}
+```{r saved-results, class.source="fold-show", results="hide"}
+analysis <- ocean_analysis(
+  repository_dir, data_dir, output_dir, settings,
+  cc_output_dir=cc_output_dir, diagnostics_dir=diagnostics_dir,
+  representative_fold=params$representative_fold,
+  diagnostics_workers=params$diagnostics_workers
+)
 ```
 
 - **EIV-GP:** a joint response/input model with deterministic ordinal thresholds. The working input population is standard Gaussian and independent of \(x\).

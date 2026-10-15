@@ -54,10 +54,17 @@ the version included with RStudio.
 
 ## Reproduce and read the paper analyses
 
-See [paper/README.md](paper/README.md) for the four workflows and exact commands.
-The numerical HTML reports read the selected saved paper exports. The Ocean HTML examples use short-budget results; full-budget application findings remain pending. Rendering does not run MCMC unless `action="run"` is explicitly selected.
+See [paper/README.md](paper/README.md) for the analysis workflows. Use `.R`
+entrypoints for computation and `.Rmd` notebooks for reader-facing HTML reports.
 
-### Numerical studies: Mac mini or Linux
+- [Synthetic experiments: Studies I and II](#synthetic-experiments-studies-i-and-ii)
+- [Ocean application: 500-profile cohort](#ocean-application-500-profile-cohort)
+
+<a id="numerical-studies-mac-mini-or-linux"></a>
+
+### Synthetic experiments: Studies I and II
+
+#### Setup: Mac mini or Linux
 
 Run commands from the repository root. For numerical reproduction, use the locked
 setup below instead of the general package-install instructions above. Install
@@ -82,7 +89,7 @@ The setup restores `renv.lock`, installs the package into `.r-library/`, and
 checks its source identity. Freeze the checkout and dependencies during a run;
 do not pull changes midway through an experiment you intend to resume.
 
-### Plan and run the complete studies
+#### Plan and run the complete studies
 
 ```sh
 # Inspect the workload without fitting.
@@ -100,7 +107,7 @@ execution to an original grid; `--component=mechanism` selects the targeted
 Study II comparisons. Four cores is a starting choice, not a runtime estimate.
 Quick profiles test software only and must use a separate output root.
 
-### Run only missing or new experiments
+#### Run only missing or new experiments
 
 To resume an interrupted run, reissue its original command with the **same
 output root, profile and scientific settings**. Compatible saved work is reused;
@@ -134,7 +141,7 @@ root, not just the latest selection. Historical/pre-refactor outputs are not
 made compatible by moving or renaming them. See [optional fit imports and resume
 rules](paper/numerical/README.md#resume-transfer-and-optional-imports).
 
-### Where results are saved
+#### Where results are saved
 
 With no environment/path overrides, paths are relative to this checkout:
 
@@ -160,7 +167,7 @@ Repeat these overrides on every run/report command. `EIVGP_RESULTS_ROOT` and
 outputs outside Dropbox/Overleaf. Do not run two processes against the same
 output root. The two studies have separate default roots.
 
-### Check completion and convergence
+#### Check completion and convergence
 
 **Completion means outputs were computed; it does not mean convergence passed.**
 Inspect both the status and diagnostic files:
@@ -196,7 +203,7 @@ still require target-specific mixing and nested-integration precision review.
 An abrupt kill can leave a `RUN.lock` or job `.lock`; inspect its PID and confirm
 the process has stopped before removing that exact lock. Never remove a live lock.
 
-### Rebuild reports without fitting
+#### Rebuild reports without fitting
 
 ```sh
 Rscript paper/numerical/study1.R --action=report --profile=paper
@@ -212,6 +219,70 @@ statistical targets, provenance, and compact output retention. Publication-scale
 storage has not been measured; failed fits can still retain substantial history.
 The [manuscript section](paper/numerical/manuscript/section.tex) retains TBDs for
 pending scientific validation and final displays.
+
+### Ocean application: 500-profile cohort
+
+The main Ocean dataset is `ocean500`; both the `.R` runner and `.Rmd` default to
+it. Use the same installed checkout as the numerical studies above. For the
+separate application installation and dataset guide, see
+[Ocean instructions](paper/applications/README_ocean.md).
+
+#### Plan and run the Ocean experiment
+
+```sh
+# Inspect the workload without fitting.
+Rscript paper/applications/ocean.R --action=plan --profile=paper --dataset=ocean500 --cores=4
+
+# Fit/resume all five folds and aggregate the results.
+Rscript paper/applications/ocean.R --action=run --profile=paper --dataset=ocean500 --cores=4 --diagnostics-workers=2
+
+# Complete workflow with short chains, in a separate result root.
+Rscript paper/applications/ocean.R --action=run --profile=pilot --dataset=ocean500 --cores=4 --diagnostics-workers=2
+```
+
+The paper profile uses four chains, 20,000 initial iterations, 5,000 burn-in
+and one diagnostic-selected 20,000-iteration continuation. The pilot profile
+uses 80 initial iterations, 30 burn-in and a selected +80 continuation. Reissue
+the same command to resume compatible saved tasks. Change inputs, source or
+numerical settings only with a fresh output root. Each output root has one owner.
+
+#### Where Ocean results are saved
+
+| Path | Contents |
+| --- | --- |
+| `data/ocean_silicate/n500/` | Frozen 500-profile cohort, five-fold inputs and masks |
+| `results/ocean/ocean500/paper/` | Formal-budget fits, predictions, receipts and diagnostics |
+| `results/ocean/ocean500/pilot/` | Separate short-chain workflow results |
+| `paper/applications/ocean.html` | Reader-facing example report generated from the Rmd |
+
+`--output=/absolute/path/ocean500-paper` overrides the result root;
+`--data-root` overrides the prepared input directory. Both overrides must also
+be supplied to report generation. Check `jobs/ocean500_paper/task_status.csv`
+for completion and the saved convergence/optimizer diagnostics separately.
+The versioned HTML is the verified 200-profile short-chain example. The 500-profile
+formal run remains to be completed; a finished short-chain run is not evidence
+of convergence. `ocean200` is also available; prepare `ocean1000` folds separately
+as described in the Ocean guide.
+
+#### Rebuild the Ocean report without fitting
+
+```sh
+# Rebuild saved-result summaries and figures; no model fitting.
+Rscript paper/applications/ocean.R --action=report --profile=paper --dataset=ocean500 --cores=4 --diagnostics-workers=2
+```
+
+Render the reader-facing HTML in R using the same dataset, profile and result root:
+
+```r
+rmarkdown::render("paper/applications/ocean.Rmd",
+  params=list(dataset="ocean500",profile="paper",action="report",
+    output_dir="results/ocean/ocean500/paper",diagnostics_workers=2))
+```
+
+The `.R` script runs experiments; the `.Rmd` reads saved results and produces
+HTML. The notebook rejects `action="run"`. See the
+[Ocean guide](paper/applications/README_ocean.md) for installation, optional task
+selectors, output imports and dataset preparation.
 
 ## Develop and test
 

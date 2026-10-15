@@ -6,8 +6,9 @@ for macOS and Linux: `Rscript tools/setup_numerical.R`, then
 data and needs no historical exports. The package supplies model fitting;
 the numerical runners define the study-specific comparisons and scoring.
 
-The original study/application notebooks and their rendered HTML remain below
-as historical report readers.
+Each analysis has a batch `.R` entrypoint and a reader-facing `.Rmd`/HTML
+report. The numerical notebooks retain their historical-export interfaces;
+current fresh numerical runs use the command-line workflow above.
 
 | Analysis | Batch | Notebook | Read report |
 |---|---|---|---|
@@ -61,14 +62,20 @@ supplied historical exports; it is not needed for fresh reproduction.
 
 ## Application workflows
 
-Ocean uses the same three package implementation modules as the numerical studies and supports 200, 500 and 1000 profiles. See [Ocean instructions](applications/README_ocean.md) for installation, dataset parameters, full-budget execution and saved-report reconstruction. Its `.R` entry calls the same package API as the Rmd.
+Ocean uses the same three package implementation modules as the numerical studies.
+Run experiments through its `.R` entrypoint, then render `.Rmd` to read saved
+results and generate HTML. See [Ocean instructions](applications/README_ocean.md)
+for installation, data preparation, execution and report parameters.
 
-```r
-rmarkdown::render("paper/applications/ocean.Rmd",params=list(
-  dataset="ocean500",profile="paper",action="plan"))
+```sh
+Rscript paper/applications/ocean.R --action=plan --profile=paper --dataset=ocean500 --cores=4
+# Change plan to run to fit/resume and save results.
 ```
 
-Set action to run with a fresh external output_dir for fitting, or report with a completed root for reconstruction. Full-budget runs are expensive; pilot and quick budgets only verify the covered workflow. Only ocean.html is versioned as the short-budget example report. Prepare the 1000-profile folds separately using data/ocean_silicate/prepare_folds.R; the Ocean instructions give the command.
+The default output is `results/ocean/<dataset>/<profile>/`; `--output` overrides
+it. The Rmd defaults to `action="report"` and does not fit models. Prepare the
+1000-profile folds separately with `data/ocean_silicate/prepare_folds.R`.
+Only `ocean.html` is versioned as the short-chain example report.
 
 ADNI continues to use its existing workflow and separately supplied collaborator cohort:
 

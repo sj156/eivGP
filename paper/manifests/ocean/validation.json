@@ -1,11 +1,11 @@
 {
   "date": "2026-10-15",
-  "package_version": "0.4.0.9002",
+  "package_version": "0.4.0.9003",
   "base_commit": "677791de6637298ead40d87a534ccd761722d1d5",
   "protected_non_ocean_function_definitions": 470,
   "core_sampler_file_unchanged": true,
   "package_tests": {
-    "pass": 758,
+    "pass": 791,
     "fail": 0,
     "warn": 0,
     "skip": 0
@@ -48,18 +48,6 @@
     "ocean500": 65,
     "ocean1000_after_preparation": 65
   },
-  "fresh_rmd_run": {
-    "dataset": "ocean200",
-    "profile": "quick",
-    "folds": [
-      1
-    ],
-    "chains": 1,
-    "iterations": 80,
-    "burn_in": 30,
-    "completed_tasks": 9,
-    "html_generated": true
-  },
   "versioned_ocean_html": [
     "paper/applications/ocean.html"
   ],
@@ -72,6 +60,116 @@
     "R_generated_inputs": true,
     "html_generated": true
   },
-  "revision_scope": "Fold preparation rewritten in R; frozen input CSVs and the existing 200-profile quick example are preserved. No new model fitting.",
-  "verification_context": "Public integration checkout: 758 passing tests, three complete task plans and a fresh 200-profile quick Rmd run with nine EIV/CC tasks completed."
+  "revision_scope": "Approved public integration of the validated command-line Ocean workflow, report-only Rmd, ocean500 defaults and shared paper-reproduction README structure.",
+  "continuation_regression": {
+    "fix": "Parenthesize the sum of training and test row counts before membership checking.",
+    "supported_sizes_tested": [
+      200,
+      500,
+      1000
+    ],
+    "real_checkpoint_prediction_and_imputation_pass": true,
+    "first_failed_run_retained": true
+  },
+  "previous_fresh_rmd_run": {
+    "dataset": "ocean200",
+    "profile": "pilot",
+    "folds": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "chains": 4,
+    "iterations": 80,
+    "burn_in": 30,
+    "continuation_iterations": 80,
+    "completed_tasks": 65,
+    "task_counts": {
+      "eiv": 15,
+      "original_baselines": 5,
+      "complete_case_baselines": 30,
+      "continuation": 15
+    },
+    "failed_tasks": 0,
+    "reused_tasks": 0,
+    "html_generated": true,
+    "html_tables": 19,
+    "html_embedded_images": 10,
+    "supplementary_blocks": 9
+  },
+  "fresh_cli_run": {
+    "dataset": "ocean200",
+    "profile": "pilot",
+    "folds": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "chains": 4,
+    "iterations": 80,
+    "burn_in": 30,
+    "continuation_iterations": 80,
+    "completed_tasks": 65,
+    "failed_tasks": 0,
+    "reused_tasks": 0,
+    "task_counts": {
+      "eiv": 15,
+      "original_baselines": 5,
+      "complete_case_baselines": 30,
+      "continuation": 15
+    },
+    "postprocessing_default_path_fix_verified": true
+  },
+  "cli_resume_check": {
+    "reused_tasks": 65,
+    "fit_files_unchanged": true
+  },
+  "report_only_render": {
+    "action": "report",
+    "html_generated": true,
+    "tables": 19,
+    "embedded_images": 10,
+    "supplementary_blocks": 9,
+    "fitting_and_continuation_guards_passed": true,
+    "native_baseline_fitting_guards_passed": true,
+    "fit_receipts_and_task_status_unchanged": true,
+    "snapshotted_rds_and_status_files": 256
+  },
+  "workflow_entrypoints": {
+    "experiment": "ocean.R --action=run",
+    "html": "ocean.Rmd, action=report",
+    "rmd_run_rejected": true,
+    "default_output": "results/ocean/<dataset>/<profile>"
+  },
+  "merged_upstream_commit": "ebc297b4f7901f0acbb4329658753327204122a5",
+  "default_dataset": "ocean500",
+  "default_dataset_check": {
+    "cohort_profiles": 500,
+    "planned_tasks": 65,
+    "rmd_default_action": "report",
+    "fitting_performed": false
+  },
+  "public_release_validation": {
+    "date": "2026-10-15",
+    "public_base_commit": "ebc297b4f7901f0acbb4329658753327204122a5",
+    "installed_source_version": "0.4.0.9003",
+    "package_assertions_passed": 791,
+    "default_dataset": "ocean500",
+    "default_plan_profiles": 500,
+    "default_plan_tasks": 65,
+    "report_action": "report",
+    "report_source": "previously completed 200-profile full pilot",
+    "html_tables": 19,
+    "html_embedded_images": 10,
+    "supplementary_blocks": 9,
+    "fitting_calls_blocked_during_render": true,
+    "saved_fit_files_unchanged": true,
+    "upstream_numerical_files_unchanged": true,
+    "core_sampler_unchanged": true,
+    "frozen_input_csv_unchanged": true
+  }
 }

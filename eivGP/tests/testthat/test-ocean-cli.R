@@ -5,15 +5,15 @@ test_that("Ocean command-line selections preserve the package workflow controls"
   sys.source(file.path(root,"paper/applications/ocean.R"),env)
   p<-env$ocean_cli_params(c("--action=run","--profile=pilot","--dataset=ocean500",
     "--cores=4","--folds=1,3:5","--cells=O20,O50","--output=/external/run",
-    "--diagnostics-workers=2","--modules=eiv,prediction"))
+    "--modules=eiv,prediction"))
   settings<-do.call(ocean_settings,p[intersect(names(p),names(formals(ocean_settings)))])
   expect_identical(settings$folds,c(1L,3L,4L,5L))
   expect_identical(settings$cells,c("O20","O50"))
   expect_identical(settings$modules,c("eiv","prediction"))
-  expect_identical(settings$action,"run")
+  expect_identical(settings$action,"fit")
   expect_identical(c(settings$iter,settings$burn,settings$chains),c(80L,30L,4L))
   expect_identical(p$output_dir,"/external/run")
-  expect_identical(p$diagnostics_workers,2L)
+  expect_error(env$ocean_cli_params("--diagnostics-workers=2"),"Unknown")
   expect_error(env$ocean_cli_params("--folds=0:5"),"folds")
   expect_error(env$ocean_cli_params("--cores=1.5"),"positive integer")
   expect_error(env$ocean_cli_params(c("--output=a","--output-dir=b")),"Repeated")

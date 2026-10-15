@@ -1896,7 +1896,7 @@ ocean_prediction_report <- function(output_dir,inputs,profile="paper",report_dir
       inventory[[length(inventory)+1L]]<-data.frame(fold=f,cell,
         stage=if(final$continued)ocean_continuation_label(output_dir) else "initial",available,
         initial_screen_pass=final$initial_screen_pass,final_screen_pass=final$final_screen_pass)
-      # A cell that needs continuation never falls back to its initial fit.
+      # Use the latest explicitly saved stage; diagnostic flags remain visible.
       if(available)add(file.path(path,"predictive_metrics.csv"),f,cell,"EIV")
     }
   }
@@ -2909,15 +2909,13 @@ ocean_diag_plots <- function(u, m, f, grids, representative_fold, baseline_same_
 # 7. Rmd entry point: postprocess and export; no fitting ------------------------
 ocean_build_diagnostics <- function(output_dir, data_dir = file.path(output_dir, "data"),
   report_dir = file.path(output_dir, "diagnostics"), representative_fold = 1L,
-  workers = 1L, overwrite = FALSE) {
+  overwrite = FALSE) {
   for (package in c("eivGP", "ggplot2", "patchwork"))
     ocean_diag_require(requireNamespace(package, quietly = TRUE), paste("Required package:", package))
-  ocean_diag_require(utils::packageVersion("eivGP") >= "0.4.0.9003",
+  ocean_diag_require(utils::packageVersion("eivGP") >= "0.4.0.9004",
     "Install this checkout of eivGP before running the Ocean workflow.")
   ocean_diag_require(length(representative_fold) == 1L && representative_fold %in% 1:5,
     "representative_fold must be one of 1:5; the default main display uses fold 1.")
-  ocean_diag_require(length(workers) == 1L && is.finite(workers) && workers >= 1 && workers == as.integer(workers),
-    "workers must be a positive integer.")
   output_dir <- normalizePath(output_dir, mustWork = TRUE)
   inputs <- ocean_diag_inputs(data_dir)
   sources <- ocean_diag_sources(output_dir)
@@ -2933,12 +2931,7 @@ ocean_build_diagnostics <- function(output_dir, data_dir = file.path(output_dir,
     dir.create(file.path(report_dir, subdir), recursive = TRUE, showWarnings = FALSE)
   run_one <- function(i) ocean_diag_functionals(i, sources, output_dir, inputs, grids, settings,
     cache_dir = file.path(report_dir, "cache"), overwrite = overwrite)
-  if (workers > 1L && .Platform$OS.type != "windows") {
-    parts <- parallel::mclapply(seq_len(nrow(sources)), run_one, mc.cores = min(workers, nrow(sources)),
-      mc.preschedule = FALSE, mc.set.seed = FALSE) # Explicit seed for every package call.
-    ocean_diag_require(!any(vapply(parts, inherits, logical(1), "try-error")),
-      "At least one function calculation failed. Inspect messages; completed cell caches can be reused.")
-  } else parts <- lapply(seq_len(nrow(sources)), run_one)
+  parts <- lapply(seq_len(nrow(sources)), run_one)
   m <- do.call(rbind, lapply(parts, `[[`, "m"))
   f <- do.call(rbind, lapply(parts, `[[`, "f"))
   checks <- do.call(rbind, lapply(parts, `[[`, "integration_check"))
@@ -3202,7 +3195,7 @@ ocean_surface_report <- function(output_dir,data_dir,diagnostics_dir=file.path(o
 # checks inside ocean_build_diagnostics; changed fits/settings are rejected.
 ocean_run_diagnostics <- function(output_dir,data_dir,
   report_dir=file.path(output_dir,"diagnostics"),
-  representative_fold=1L,workers=1L,cache_from="",
+  representative_fold=1L,cache_from="",
   build_prediction=TRUE,build_surfaces=TRUE,prediction_report=NULL) {
   for(p in c("eivGP","ggplot2","patchwork","digest"))
     ocean_diag_require(requireNamespace(p,quietly=TRUE),paste("Required package:",p))
@@ -3230,7 +3223,7 @@ ocean_run_diagnostics <- function(output_dir,data_dir,
   }
   progress("U imputation and cached package m/f calculations")
   diagnostics <- ocean_build_diagnostics(output_dir,data_dir,report_dir=report_dir,
-    representative_fold=representative_fold,workers=workers)
+    representative_fold=representative_fold)
   prediction <- prediction_report; surfaces <- NULL
   if(build_prediction) {
     progress("saved response prediction summaries")

@@ -227,24 +227,51 @@ it. Use the same installed checkout as the numerical studies above. For the
 separate application installation and dataset guide, see
 [Ocean instructions](paper/applications/README_ocean.md).
 
-#### Plan and run the Ocean experiment
+#### Fit and analyze the Ocean experiment
 
 ```sh
-# Inspect the workload without fitting.
-Rscript paper/applications/ocean.R --action=plan --profile=paper --dataset=ocean500 --cores=4
+Rscript paper/applications/ocean.R --action=plan --profile=paper --dataset=ocean500
 
-# Fit/resume all five folds and aggregate the results.
-Rscript paper/applications/ocean.R --action=run --profile=paper --dataset=ocean500 --cores=4 --diagnostics-workers=2
+# Fit and save initial checkpoints. No automatic continuation or EIV postprocessing.
+Rscript paper/applications/ocean.R --action=fit --profile=paper --dataset=ocean500 --cores=4
 
-# Complete workflow with short chains, in a separate result root.
-Rscript paper/applications/ocean.R --action=run --profile=pilot --dataset=ocean500 --cores=4 --diagnostics-workers=2
+# Read saved chains and analyze using one worker.
+Rscript paper/applications/ocean.R --action=analyze --profile=paper --dataset=ocean500
+
+# Explicitly extend initially flagged chains if needed, then analyze again.
+Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --cores=4
+Rscript paper/applications/ocean.R --action=analyze --profile=paper --dataset=ocean500
 ```
 
-The paper profile uses four chains, 20,000 initial iterations, 5,000 burn-in
-and one diagnostic-selected 20,000-iteration continuation. The pilot profile
-uses 80 initial iterations, 30 burn-in and a selected +80 continuation. Reissue
-the same command to resume compatible saved tasks. Change inputs, source or
-numerical settings only with a fresh output root. Each output root has one owner.
+The `paper` profile uses four chains, 20,000 initial iterations and 5,000 burn-in;
+`continue` requests one screen-selected +20,000 extension. Use `profile=pilot`
+for short chains (80 initial, 30 burn-in, +80 extension). All stages are separate;
+`run` aliases `fit`. Analysis always uses one worker and has no core-allocation
+option. Repeating a stage reuses compatible results; changed inputs, source or
+numerical settings require a fresh output root. Each output root has one owner.
+
+#### Minimal command-line workflow check
+
+After installing this checkout, copy these commands into a Terminal at the
+repository root. This uses the 200-profile inputs, one fold and one calibration
+condition with short chains, plus the three CC comparators. It checks the staged
+workflow; the main experiment above continues to use 500 profiles. Use a fresh
+`--output` directory after changing source or settings.
+
+```sh
+Rscript paper/applications/ocean.R --action=fit --profile=pilot --dataset=ocean200 --folds=1 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --cores=2 --output=results/ocean/ocean200/terminal-check
+Rscript paper/applications/ocean.R --action=analyze --profile=pilot --dataset=ocean200 --folds=1 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --output=results/ocean/ocean200/terminal-check
+Rscript paper/applications/ocean.R --action=continue --profile=pilot --dataset=ocean200 --folds=1 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --cores=2 --output=results/ocean/ocean200/terminal-check
+Rscript paper/applications/ocean.R --action=analyze --profile=pilot --dataset=ocean200 --folds=1 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --output=results/ocean/ocean200/terminal-check
+Rscript paper/applications/ocean.R --action=report --profile=pilot --dataset=ocean200 --folds=1 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --output=results/ocean/ocean200/terminal-check
+Rscript -e ".libPaths(c(Sys.getenv('EIVGP_R_LIBRARY','.r-library'),.libPaths())); rmarkdown::render('paper/applications/ocean.Rmd', output_file='ocean_check.html', output_dir='results/ocean/ocean200/terminal-check', params=list(dataset='ocean200', profile='pilot', action='report', folds=1, cells='O20', modules=c('eiv','complete_case_baselines','continuation','prediction'), output_dir='results/ocean/ocean200/terminal-check', appendix=FALSE))"
+```
+
+The first analysis does not extend chains. The explicit `continue` command
+extends a flagged fit, and the next analysis reads the saved extension. The
+last command renders `results/ocean/ocean200/terminal-check/ocean_check.html`.
+The final command locates the installed package through `EIVGP_R_LIBRARY` when
+set, otherwise through the checkout-local `.r-library/`.
 
 #### Where Ocean results are saved
 
@@ -257,7 +284,7 @@ numerical settings only with a fresh output root. Each output root has one owner
 
 `--output=/absolute/path/ocean500-paper` overrides the result root;
 `--data-root` overrides the prepared input directory. Both overrides must also
-be supplied to report generation. Check `jobs/ocean500_paper/task_status.csv`
+be supplied to report generation. Check `jobs/ocean500_paper_fit/task_status.csv`
 for completion and the saved convergence/optimizer diagnostics separately.
 The versioned HTML is the verified 200-profile short-chain example. The 500-profile
 formal run remains to be completed; a finished short-chain run is not evidence
@@ -268,7 +295,7 @@ as described in the Ocean guide.
 
 ```sh
 # Rebuild saved-result summaries and figures; no model fitting.
-Rscript paper/applications/ocean.R --action=report --profile=paper --dataset=ocean500 --cores=4 --diagnostics-workers=2
+Rscript paper/applications/ocean.R --action=report --profile=paper --dataset=ocean500 --cores=4
 ```
 
 Render the reader-facing HTML in R using the same dataset, profile and result root:
@@ -276,10 +303,10 @@ Render the reader-facing HTML in R using the same dataset, profile and result ro
 ```r
 rmarkdown::render("paper/applications/ocean.Rmd",
   params=list(dataset="ocean500",profile="paper",action="report",
-    output_dir="results/ocean/ocean500/paper",diagnostics_workers=2))
+    output_dir="results/ocean/ocean500/paper"))
 ```
 
-The `.R` script runs experiments; the `.Rmd` reads saved results and produces
+The `.R` script separates fitting, analysis and continuation; the `.Rmd` reads saved results and produces
 HTML. The notebook rejects `action="run"`. See the
 [Ocean guide](paper/applications/README_ocean.md) for installation, optional task
 selectors, output imports and dataset preparation.

@@ -1,6 +1,6 @@
 # Ocean application entrypoint: implementation is provided by the installed package.
 ocean_load_api <- function(repository_dir=NULL,envir=parent.frame()) {
-  if(!requireNamespace("eivGP",quietly=TRUE)||utils::packageVersion("eivGP")<"0.4.0.9003")
+  if(!requireNamespace("eivGP",quietly=TRUE)||utils::packageVersion("eivGP")<"0.4.0.9004")
     stop("Install this checkout with Rscript tools/build_package.R and R CMD INSTALL eivGP.")
   if(!is.null(repository_dir)) {
     installed<-utils::read.csv(system.file("module-manifest.csv",package="eivGP"))
@@ -36,7 +36,7 @@ ocean_cli_params <- function(args=character()) {
   aliases<-c("data-root"="data_dir","output"="output_dir")
   allowed<-c("action","profile","dataset","cores","data_dir","output_dir",
     "folds","cells","modules","task_ids","run_id","import_dirs","cc_output_dir",
-    "diagnostics_dir","diagnostics_workers","representative_fold")
+    "diagnostics_dir","representative_fold")
   p<-list()
   for(arg in args) {
     if(!grepl("^--[^=]+=.+$",arg))stop("Use --name=value: ",arg)
@@ -46,7 +46,7 @@ ocean_cli_params <- function(args=character()) {
     if(key%in%names(p))stop("Repeated option: ",key)
     p[[key]]<-sub("^--[^=]+=","",arg)
   }
-  for(key in intersect(names(p),c("cores","diagnostics_workers","representative_fold"))) {
+  for(key in intersect(names(p),c("cores","representative_fold"))) {
     value<-suppressWarnings(as.numeric(p[[key]]))
     if(length(value)!=1L || !is.finite(value) || value<1 || value!=as.integer(value))
       stop(key," must be a positive integer")
@@ -66,11 +66,13 @@ ocean_cli_params <- function(args=character()) {
 }
 
 ocean_run_cli <- function(repository_dir,params=list()) {
+  if("diagnostics_workers"%in%names(params))stop("diagnostics_workers was removed; analysis always uses one worker.")
   api<-new.env(parent=environment())
   ocean_load_api(repository_dir,api)
   getp<-function(key,default)if(is.null(params[[key]]))default else params[[key]]
   dataset<-match.arg(getp("dataset","ocean500"),c("ocean200","ocean500","ocean1000"))
-  params$run_id<-getp("run_id",paste(dataset,getp("profile","paper"),sep="_"))
+  params$run_id<-getp("run_id",paste(dataset,getp("profile","paper"),
+    if(getp("action","plan")=="run")"fit" else getp("action","plan"),sep="_"))
   settings<-do.call(api$ocean_settings,
     params[intersect(names(params),names(formals(api$ocean_settings)))])
   # Dataset/path helpers use the package API in this local environment.
@@ -85,15 +87,15 @@ ocean_run_cli <- function(repository_dir,params=list()) {
     import_dirs=resolve(getp("import_dirs",character())),
     cc_output_dir=resolve(getp("cc_output_dir","")),
     diagnostics_dir=resolve(getp("diagnostics_dir","")),
-    representative_fold=getp("representative_fold",1L),
-    diagnostics_workers=getp("diagnostics_workers",1L))
+    representative_fold=getp("representative_fold",1L))
   if(settings$action=="plan") {
     result<-execute()
     print(result$tasks,row.names=FALSE)
   } else {
     result<-api$ocean_logged(file.path(output_dir,"jobs",settings$run_id,"execution.log"),execute())
     cat("Saved results:",output_dir,"\n")
-    cat("Render ocean.Rmd with action='report' and the same dataset, profile and output_dir.\n")
+    if(settings$action%in%c("fit","continue"))cat("Run --action=analyze next; analysis is single-worker.\n") else
+      cat("Render ocean.Rmd with action='report' and the same dataset, profile and output_dir.\n")
   }
   invisible(result)
 }
@@ -101,17 +103,18 @@ ocean_run_cli <- function(repository_dir,params=list()) {
 if(sys.nframe()==0L) {
   args<-commandArgs(TRUE)
   if(identical(args,"--help")) {
-    cat("Rscript paper/applications/ocean.R --action=plan|run|report --profile=paper|pilot|quick\n",
+    cat("Rscript paper/applications/ocean.R --action=plan|fit|analyze|continue|report --profile=paper|pilot|quick\n",
       "  --dataset=ocean200|ocean500|ocean1000 --cores=4 --output=/path/to/results\n",
       "  Optional: --data-root=... --folds=1:5 --cells=O0,O20,O50 --modules=...\n",
-      "  --run-id=... --diagnostics-workers=2 --diagnostics-dir=...\n",
+      "  --run-id=... --diagnostics-dir=...\n",
       "  --task-ids=... --import-dirs=... --cc-output-dir=... --representative-fold=1\n",
       "No arguments: validate inputs and print the paper-profile ocean500 plan.\n",
-      "run fits/resumes and saves results; report rebuilds summaries without fitting.\n",
+      "fit (also run) saves models; analyze reads models serially; continue explicitly extends flagged chains.\n",
       "Render ocean.Rmd separately for HTML. See README_ocean.md.\n",sep="")
   } else {
     script<-sub("^--file=","",grep("^--file=",commandArgs(FALSE),value=TRUE)[1])
     root<-normalizePath(file.path(dirname(normalizePath(script)),"../.."))
+    Sys.setenv(OMP_NUM_THREADS="1",OPENBLAS_NUM_THREADS="1",MKL_NUM_THREADS="1",VECLIB_MAXIMUM_THREADS="1")
     lib<-Sys.getenv("EIVGP_R_LIBRARY",file.path(root,".r-library"))
     if(dir.exists(lib)).libPaths(c(normalizePath(lib),.libPaths()))
     ocean_run_cli(root,ocean_cli_params(args))

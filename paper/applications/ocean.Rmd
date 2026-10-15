@@ -20,7 +20,6 @@ params:
   import_dirs: ""
   cc_output_dir: ""
   diagnostics_dir: ""
-  diagnostics_workers: 1
   representative_fold: 1
   appendix: true
 ---
@@ -31,7 +30,7 @@ nested measurement masks are constructed on a fixed, class-balanced cohort.
 
 ## 1. Computation settings
 
-- **Workflow:** run `ocean.R` from the command line to fit or resume; this notebook reads saved results and renders the report.
+- **Workflow:** run `ocean.R --action=fit`, then `--action=analyze` (single worker); this notebook reads saved results and renders the report.
 - **Action:** `report` reads saved fits; `plan` displays the proposed analysis without fitting.
 - **Dataset:** `ocean200`, `ocean500` or `ocean1000`; prepare the 1000-profile folds once using `data/ocean_silicate/prepare_folds.R`.
 - **Selection:** `folds`, `cells` and `modules` select tasks without changing seeds or numerical settings.
@@ -41,6 +40,7 @@ Runnable examples are in `README_ocean.md`.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo=TRUE,message=FALSE,warning=TRUE,cache=FALSE,error=FALSE)
+Sys.setenv(OMP_NUM_THREADS="1",OPENBLAS_NUM_THREADS="1",MKL_NUM_THREADS="1",VECLIB_MAXIMUM_THREADS="1")
 if(!params$action %in% c("report","plan"))
   stop("Run experiments with Rscript paper/applications/ocean.R --action=run; render this Rmd with action='report'.")
 if(any(nzchar(as.character(unlist(params$import_dirs)))))
@@ -192,14 +192,13 @@ cat(ocean_table_html(design_review$overlap,"Cruise overlap in held-out predictio
 ## 3. Model fitting and numerical assessment
 
 The following chunk reads saved fits, predictions and imputations. Model fitting
-and continuation are performed separately by `ocean.R`.
+and explicit continuation are separate `ocean.R` actions; analysis uses one worker.
 
 ```{r saved-results, class.source="fold-show", results="hide"}
 analysis <- ocean_analysis(
   repository_dir, data_dir, output_dir, settings,
   cc_output_dir=cc_output_dir, diagnostics_dir=diagnostics_dir,
-  representative_fold=params$representative_fold,
-  diagnostics_workers=params$diagnostics_workers
+  representative_fold=params$representative_fold
 )
 ```
 
@@ -235,7 +234,7 @@ saved_review <- ocean_refinement_review(output_dir,inputs,diagnostics)
 
 - **Package calls:** the `run_eiv()` routine created by `ocean_initial_functions()` in the Ocean section of `eivGP/R/helpers.R` calls `fit_eivgp()`, `predict_eivgp()` and `impute_eivgp()`; selected continuations call `continue_eivgp()`.
 - **Native baselines:** the pinned `run_published_mixedgp_competitors()` adapter calls kergp, LVGP and EzGP fitting/prediction routines. CC `package_status.csv` retains optimizer status and warnings. A finite prediction can be returned with a flagged optimizer code; task completion alone does not establish optimizer convergence.
-- **Continuation rule:** one extra `r format(ocean_continuation_policy(settings$profile)$n_iter,big.mark=",",scientific=FALSE)` iterations if initial maximum finite Rhat exceeds 1.01, minimum finite bulk ESS is below 400, or finite values are unavailable; `u_block_size=8`.
+- **Explicit continuation:** `ocean.R --action=continue` adds one extra `r format(ocean_continuation_policy(settings$profile)$n_iter,big.mark=",",scientific=FALSE)` iterations if initial maximum finite Rhat exceeds 1.01, minimum finite bulk ESS is below 400, or finite values are unavailable; `u_block_size=8`.
 - **Review:** finite diagnostics, tail ESS and undefined values are reported separately. Passing the screen does not establish model adequacy, identification or precision of every functional.
 
 ```{r saved-chain-review, eval=settings$action!="plan" && settings$profile!="quick" && "diagnostics" %in% settings$modules, echo=FALSE, results="asis", fig.width=10, fig.height=7.5}

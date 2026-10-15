@@ -32,3 +32,19 @@ The public checkout was separately installed and checked before publication:
 report-only render of the complete saved 200-profile pilot all pass. The report
 contains 19 tables, 10 embedded figures and nine Supplementary blocks. Existing
 fits and receipts remain unchanged.
+
+
+Stage separation (0.4.0.9004): `fit` saves checkpoints and basic package
+diagnostics; `analyze` reads saved chains using one worker; `continue` explicitly
+requests the existing one-round, screen-selected extension. `run` aliases `fit`.
+The diagnostics-worker option and Ocean diagnostic forking were removed.
+The main README includes literal Terminal commands for a one-fold O20 check
+using the 200-profile cohort and three CC comparators. Formal commands remain
+configured for ocean500. The complete example HTML is rebuilt from existing
+short-chain fits without new full-five-fold MCMC. This staged revision is published following explicit user approval.
+
+This staged public checkout was independently installed and tested: 791 assertions
+pass, and all six literal main-README Terminal commands complete successfully
+on ocean200/fold1/O20 with the three CC comparators. Fit/analysis receipt hashes
+verify after the explicit extension and HTML render. No formal 500-profile fit
+was launched for this publication check.

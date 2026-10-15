@@ -11098,7 +11098,8 @@ ocean_settings <- function(profile = "paper", action = "plan", folds = 1:5,
     "prediction", "diagnostics", "surface_comparison"),
   task_ids = character(), cores = 4L, run_id = "local") {
   profile <- match.arg(profile, c("paper", "quick", "pilot"))
-  action <- match.arg(action, c("plan", "run", "report"))
+  action <- match.arg(action, c("plan", "fit", "run", "analyze", "continue", "report"))
+  if(action=="run")action<-"fit"
   folds <- as.integer(unlist(folds)); cells <- as.character(unlist(cells))
   modules <- as.character(unlist(modules))
   task_ids <- as.character(unlist(task_ids))
@@ -11200,7 +11201,8 @@ ocean_continuation_decisions <- function(output_dir,profile="paper",write=FALSE)
 ocean_final_eiv_sources <- function(output_dir,profile="paper") {
   decisions<-ocean_continuation_decisions(output_dir,profile)
   rows<-lapply(seq_len(nrow(decisions)),function(i) {
-    d<-decisions[i,];continued<-isTRUE(d$needs_continuation)
+    d<-decisions[i,];continued<-file.exists(file.path(output_dir,"continuation_plus20k",
+      sprintf("fold%02d",d$fold),d$cell,"fit_plus20k.rds"))
     source<-file.path(if(continued)"continuation_plus20k" else if(profile!="quick")"full5_class4" else "smoke_class4",
       sprintf("fold%02d",d$fold),d$cell)
     final<-ocean_read_screen(file.path(output_dir,source,"convergence_parameters.csv"))
@@ -11315,7 +11317,13 @@ ocean_identity <- function(repository_dir,data_dir,settings) {
     RNG=c("Mersenne-Twister","Inversion","Rejection"))
 }
 
-ocean_task_files <- function(task,profile="paper") {
+ocean_task_files <- function(task,profile="paper",stage="analyze") {
+  if(stage %in% c("fit","continue") && task$module %in% c("eiv","continuation")) {
+    sub<-file.path(if(task$module=="continuation")"continuation_plus20k" else
+      if(profile=="quick")"smoke_class4" else "full5_class4",sprintf("fold%02d",task$fold),task$cell)
+    return(file.path(sub,c(if(task$module=="continuation")"fit_plus20k.rds" else "fit.rds",
+      "convergence_parameters.csv","convergence_summary.csv")))
+  }
   initial <- if(profile!="quick") "full5_class4" else "smoke_class4"
   if(task$module=="original_baselines") return(file.path(initial,sprintf("fold%02d",task$fold),
     c("baseline_metrics.csv","baseline_package_outputs.rds","baseline_status.csv","baseline_predictions.csv")))
@@ -11343,6 +11351,7 @@ ocean_verify_receipt <- function(output_dir,id,identity=NULL) {
 ocean_run_task <- function(task,repository_dir,output_dir,settings,inputs,identity) {
   env <- new.env(parent=environment())
   env$root <- output_dir; env$smoke <- settings$profile=="quick"
+  env$stage <- settings$action
   env$out <- file.path(output_dir,if(env$smoke) "smoke_class4" else "full5_class4")
   env$iter <- settings$iter; env$burn <- settings$burn; env$chains <- settings$chains
   env$cores <- if(env$smoke) 1L else settings$cores; env$u_block <- 8L
@@ -11375,8 +11384,13 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
   RNGkind("Mersenne-Twister","Inversion","Rejection")
   import_dirs <- as.character(unlist(import_dirs)); import_dirs <- import_dirs[nzchar(import_dirs)]
   inputs <- ocean_prepare_inputs(data_dir); selected <- ocean_select_tasks(settings)
+  stage<-settings$action
+  if(stage=="fit")selected<-selected[selected$module!="continuation",,drop=FALSE]
+  if(stage=="continue")selected<-selected[selected$module=="continuation",,drop=FALSE]
+  if(stage=="analyze")selected<-selected[selected$module%in%c("eiv","continuation"),,drop=FALSE]
+  execute<-stage%in%c("fit","analyze","continue")
   if(settings$action=="plan") return(list(tasks=selected,inputs=inputs,settings=settings))
-  if(settings$action=="run" || length(import_dirs)) {
+  if(execute || length(import_dirs)) {
     suppressPackageStartupMessages(library(eivGP))
     identity <- ocean_identity(repository_dir,data_dir,settings)
     dir.create(output_dir,recursive=TRUE,showWarnings=FALSE)
@@ -11405,7 +11419,7 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
     ocean_atomic_rds(settings,file.path(output_dir,"execution_settings.rds"))
     ocean_combine_results(import_dirs,output_dir,identity)
     job <- file.path(output_dir,"jobs",settings$run_id)
-    status <- if(settings$action=="run") selected else selected[FALSE,,drop=FALSE]
+    status <- if(execute) selected else selected[FALSE,,drop=FALSE]
     status$state <- rep("PENDING",nrow(status)); status$detail <- rep("",nrow(status))
     status$elapsed_seconds <- rep(NA_real_,nrow(status))
     publish <- function(state,current="none") {
@@ -11418,21 +11432,26 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
     }
     ocean_atomic_csv(inputs$audit,file.path(job,"design_audit.csv"))
     capture.output(utils::sessionInfo(),file=file.path(job,"sessionInfo.txt"))
-    for(i in if(settings$action=="run") seq_len(nrow(selected)) else integer()) {
+    for(i in if(execute) seq_len(nrow(selected)) else integer()) {
       task <- selected[i,,drop=FALSE]; id <- task$task_id
+      if(stage%in%c("fit","continue") && task$module%in%c("eiv","continuation"))id<-paste0("fit_",id)
       rownames(task) <- NULL # Assignment position is not part of task identity.
       if(task$module=="continuation") {
-        dependency<-sprintf("eiv_fold%02d_%s",task$fold,task$cell)
+        dependency<-sprintf("fit_eiv_fold%02d_%s",task$fold,task$cell)
         if(!ocean_verify_receipt(output_dir,dependency,identity)) {
-          status$state[i]<-"FAILED";status$detail[i]<-paste("Missing verified initial task:",dependency)
+          status$state[i]<-"FAILED";status$detail[i]<-paste("Missing verified initial fit:",dependency)
           publish("RUNNING",id);next
         }
-        decisions<-ocean_continuation_decisions(output_dir,settings$profile,write=TRUE)
-        d<-decisions[decisions$fold==task$fold & decisions$cell==task$cell,]
-        if(nrow(d)==1L && isTRUE(d$ready) && !isTRUE(d$needs_continuation)) {
-          status$state[i]<-"SKIPPED_CONVERGED"
-          status$detail[i]<-"Initial finite-Rhat/bulk-ESS screen passed; no continuation."
-          publish("RUNNING",id);next
+        checkpoint<-file.path(output_dir,"continuation_plus20k",sprintf("fold%02d",task$fold),task$cell,"fit_plus20k.rds")
+        if(stage=="analyze" && !file.exists(checkpoint)) {
+          status$state[i]<-"SKIPPED_NOT_REQUESTED";publish("RUNNING",id);next
+        }
+        if(stage=="continue") {
+          decisions<-ocean_continuation_decisions(output_dir,settings$profile,write=TRUE)
+          d<-decisions[decisions$fold==task$fold & decisions$cell==task$cell,]
+          if(nrow(d)==1L && isTRUE(d$ready) && !isTRUE(d$needs_continuation)) {
+            status$state[i]<-"SKIPPED_CONVERGED";publish("RUNNING",id);next
+          }
         }
       }
       if(ocean_verify_receipt(output_dir,id,identity)) {status$state[i]<-"REUSED";publish("RUNNING",id);next}
@@ -11443,7 +11462,7 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
       t0 <- proc.time()[3]
       outcome <- tryCatch({
         ocean_run_task(task,repository_dir,output_dir,settings,inputs,identity)
-        files <- ocean_task_files(task,settings$profile)
+        files <- ocean_task_files(task,settings$profile,stage)
         stopifnot(all(file.exists(file.path(output_dir,files))))
         ocean_atomic_rds(list(identity=identity,task=task,files=files,
           hashes=ocean_hashes(file.path(output_dir,files)),finished=as.character(Sys.time())),
@@ -11460,7 +11479,7 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
     if(any(status$state=="FAILED")) stop("Some selected tasks failed; inspect ",file.path(job,"task_status.csv"))
   }
   decisions<-ocean_continuation_decisions(output_dir,settings$profile,write=dir.exists(output_dir))
-  result <- if("prediction" %in% settings$modules) ocean_prediction_report(output_dir,inputs,
+  result <- if(!stage%in%c("fit","continue") && "prediction" %in% settings$modules) ocean_prediction_report(output_dir,inputs,
     settings$profile) else NULL
   list(tasks=selected,inputs=inputs,settings=settings,prediction=result,output_dir=output_dir,continuation_decisions=decisions)
 }
@@ -11571,6 +11590,8 @@ run_eiv <- function(fold, cell, train, test, fold_out) {
   u_obs[mask, 1L] <- train$U[mask]
   seed_offset <- c(O0 = 0L, O20 = 20L, O50 = 50L)[[cell]]
   fit_path <- file.path(cell_out, "fit.rds")
+  if(identical(get0("stage",inherits=TRUE),"analyze") && !file.exists(fit_path))
+    stop("Missing fit; run ocean.R --action=fit first: ",fit_path)
   fit <- if (file.exists(fit_path)) readRDS(fit_path) else {
     # 2. Fit: missing U is NA; exact calibration entries are in u_obs.
     # RMD-BEGIN eiv-fit
@@ -11601,6 +11622,7 @@ run_eiv <- function(fold, cell, train, test, fold_out) {
                         limited_screen_pass = length(finite_rhat) > 0L && length(finite_ess) > 0L &&
                           max(finite_rhat) <= 1.01 && min(finite_ess) >= 400),
              file.path(cell_out, "convergence_summary.csv"))
+  if(identical(get0("stage",inherits=TRUE),"fit"))return(invisible("fit saved; analysis deferred"))
   n_draw <- nrow(fit$mcmc$samples_tau)
   stopifnot(is.finite(n_draw), n_draw > 0L)
   set.seed(2026092690L + fold * 100L + seed_offset)
@@ -11722,6 +11744,8 @@ run_one <- function(fold, cell) {
   set_task(fold, cell, "RUNNING", "continuing four chains")
   write_progress("RUNNING", sprintf("fold%02d %s", fold, cell), "continuing original chains")
   t0 <- Sys.time()
+  if(identical(get0("stage",inherits=TRUE),"analyze") && !file.exists(fit_path))
+    stop("Missing continuation; run ocean.R --action=continue first.")
   fit <- if (file.exists(fit_path)) readRDS(fit_path) else {
     original <- readRDS(original_path(fold, cell))
     # Continue the saved chains/RNG states, then repeat prediction and imputation.
@@ -11741,6 +11765,7 @@ run_one <- function(fold, cell) {
     max_rhat = diag$max_rhat, min_ess_bulk = diag$min_ess_bulk,
     pass_screen = diag$pass_screen), file.path(task_out, "diagnostics.csv"))
   capture.output(summary(fit), file = file.path(task_out, "fit_summary.txt"))
+  if(identical(get0("stage",inherits=TRUE),"continue"))return(invisible("continued fit saved; analysis deferred"))
 
   train <- read.csv(file.path(root, "data", sprintf("fold%02d_train.csv", fold)))
   test <- read.csv(file.path(root, "data", sprintf("fold%02d_test.csv", fold)))
@@ -11880,16 +11905,16 @@ ocean_workflow_api <- function() {
 }
 run_ocean_analysis <- function(data_dir,output_dir,action="plan",profile="paper",cores=4L,
   repository_dir=NULL,settings=NULL,import_dirs=character(),cc_output_dir="",diagnostics_dir="",
-  representative_fold=1L,diagnostics_workers=1L,...) {
+  representative_fold=1L,...) {
   if(is.null(repository_dir))repository_dir<-getwd()
   if(is.null(settings))settings<-ocean_settings(profile=profile,action=action,cores=cores,...)
   ocean_analysis_impl(repository_dir,data_dir,output_dir,settings,import_dirs,
-    cc_output_dir,diagnostics_dir,representative_fold,diagnostics_workers)
+    cc_output_dir,diagnostics_dir,representative_fold)
 }
 ocean_analysis_impl <- function(repository_dir,data_dir,output_dir,settings,import_dirs=character(),
-  cc_output_dir="",diagnostics_dir="",representative_fold=1L,diagnostics_workers=1L) {
+  cc_output_dir="",diagnostics_dir="",representative_fold=1L) {
   a<-ocean_execute(repository_dir,data_dir,output_dir,settings,import_dirs)
-  if(settings$action=="plan")return(a)
+  if(settings$action%in%c("plan","fit","continue"))return(a)
   if("prediction" %in% settings$modules && !is.null(a$prediction)) {
     a$cc_review<-ocean_cc_prediction_tables(output_dir,a$inputs,a$prediction,
       cc_output_dir=if(nzchar(cc_output_dir))cc_output_dir else output_dir,
@@ -11904,7 +11929,7 @@ ocean_analysis_impl <- function(repository_dir,data_dir,output_dir,settings,impo
     if(ready) {
       d<-ocean_run_diagnostics(output_dir,data_dir,
         report_dir=if(nzchar(diagnostics_dir))diagnostics_dir else file.path(output_dir,"diagnostics"),
-        representative_fold=representative_fold,workers=diagnostics_workers,
+        representative_fold=representative_fold,
         build_prediction=FALSE,prediction_report=available,
         build_surfaces="surface_comparison" %in% settings$modules)
       a$diagnostic_run<-d;a$diagnostics<-d$diagnostics;a$surfaces<-d$surfaces

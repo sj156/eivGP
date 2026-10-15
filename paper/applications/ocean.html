@@ -466,9 +466,9 @@ on a fixed, class-balanced cohort.</p>
 <div id="computation-settings" class="section level2">
 <h2>1. Computation settings</h2>
 <ul>
-<li><strong>Workflow:</strong> run <code>ocean.R</code> from the command
-line to fit or resume; this notebook reads saved results and renders the
-report.</li>
+<li><strong>Workflow:</strong> run <code>ocean.R --action=fit</code>,
+then <code>--action=analyze</code> (single worker); this notebook reads
+saved results and renders the report.</li>
 <li><strong>Action:</strong> <code>report</code> reads saved fits;
 <code>plan</code> displays the proposed analysis without fitting.</li>
 <li><strong>Dataset:</strong> <code>ocean200</code>,
@@ -888,13 +888,12 @@ transfer performance.
 <div id="model-fitting-and-numerical-assessment" class="section level2">
 <h2>3. Model fitting and numerical assessment</h2>
 <p>The following chunk reads saved fits, predictions and imputations.
-Model fitting and continuation are performed separately by
-<code>ocean.R</code>.</p>
+Model fitting and explicit continuation are separate
+<code>ocean.R</code> actions; analysis uses one worker.</p>
 <pre class="r fold-show"><code>analysis &lt;- ocean_analysis(
   repository_dir, data_dir, output_dir, settings,
   cc_output_dir=cc_output_dir, diagnostics_dir=diagnostics_dir,
-  representative_fold=params$representative_fold,
-  diagnostics_workers=params$diagnostics_workers
+  representative_fold=params$representative_fold
 )</code></pre>
 <ul>
 <li><strong>EIV-GP:</strong> a joint response/input model with
@@ -984,7 +983,8 @@ LVGP and EzGP fitting/prediction routines. CC
 <code>package_status.csv</code> retains optimizer status and warnings. A
 finite prediction can be returned with a flagged optimizer code; task
 completion alone does not establish optimizer convergence.</li>
-<li><strong>Continuation rule:</strong> one extra 80 iterations if
+<li><strong>Explicit continuation:</strong>
+<code>ocean.R --action=continue</code> adds one extra 80 iterations if
 initial maximum finite Rhat exceeds 1.01, minimum finite bulk ESS is
 below 400, or finite values are unavailable;
 <code>u_block_size=8</code>.</li>
@@ -4231,7 +4231,7 @@ Supplementary: session information
 ## [1] stats     graphics  grDevices utils     datasets  methods   base     
 ## 
 ## other attached packages:
-## [1] patchwork_1.3.2  ggplot2_4.0.3    eivGP_0.4.0.9003
+## [1] patchwork_1.3.2  ggplot2_4.0.3    eivGP_0.4.0.9004
 ## 
 ## loaded via a namespace (and not attached):
 ##  [1] sass_0.4.10         future_1.75.0       generics_0.1.4     

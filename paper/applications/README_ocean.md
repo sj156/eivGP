@@ -1,7 +1,6 @@
 # Ocean application
 
-`ocean.R` is the command-line experiment entrypoint: it fits/resumes models and
-saves predictions, summaries and diagnostics. `ocean.Rmd` reads saved results and
+`ocean.R` is the command-line experiment entrypoint: it separates fitting, explicit continuation and single-worker analysis. `ocean.Rmd` reads saved results and
 generates the reader-facing HTML; it does not fit models or continue MCMC. Only `ocean.html` is versioned as the complete five-fold, short-chain
 `pilot` example report for the 200-profile cohort.
 The package follows the upstream structure: Ocean execution and core model calls
@@ -10,7 +9,7 @@ The shared `mcmc.R` sampler is unchanged.
 
 ## Install
 
-From the repository root, install this checkout (eivGP 0.4.0.9003):
+From the repository root, install this checkout (eivGP 0.4.0.9004):
 
 ```r
 dir.create("library",showWarnings=FALSE)
@@ -73,75 +72,77 @@ salinity, their squares and cross-products. Training calibration is nested at
 20%/50%, with class/cell coverage and boundary anchors. Test-u masks use R seed
 `202609260 + fold`, with nested class-balanced 20%/50% quotas.
 
-## Run experiments from the command line
+## Fit, analyze and explicitly continue
 
-Run from the repository root after installation. The runner also finds the
-checkout from its own path when launched elsewhere. Set `EIVGP_R_LIBRARY` when
-using a custom package library; otherwise `.r-library/` is used when present.
-The installed source identity is checked against this checkout.
+Run from the repository root after installation. Set `EIVGP_R_LIBRARY` to a
+custom installation directory; otherwise the CLI uses `.r-library/` when present.
+The installed module identity must match this checkout.
 
 ```sh
-# If installed in library/ above, set this in the Terminal session:
+# If installed in library/ using the instructions above:
 export EIVGP_R_LIBRARY="$(pwd)/library"
 
-# Validate inputs and list tasks; no fitting. This is also the no-argument default.
+# Validate inputs and inspect the task catalogue.
 Rscript paper/applications/ocean.R --action=plan --profile=paper --dataset=ocean500
 
-# Minimal fitting check: fold 1, one chain, 80 iterations / 30 burn-in.
-Rscript paper/applications/ocean.R --action=run --profile=quick --dataset=ocean500 --cores=1
+# Fit initial models and save checkpoints; no automatic continuation or EIV analysis.
+Rscript paper/applications/ocean.R --action=fit --profile=paper --dataset=ocean500 --cores=4
 
-# All five folds and report modules, using short chains.
-Rscript paper/applications/ocean.R --action=run --profile=pilot --dataset=ocean500 --cores=4 --diagnostics-workers=2
+# Analyze saved chains, predict, score and plot; always one worker, no MCMC.
+Rscript paper/applications/ocean.R --action=analyze --profile=paper --dataset=ocean500
 
-# Complete experiment with formal numerical settings.
-Rscript paper/applications/ocean.R --action=run --profile=paper --dataset=ocean500 --cores=4 --diagnostics-workers=2
+# If the initial diagnostic screen flags fits, explicitly request one extension.
+Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --cores=4
+
+# Analyze the newly extended chains before rendering the final report.
+Rscript paper/applications/ocean.R --action=analyze --profile=paper --dataset=ocean500
 ```
 
-Without `--output`, results are written to `results/ocean/<dataset>/<profile>/`.
-Use `--output=/external/ocean500-paper` to choose another root. `--data-root`
-overrides the prepared input directory. Run `--help` for task selectors and
-separate diagnostics/import directories. Existing parameter RDS files remain
-accepted as the runner's single positional argument.
+`fit` saves EIV checkpoints and package-generated basic diagnostics. Native
+comparators are fitted through their existing package adapters, which also
+return native prediction outputs. EIV predictions, imputations, scores and full
+report diagnostics belong to `analyze`. `run` is an alias for `fit`.
 
-`quick` covers EIV/CC prediction only; it omits OI comparators, MCMC review,
-response-function plots and input-imputation plots. `pilot` covers all modules:
-four chains, 80 initial iterations, 30 burn-in and one diagnostic-selected
-80-iteration continuation. `paper` uses four chains, 20,000 initial iterations,
-5,000 burn-in and one diagnostic-selected 20,000-iteration continuation.
-Short-chain completion validates execution, not posterior convergence.
+`continue` performs at most the existing one-round extension on selected fits
+flagged by the initial finite-Rhat/bulk-ESS screen; it never runs automatically.
+A fit passing that screen is skipped. Repeating the same stage reuses compatible
+outputs. Initial results remain available for analysis before an extension is
+requested; convergence flags stay visible.
 
-Reissue the same command to resume compatible completed tasks. Changes to inputs,
-package source or numerical settings require a fresh output root. Select
-`--folds=1,3` or `--folds=1:5`, `--cells=O20,O50`, `--modules=...` or
-`--task-ids=...` to distribute work; keep separate output roots per process.
-`--import-dirs=/path/one,/path/two` combines completed compatible tasks.
+The `paper` profile retains four chains, 20,000 initial iterations, 5,000 burn-in
+and a 20,000-iteration explicit extension. `pilot` retains four chains, 80 initial
+iterations, 30 burn-in and an 80-iteration extension. `quick` uses one fold and
+one chain; its task catalogue omits continuation and the full diagnostic modules.
+Analysis is always serial; there is no diagnostics-worker option. `cores` controls
+MCMC chain parallelism, not the number of chains.
+
+Results default to `results/ocean/<dataset>/<profile>/`; `--output` overrides it.
+Keep the same dataset, profile, output root and task selections across stages.
+Use a fresh root for changed inputs, installed source or numerical settings.
+`--folds=1,3`, `--cells=O20,O50`, `--modules=...` and `--task-ids=...` select work.
+Give each process its own output root. `--import-dirs` imports only compatible
+completed tasks; `--data-root` selects custom prepared inputs. See `--help`.
 
 ## Generate HTML from saved results
 
-After the runner finishes, render the Rmd in R with the same dataset, profile and
-output root. No fitting or continuation is performed by the notebook.
+After `analyze`, render the reader-facing Rmd using the same inputs and result
+root. It reads saved fits/results and cached calculations; it cannot fit or extend
+MCMC. Any necessary report-side calculation also runs in one worker.
 
 ```r
 rmarkdown::render("paper/applications/ocean.Rmd",
   params=list(dataset="ocean500",profile="paper",action="report",
-    output_dir="results/ocean/ocean500/paper",diagnostics_workers=2,
+    output_dir="results/ocean/ocean500/paper",
     run_id="ocean500_paper_report",appendix=TRUE))
 ```
 
-For short-chain results, use the same run profile (`quick` or `pilot`) and its
-corresponding output root. When the CLI used a custom `--output`, give that same
-directory to the Rmd's `output_dir`. If task selection
-was restricted, retain the same `folds`, `cells` and `modules` in the report.
-An installed package in a custom library must also be on the R session's
-`.libPaths()`. HTML rendering requires Pandoc.
+`ocean.R --action=report` reads existing predictions and rebuilds report summaries
+without fitting; use `analyze` first to create predictions from new checkpoints.
+The Rmd defaults to `report`, also accepts `plan`, and rejects fitting actions.
+Custom package libraries must also be on the R session's `.libPaths()`.
 
-The Rmd defaults to `action="report"`. `action="plan"` can display the proposed
-analysis without fitting; `action="run"` is rejected with the CLI command to use.
-`ocean.R --action=report` rebuilds saved-result summaries/figures without fitting;
-it does not render HTML. Use the Rmd to produce HTML.
-
-`paper/config/ocean200.yml`, `ocean500.yml` and `ocean1000.yml` are Rmd report
-parameter templates. Read one with `yaml::read_yaml()` and pass it as `params`.
+`paper/config/ocean200.yml`, `ocean500.yml` and `ocean1000.yml` are report parameter
+templates. Read one with `yaml::read_yaml()` and pass it as `params`.
 
 OI/CC/MI protocols and scoring scopes are defined in the report. Masks, counts
 and eligible best-score emphasis are computed from inputs/results. Keep fitted

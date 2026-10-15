@@ -69,7 +69,7 @@ for installation, data preparation, execution and report parameters.
 
 ```sh
 Rscript paper/applications/ocean.R --action=plan --profile=paper --dataset=ocean500 --cores=4
-# Change plan to run to fit/resume and save results.
+# Use action=fit, then action=analyze; action=continue explicitly extends flagged chains.
 ```
 
 The default output is `results/ocean/<dataset>/<profile>/`; `--output` overrides

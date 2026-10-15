@@ -1,6 +1,6 @@
 {
   "date": "2026-10-15",
-  "package_version": "0.4.0.9003",
+  "package_version": "0.4.0.9004",
   "base_commit": "677791de6637298ead40d87a534ccd761722d1d5",
   "protected_non_ocean_function_definitions": 470,
   "core_sampler_file_unchanged": true,
@@ -60,7 +60,7 @@
     "R_generated_inputs": true,
     "html_generated": true
   },
-  "revision_scope": "Approved public integration of the validated command-line Ocean workflow, report-only Rmd, ocean500 defaults and shared paper-reproduction README structure.",
+  "revision_scope": "Approved public integration of separated Ocean fit/analyze/continue stages, fixed single-worker analysis and literal Terminal-validated README commands.",
   "continuation_regression": {
     "fix": "Parenthesize the sum of training and test row counts before membership checking.",
     "supported_sizes_tested": [
@@ -140,10 +140,13 @@
     "snapshotted_rds_and_status_files": 256
   },
   "workflow_entrypoints": {
-    "experiment": "ocean.R --action=run",
-    "html": "ocean.Rmd, action=report",
-    "rmd_run_rejected": true,
-    "default_output": "results/ocean/<dataset>/<profile>"
+    "experiment": "ocean.R --action=fit",
+    "analysis": "ocean.R --action=analyze",
+    "continuation": "ocean.R --action=continue",
+    "analysis_workers": 1,
+    "diagnostics_worker_option_removed": true,
+    "automatic_continuation": false,
+    "html": "ocean.Rmd (report)"
   },
   "merged_upstream_commit": "ebc297b4f7901f0acbb4329658753327204122a5",
   "default_dataset": "ocean500",
@@ -171,5 +174,56 @@
     "upstream_numerical_files_unchanged": true,
     "core_sampler_unchanged": true,
     "frozen_input_csv_unchanged": true
+  },
+  "staged_terminal_pilot": {
+    "dataset": "ocean200",
+    "folds": [
+      1
+    ],
+    "cells": [
+      "O20"
+    ],
+    "profile": "pilot",
+    "chains": 4,
+    "iterations": 80,
+    "burn_in": 30,
+    "extension_iterations": 80,
+    "mcmc_cores": 2,
+    "analysis_workers": 1,
+    "literal_main_readme_terminal_commands": 6,
+    "fit_tasks_done": 4,
+    "cc_comparators": 3,
+    "stages": [
+      "fit",
+      "analyze",
+      "continue",
+      "analyze",
+      "report",
+      "render"
+    ],
+    "chain_files_unchanged_by_analysis": true,
+    "no_automatic_analysis_after_fit_or_continue": true,
+    "html_generated": true,
+    "full_five_fold_refitting": false
+  },
+  "staged_public_terminal_validation": {
+    "date": "2026-10-15",
+    "public_parent": "a2f96cc61327f65c926780a601ddeff8de5885db",
+    "version": "0.4.0.9004",
+    "package_assertions_passed": 791,
+    "literal_main_readme_terminal_commands_passed": 6,
+    "dataset": "ocean200",
+    "folds": [
+      1
+    ],
+    "cells": [
+      "O20"
+    ],
+    "analysis_workers": 1,
+    "fit_tasks_done": 4,
+    "explicit_extension_tasks_done": 1,
+    "fit_and_analysis_receipt_checks_passed": true,
+    "html_generated": true,
+    "formal_500_fitting": false
   }
 }

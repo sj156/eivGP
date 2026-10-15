@@ -1,5 +1,7 @@
 # Permanent numerical study workflows
 
+For copy-and-run commands, result paths, completion checks and convergence interpretation, start with the [repository run guide](../../README.md#numerical-studies-mac-mini-or-linux).
+
 `study1.R` and `study2.R` are the only experiment entrypoints. With no arguments they print plans. `--action=run` executes the complete selected study; `--action=report` rebuilds available reports without fitting. Scientific implementation lives in the installed package, not in temporary analysis scripts.
 
 ```sh

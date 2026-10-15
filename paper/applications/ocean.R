@@ -1,6 +1,6 @@
 # Ocean application entrypoint: implementation is provided by the installed package.
 ocean_load_api <- function(repository_dir=NULL,envir=parent.frame()) {
-  if(!requireNamespace("eivGP",quietly=TRUE)||utils::packageVersion("eivGP")<"0.4.0.9004")
+  if(!requireNamespace("eivGP",quietly=TRUE)||utils::packageVersion("eivGP")<"0.4.0.9005")
     stop("Install this checkout with Rscript tools/build_package.R and R CMD INSTALL eivGP.")
   if(!is.null(repository_dir)) {
     installed<-utils::read.csv(system.file("module-manifest.csv",package="eivGP"))
@@ -36,7 +36,7 @@ ocean_cli_params <- function(args=character()) {
   aliases<-c("data-root"="data_dir","output"="output_dir")
   allowed<-c("action","profile","dataset","cores","data_dir","output_dir",
     "folds","cells","modules","task_ids","run_id","import_dirs","cc_output_dir",
-    "diagnostics_dir","representative_fold")
+    "diagnostics_dir","representative_fold","continuation_iter")
   p<-list()
   for(arg in args) {
     if(!grepl("^--[^=]+=.+$",arg))stop("Use --name=value: ",arg)
@@ -46,9 +46,9 @@ ocean_cli_params <- function(args=character()) {
     if(key%in%names(p))stop("Repeated option: ",key)
     p[[key]]<-sub("^--[^=]+=","",arg)
   }
-  for(key in intersect(names(p),c("cores","representative_fold"))) {
+  for(key in intersect(names(p),c("cores","representative_fold","continuation_iter"))) {
     value<-suppressWarnings(as.numeric(p[[key]]))
-    if(length(value)!=1L || !is.finite(value) || value<1 || value!=as.integer(value))
+    if(length(value)!=1L || !is.finite(value) || value<1 || value>.Machine$integer.max || value!=floor(value))
       stop(key," must be a positive integer")
     p[[key]]<-as.integer(value)
   }
@@ -107,6 +107,7 @@ if(sys.nframe()==0L) {
       "  --dataset=ocean200|ocean500|ocean1000 --cores=4 --output=/path/to/results\n",
       "  Optional: --data-root=... --folds=1:5 --cells=O0,O20,O50 --modules=...\n",
       "  --run-id=... --diagnostics-dir=...\n",
+      "  --continuation-iter=20000 (iterations added per chain; pilot default: 80)\n",
       "  --task-ids=... --import-dirs=... --cc-output-dir=... --representative-fold=1\n",
       "No arguments: validate inputs and print the paper-profile ocean500 plan.\n",
       "fit (also run) saves models; analyze reads models serially; continue explicitly extends flagged chains.\n",

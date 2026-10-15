@@ -234,7 +234,7 @@ saved_review <- ocean_refinement_review(output_dir,inputs,diagnostics)
 
 - **Package calls:** the `run_eiv()` routine created by `ocean_initial_functions()` in the Ocean section of `eivGP/R/helpers.R` calls `fit_eivgp()`, `predict_eivgp()` and `impute_eivgp()`; selected continuations call `continue_eivgp()`.
 - **Native baselines:** the pinned `run_published_mixedgp_competitors()` adapter calls kergp, LVGP and EzGP fitting/prediction routines. CC `package_status.csv` retains optimizer status and warnings. A finite prediction can be returned with a flagged optimizer code; task completion alone does not establish optimizer convergence.
-- **Explicit continuation:** `ocean.R --action=continue` adds one extra `r format(ocean_continuation_policy(settings$profile)$n_iter,big.mark=",",scientific=FALSE)` iterations if initial maximum finite Rhat exceeds 1.01, minimum finite bulk ESS is below 400, or finite values are unavailable; `u_block_size=8`.
+- **Explicit continuation:** `ocean.R --action=continue` adds one extra round with `r paste(format(ocean_continuation_lengths(output_dir,settings$profile),big.mark=",",scientific=FALSE),collapse=" / ")` iterations per chain (saved task budgets; configurable with `--continuation-iter`) if initial maximum finite Rhat exceeds 1.01, minimum finite bulk ESS is below 400, or finite values are unavailable; `u_block_size=8`.
 - **Review:** finite diagnostics, tail ESS and undefined values are reported separately. Passing the screen does not establish model adequacy, identification or precision of every functional.
 
 ```{r saved-chain-review, eval=settings$action!="plan" && settings$profile!="quick" && "diagnostics" %in% settings$modules, echo=FALSE, results="asis", fig.width=10, fig.height=7.5}

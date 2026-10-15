@@ -48,3 +48,16 @@ pass, and all six literal main-README Terminal commands complete successfully
 on ocean200/fold1/O20 with the three CC comparators. Fit/analysis receipt hashes
 verify after the explicit extension and HTML render. No formal 500-profile fit
 was launched for this publication check.
+
+
+Configurable continuation (0.4.0.9005): `--continuation-iter` sets added
+iterations per chain when running `continue`; defaults remain paper 20,000 and
+pilot 80. Each extension stores its budget in `continuation_settings.rds`, which
+is included in the hashed task receipt. Initial-fit identity is independent of
+this later choice. Analysis and reports read saved lengths, including legacy
+fixed-budget results. A conflicting request for an existing extension is rejected.
+The six literal main-README commands pass with a 40-iteration extension: four
+chains add 160 pooled draws (200 to 360). Default reuse, conflict rejection,
+serial reanalysis and HTML are verified. The complete saved-result example
+retains 19 tables, 10 images and nine Supplementary blocks. No new full-budget
+or five-fold MCMC run was performed; this update was explicitly approved for public publication.

@@ -1,11 +1,11 @@
 {
   "date": "2026-10-15",
-  "package_version": "0.4.0.9004",
+  "package_version": "0.4.0.9005",
   "base_commit": "677791de6637298ead40d87a534ccd761722d1d5",
   "protected_non_ocean_function_definitions": 470,
   "core_sampler_file_unchanged": true,
   "package_tests": {
-    "pass": 791,
+    "pass": 820,
     "fail": 0,
     "warn": 0,
     "skip": 0
@@ -60,7 +60,7 @@
     "R_generated_inputs": true,
     "html_generated": true
   },
-  "revision_scope": "Approved public integration of separated Ocean fit/analyze/continue stages, fixed single-worker analysis and literal Terminal-validated README commands.",
+  "revision_scope": "Approved public publication of configurable per-chain Ocean continuation and explicit README command examples.",
   "continuation_regression": {
     "fix": "Parenthesize the sum of training and test row counts before membership checking.",
     "supported_sizes_tested": [
@@ -137,7 +137,9 @@
     "fitting_and_continuation_guards_passed": true,
     "native_baseline_fitting_guards_passed": true,
     "fit_receipts_and_task_status_unchanged": true,
-    "snapshotted_rds_and_status_files": 256
+    "snapshotted_rds_and_status_files": 256,
+    "saved_fits_unchanged": true,
+    "fitting_guard_passed": true
   },
   "workflow_entrypoints": {
     "experiment": "ocean.R --action=fit",
@@ -155,6 +157,54 @@
     "planned_tasks": 65,
     "rmd_default_action": "report",
     "fitting_performed": false
+  },
+  "staged_terminal_pilot": {
+    "dataset": "ocean200",
+    "folds": [
+      1
+    ],
+    "cells": [
+      "O20"
+    ],
+    "profile": "pilot",
+    "chains": 4,
+    "iterations": 80,
+    "burn_in": 30,
+    "extension_iterations": 40,
+    "mcmc_cores": 2,
+    "analysis_workers": 1,
+    "literal_main_readme_terminal_commands": 6,
+    "fit_tasks_done": 4,
+    "cc_comparators": 3,
+    "stages": [
+      "fit",
+      "analyze",
+      "continue",
+      "analyze",
+      "report",
+      "render"
+    ],
+    "chain_files_unchanged_by_analysis": true,
+    "no_automatic_analysis_after_fit_or_continue": true,
+    "html_generated": true,
+    "full_five_fold_refitting": false
+  },
+  "configurable_continuation": {
+    "initial_pooled_draws": 200,
+    "continued_pooled_draws": 360,
+    "extension_iterations_per_chain": 40,
+    "chains": 4,
+    "continuation_metadata_in_receipts": true,
+    "default_reuse": true,
+    "different_length_rejected": true,
+    "initial_and_continued_fits_unchanged": true,
+    "literal_readme_commands": 6,
+    "html_generated": true,
+    "paper_default_per_chain": 20000,
+    "pilot_default_per_chain": 80,
+    "budget_selected_at_continue": true,
+    "budget_in_task_receipt": true,
+    "public_repository_updated": true
   },
   "public_release_validation": {
     "date": "2026-10-15",
@@ -175,42 +225,11 @@
     "core_sampler_unchanged": true,
     "frozen_input_csv_unchanged": true
   },
-  "staged_terminal_pilot": {
-    "dataset": "ocean200",
-    "folds": [
-      1
-    ],
-    "cells": [
-      "O20"
-    ],
-    "profile": "pilot",
-    "chains": 4,
-    "iterations": 80,
-    "burn_in": 30,
-    "extension_iterations": 80,
-    "mcmc_cores": 2,
-    "analysis_workers": 1,
-    "literal_main_readme_terminal_commands": 6,
-    "fit_tasks_done": 4,
-    "cc_comparators": 3,
-    "stages": [
-      "fit",
-      "analyze",
-      "continue",
-      "analyze",
-      "report",
-      "render"
-    ],
-    "chain_files_unchanged_by_analysis": true,
-    "no_automatic_analysis_after_fit_or_continue": true,
-    "html_generated": true,
-    "full_five_fold_refitting": false
-  },
   "staged_public_terminal_validation": {
     "date": "2026-10-15",
-    "public_parent": "a2f96cc61327f65c926780a601ddeff8de5885db",
-    "version": "0.4.0.9004",
-    "package_assertions_passed": 791,
+    "public_parent": "1616f2cba53dc512cb4a4c8d3588511af8fae420",
+    "version": "0.4.0.9005",
+    "package_assertions_passed": 820,
     "literal_main_readme_terminal_commands_passed": 6,
     "dataset": "ocean200",
     "folds": [
@@ -224,6 +243,26 @@
     "explicit_extension_tasks_done": 1,
     "fit_and_analysis_receipt_checks_passed": true,
     "html_generated": true,
-    "formal_500_fitting": false
+    "formal_500_fitting": false,
+    "extension_iterations_per_chain": 40,
+    "default_reuse_verified": true,
+    "conflicting_length_rejected": true
+  },
+  "continuation_public_release_validation": {
+    "source_private_commit": "acb8130ba9cbb9bdc7845a58d3edb403dd52822c",
+    "host_os": "macOS",
+    "linux_runtime_tested": false,
+    "package_assertions_passed": 820,
+    "literal_terminal_workflow_passed": true,
+    "custom_iterations_per_chain": 40,
+    "complete_saved_report": {
+      "tables": 19,
+      "images": 10,
+      "supplementary_blocks": 9,
+      "fitting_guards_passed": true,
+      "fits_and_receipts_unchanged": true
+    },
+    "protected_non_ocean_helper_definitions": 215,
+    "sampler_synthetic_and_data_unchanged": true
   }
 }

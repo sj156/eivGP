@@ -11096,10 +11096,12 @@ ocean_settings <- function(profile = "paper", action = "plan", folds = 1:5,
   cells = c("O0", "O20", "O50"),
   modules = c("eiv", "original_baselines", "continuation", "complete_case_baselines",
     "prediction", "diagnostics", "surface_comparison"),
-  task_ids = character(), cores = 4L, run_id = "local") {
+  task_ids = character(), cores = 4L, run_id = "local", continuation_iter = NULL) {
   profile <- match.arg(profile, c("paper", "quick", "pilot"))
   action <- match.arg(action, c("plan", "fit", "run", "analyze", "continue", "report"))
   if(action=="run")action<-"fit"
+  if(!is.null(continuation_iter))
+    continuation_iter <- ocean_continuation_policy(profile,continuation_iter)$n_iter
   folds <- as.integer(unlist(folds)); cells <- as.character(unlist(cells))
   modules <- as.character(unlist(modules))
   task_ids <- as.character(unlist(task_ids))
@@ -11118,7 +11120,8 @@ ocean_settings <- function(profile = "paper", action = "plan", folds = 1:5,
   }
   list(profile = profile, action = action, folds = unique(folds), cells = unique(cells),
     modules = unique(modules), task_ids = unique(task_ids), cores = as.integer(cores),
-    run_id = run_id, iter = if (profile == "paper") 20000L else 80L,
+    run_id = run_id, continuation_iter = continuation_iter,
+    iter = if (profile == "paper") 20000L else 80L,
     burn = if (profile == "paper") 5000L else 30L,
     chains = if (profile != "quick") 4L else 1L, u_block = 8L)
 }
@@ -11166,8 +11169,41 @@ ocean_select_tasks <- function(settings) {
 # Finite Rhat and bulk ESS determine this limited screen. Undefined
 # diagnostics (e.g. constant dictionary occupancy) and tail ESS are also
 # recorded for inspection.
-ocean_continuation_policy <- function(profile="paper") list(max_rhat=1.01,min_ess_bulk=400,
-  n_iter=if(profile=="pilot")80L else 20000L,max_rounds=1L,screen="finite Rhat and bulk ESS")
+ocean_continuation_policy <- function(profile="paper",n_iter=NULL) {
+  if(is.null(n_iter))n_iter<-if(profile=="pilot")80L else 20000L
+  if(!is.numeric(n_iter) || length(n_iter)!=1L || !is.finite(n_iter) ||
+    n_iter<1 || n_iter>.Machine$integer.max || n_iter!=floor(n_iter))
+    stop("continuation_iter must be a positive integer")
+  list(max_rhat=1.01,min_ess_bulk=400,n_iter=as.integer(n_iter),max_rounds=1L,
+    screen="finite Rhat and bulk ESS")
+}
+
+# Extension lengths belong to individual continuation tasks, not initial fits.
+# Keep historical checkpoint paths stable; record the actual budget separately.
+ocean_continuation_iterations <- function(output_dir,profile="paper",fold,cell,
+  requested=NULL,register=FALSE) {
+  path<-file.path(output_dir,"continuation_plus20k",sprintf("fold%02d",fold),cell,
+    "continuation_settings.rds")
+  saved<-if(file.exists(path))readRDS(path)$n_iter else NULL
+  if(is.null(saved) && file.exists(file.path(dirname(path),"fit_plus20k.rds")))
+    saved<-ocean_continuation_policy(profile)$n_iter # Legacy fixed-budget outputs.
+  if(!is.null(saved))saved<-ocean_continuation_policy(profile,saved)$n_iter
+  if(register && !is.null(saved) && !is.null(requested) && saved!=requested)
+    stop("Continuation length differs from the saved task for fold ",fold," / ",cell,
+      ": saved ",saved,", requested ",requested,
+      ". Reuse its saved length; a second extension is not supported.")
+  n<-if(!is.null(saved))saved else ocean_continuation_policy(profile,requested)$n_iter
+  if(register && !file.exists(path))ocean_atomic_rds(list(n_iter=n),path)
+  n
+}
+
+ocean_continuation_lengths <- function(output_dir,profile=ocean_saved_profile(output_dir)) {
+  paths<-list.files(file.path(output_dir,"continuation_plus20k"),
+    "^continuation_settings[.]rds$",recursive=TRUE,full.names=TRUE)
+  if(!length(paths))return(ocean_continuation_policy(profile)$n_iter)
+  sort(unique(vapply(paths,function(path)
+    ocean_continuation_policy(profile,readRDS(path)$n_iter)$n_iter,integer(1))))
+}
 
 ocean_read_screen <- function(path) {
   p <- ocean_continuation_policy()
@@ -11184,14 +11220,14 @@ ocean_read_screen <- function(path) {
     diagnostic_md5=unname(tools::md5sum(path)))
 }
 
-ocean_continuation_decisions <- function(output_dir,profile="paper",write=FALSE) {
+ocean_continuation_decisions <- function(output_dir,profile="paper",write=FALSE,continuation_iter=NULL) {
   rows<-list()
   for(f in if(profile!="quick")1:5 else 1L) for(cell in if(profile!="quick")c("O0","O20","O50") else c("O0","O20","O50")) {
     path<-file.path(if(profile!="quick")"full5_class4" else "smoke_class4",sprintf("fold%02d",f),cell,"convergence_parameters.csv")
     screen<-ocean_read_screen(file.path(output_dir,path))
     needs<-if(profile=="quick")FALSE else if(screen$ready)!screen$screen_pass else NA
     rows[[length(rows)+1L]]<-cbind(data.frame(fold=f,cell,initial_diagnostics=path),screen,
-      needs_continuation=needs,decision=if(is.na(needs))"awaiting_initial" else if(needs)paste0("append_",ocean_continuation_policy(profile)$n_iter) else "keep_initial")
+      needs_continuation=needs,decision=if(is.na(needs))"awaiting_initial" else if(needs)paste0("append_",ocean_continuation_iterations(output_dir,profile,f,cell,continuation_iter)) else "keep_initial")
   }
   d<-do.call(rbind,rows)
   if(write)ocean_atomic_csv(d,file.path(output_dir,"continuation_decisions.csv"))
@@ -11299,7 +11335,8 @@ ocean_prepare_inputs <- function(data_dir) {
       train_exact=c(O0=0L,O20=.2*ntrain,O50=.5*ntrain),test_exact=c(O0=0L,O20=.2*ntest,O50=.5*ntest)))
 }
 
-# Portable identity excludes absolute paths, run_id, selectors and device cores.
+# Portable identity excludes paths, run_id, selectors, device cores and the
+# requested extension length (checked in each continuation task receipt).
 ocean_identity <- function(repository_dir,data_dir,settings) {
   packages<-c("eivGP","kergp","LVGP","EzGP")
   versions<-setNames(vapply(packages,function(p)as.character(utils::packageVersion(p)),""),packages)
@@ -11322,7 +11359,8 @@ ocean_task_files <- function(task,profile="paper",stage="analyze") {
     sub<-file.path(if(task$module=="continuation")"continuation_plus20k" else
       if(profile=="quick")"smoke_class4" else "full5_class4",sprintf("fold%02d",task$fold),task$cell)
     return(file.path(sub,c(if(task$module=="continuation")"fit_plus20k.rds" else "fit.rds",
-      "convergence_parameters.csv","convergence_summary.csv")))
+      "convergence_parameters.csv","convergence_summary.csv",
+      if(task$module=="continuation")"continuation_settings.rds")))
   }
   initial <- if(profile!="quick") "full5_class4" else "smoke_class4"
   if(task$module=="original_baselines") return(file.path(initial,sprintf("fold%02d",task$fold),
@@ -11334,7 +11372,8 @@ ocean_task_files <- function(task,profile="paper",stage="analyze") {
   file.path(sub,c(if(task$module=="continuation") "fit_plus20k.rds" else "fit.rds",
     "metrics.csv","predictive_metrics.csv","predictions.csv","mixed_predictions.csv",
     "prediction_distributions.rds","U_posterior_intervals.csv","convergence_parameters.csv",
-    "convergence_summary.csv",if(task$cell=="O0") "imputations_model_scale.csv" else "imputations.csv"))
+    "convergence_summary.csv",if(task$module=="continuation")"continuation_settings.rds",
+    if(task$cell=="O0") "imputations_model_scale.csv" else "imputations.csv"))
 }
 ocean_verify_receipt <- function(output_dir,id,identity=NULL) {
   path <- file.path(output_dir,"workflow_tasks",paste0(id,".done.rds"))
@@ -11356,7 +11395,8 @@ ocean_run_task <- function(task,repository_dir,output_dir,settings,inputs,identi
   env$iter <- settings$iter; env$burn <- settings$burn; env$chains <- settings$chains
   env$cores <- if(env$smoke) 1L else settings$cores; env$u_block <- 8L
   env$baseline_controls <- ocean_cc_controls(settings$profile)
-  env$continuation_iter <- ocean_continuation_policy(settings$profile)$n_iter
+  env$continuation_iter <- ocean_continuation_iterations(output_dir,settings$profile,
+    task$fold,task$cell,settings$continuation_iter)
   env$atomic_csv <- ocean_atomic_csv; env$atomic_lines <- ocean_atomic_lines; env$atomic_rds <- ocean_atomic_rds
   env$set_task <- function(...) invisible(NULL)
   env$write_progress <- function(...) {cat(paste(...,collapse=" "),"\n");flush.console()}
@@ -11447,11 +11487,14 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
           status$state[i]<-"SKIPPED_NOT_REQUESTED";publish("RUNNING",id);next
         }
         if(stage=="continue") {
-          decisions<-ocean_continuation_decisions(output_dir,settings$profile,write=TRUE)
+          decisions<-ocean_continuation_decisions(output_dir,settings$profile,write=TRUE,
+            continuation_iter=settings$continuation_iter)
           d<-decisions[decisions$fold==task$fold & decisions$cell==task$cell,]
           if(nrow(d)==1L && isTRUE(d$ready) && !isTRUE(d$needs_continuation)) {
             status$state[i]<-"SKIPPED_CONVERGED";publish("RUNNING",id);next
           }
+          ocean_continuation_iterations(output_dir,settings$profile,task$fold,task$cell,
+            requested=settings$continuation_iter,register=TRUE)
         }
       }
       if(ocean_verify_receipt(output_dir,id,identity)) {status$state[i]<-"REUSED";publish("RUNNING",id);next}
@@ -11478,7 +11521,8 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
     ocean_atomic_lines(capture.output(print(status,row.names=FALSE)),file.path(job,"SUMMARY.txt"))
     if(any(status$state=="FAILED")) stop("Some selected tasks failed; inspect ",file.path(job,"task_status.csv"))
   }
-  decisions<-ocean_continuation_decisions(output_dir,settings$profile,write=dir.exists(output_dir))
+  decisions<-ocean_continuation_decisions(output_dir,settings$profile,write=dir.exists(output_dir),
+    continuation_iter=settings$continuation_iter)
   result <- if(!stage%in%c("fit","continue") && "prediction" %in% settings$modules) ocean_prediction_report(output_dir,inputs,
     settings$profile) else NULL
   list(tasks=selected,inputs=inputs,settings=settings,prediction=result,output_dir=output_dir,continuation_decisions=decisions)
@@ -11490,7 +11534,7 @@ ocean_saved_profile <- function(output_dir) {
   if(file.exists(p))readRDS(p)$profile else "paper"
 }
 ocean_continuation_label <- function(output_dir)
-  paste0("+",format(ocean_continuation_policy(ocean_saved_profile(output_dir))$n_iter,big.mark=",",scientific=FALSE))
+  paste(paste0("+",format(ocean_continuation_lengths(output_dir),big.mark=",",scientific=FALSE)),collapse=" / ")
 
 
 # ============================================================================

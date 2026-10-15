@@ -9,7 +9,7 @@ The shared `mcmc.R` sampler is unchanged.
 
 ## Install
 
-From the repository root, install this checkout (eivGP 0.4.0.9004):
+From the repository root, install this checkout (eivGP 0.4.0.9005):
 
 ```r
 dir.create("library",showWarnings=FALSE)
@@ -92,7 +92,7 @@ Rscript paper/applications/ocean.R --action=fit --profile=paper --dataset=ocean5
 Rscript paper/applications/ocean.R --action=analyze --profile=paper --dataset=ocean500
 
 # If the initial diagnostic screen flags fits, explicitly request one extension.
-Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --cores=4
+Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=4
 
 # Analyze the newly extended chains before rendering the final report.
 Rscript paper/applications/ocean.R --action=analyze --profile=paper --dataset=ocean500
@@ -110,15 +110,28 @@ outputs. Initial results remain available for analysis before an extension is
 requested; convergence flags stay visible.
 
 The `paper` profile retains four chains, 20,000 initial iterations, 5,000 burn-in
-and a 20,000-iteration explicit extension. `pilot` retains four chains, 80 initial
+and a default 20,000-iteration explicit extension per chain. `pilot` retains four chains, 80 initial
 iterations, 30 burn-in and an 80-iteration extension. `quick` uses one fold and
 one chain; its task catalogue omits continuation and the full diagnostic modules.
 Analysis is always serial; there is no diagnostics-worker option. `cores` controls
 MCMC chain parallelism, not the number of chains.
 
+Set the extension length when running `continue`, for example:
+
+```sh
+Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=10000 --cores=4
+```
+
+`--continuation-iter` is the number of additional iterations **per chain**.
+Omit it for the default (paper: 20,000; pilot: 80). Initial `fit` does not need
+this option. Each continued task records its length; later `analyze` and report
+commands read that value automatically. Repeating `continue` reuses the saved
+extension, and requesting a different length for an already-started task fails
+rather than silently reusing or appending to it. There is still only one round.
+
 Results default to `results/ocean/<dataset>/<profile>/`; `--output` overrides it.
 Keep the same dataset, profile, output root and task selections across stages.
-Use a fresh root for changed inputs, installed source or numerical settings.
+Use a fresh root for changed inputs, installed source or initial-fit numerical settings.
 `--folds=1,3`, `--cells=O20,O50`, `--modules=...` and `--task-ids=...` select work.
 Give each process its own output root. `--import-dirs` imports only compatible
 completed tasks; `--data-root` selects custom prepared inputs. See `--help`.

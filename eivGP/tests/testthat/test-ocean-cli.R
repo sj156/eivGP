@@ -42,3 +42,15 @@ test_that("unspecified Ocean result directories keep their workflow defaults", {
   expect_identical(called$import_dirs,c(file.path(root,"relative-import"),""))
   expect_identical(called[[3]],file.path(root,"results/ocean/ocean500/paper"))
 })
+
+
+test_that("Ocean CLI accepts an integer extension length", {
+  root<-normalizePath(testthat::test_path("../../.."),mustWork=TRUE)
+  testthat::skip_if_not(file.exists(file.path(root,"paper/applications/ocean.R")))
+  env<-new.env(parent=globalenv())
+  sys.source(file.path(root,"paper/applications/ocean.R"),env)
+  p<-env$ocean_cli_params(c("--action=continue","--continuation-iter=12000"))
+  expect_identical(do.call(ocean_settings,p)$continuation_iter,12000L)
+  for(value in c("0","-1","1.5","Inf","NA","2147483648"))
+    expect_error(env$ocean_cli_params(paste0("--continuation-iter=",value)),"positive integer")
+})

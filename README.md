@@ -239,16 +239,27 @@ Rscript paper/applications/ocean.R --action=fit --profile=paper --dataset=ocean5
 Rscript paper/applications/ocean.R --action=analyze --profile=paper --dataset=ocean500
 
 # Explicitly extend initially flagged chains if needed, then analyze again.
-Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --cores=4
+Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=4
 Rscript paper/applications/ocean.R --action=analyze --profile=paper --dataset=ocean500
 ```
 
 The `paper` profile uses four chains, 20,000 initial iterations and 5,000 burn-in;
-`continue` requests one screen-selected +20,000 extension. Use `profile=pilot`
+`continue` requests one screen-selected extension, defaulting to 20,000 additional
+iterations per chain. Set `--continuation-iter=10000` on the `continue` command
+to choose another length after initial fitting and analysis. Saved lengths are
+reused by subsequent analysis and reporting; an already-started extension cannot
+be changed or extended a second time. Use `profile=pilot`
 for short chains (80 initial, 30 burn-in, +80 extension). All stages are separate;
 `run` aliases `fit`. Analysis always uses one worker and has no core-allocation
 option. Repeating a stage reuses compatible results; changed inputs, source or
-numerical settings require a fresh output root. Each output root has one owner.
+initial-fit numerical settings require a fresh output root. Each output root has one owner.
+
+For a 10,000-iteration extension per chain, use this command at the continuation
+step, then run `analyze` again:
+
+```sh
+Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=10000 --cores=4
+```
 
 #### Minimal command-line workflow check
 
@@ -261,14 +272,14 @@ workflow; the main experiment above continues to use 500 profiles. Use a fresh
 ```sh
 Rscript paper/applications/ocean.R --action=fit --profile=pilot --dataset=ocean200 --folds=1 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --cores=2 --output=results/ocean/ocean200/terminal-check
 Rscript paper/applications/ocean.R --action=analyze --profile=pilot --dataset=ocean200 --folds=1 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --output=results/ocean/ocean200/terminal-check
-Rscript paper/applications/ocean.R --action=continue --profile=pilot --dataset=ocean200 --folds=1 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --cores=2 --output=results/ocean/ocean200/terminal-check
+Rscript paper/applications/ocean.R --action=continue --profile=pilot --dataset=ocean200 --folds=1 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --continuation-iter=40 --cores=2 --output=results/ocean/ocean200/terminal-check
 Rscript paper/applications/ocean.R --action=analyze --profile=pilot --dataset=ocean200 --folds=1 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --output=results/ocean/ocean200/terminal-check
 Rscript paper/applications/ocean.R --action=report --profile=pilot --dataset=ocean200 --folds=1 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --output=results/ocean/ocean200/terminal-check
 Rscript -e ".libPaths(c(Sys.getenv('EIVGP_R_LIBRARY','.r-library'),.libPaths())); rmarkdown::render('paper/applications/ocean.Rmd', output_file='ocean_check.html', output_dir='results/ocean/ocean200/terminal-check', params=list(dataset='ocean200', profile='pilot', action='report', folds=1, cells='O20', modules=c('eiv','complete_case_baselines','continuation','prediction'), output_dir='results/ocean/ocean200/terminal-check', appendix=FALSE))"
 ```
 
 The first analysis does not extend chains. The explicit `continue` command
-extends a flagged fit, and the next analysis reads the saved extension. The
+adds 40 iterations per chain to a flagged fit, and the next analysis reads the saved extension. The
 last command renders `results/ocean/ocean200/terminal-check/ocean_check.html`.
 The final command locates the installed package through `EIVGP_R_LIBRARY` when
 set, otherwise through the checkout-local `.r-library/`.

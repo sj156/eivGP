@@ -35,3 +35,34 @@ testthat::test_that("Ocean continuation accepts supported totals before held-out
   }
   testthat::expect_identical(prediction_calls,3L)
 })
+
+
+testthat::test_that("extension budgets are chosen after fitting and saved per task", {
+  root<-tempfile("ocean-budget-");dir.create(root)
+  on.exit(unlink(root,recursive=TRUE),add=TRUE)
+  testthat::expect_identical(ocean_continuation_policy("paper")$n_iter,20000L)
+  testthat::expect_identical(ocean_continuation_policy("pilot")$n_iter,80L)
+  testthat::expect_null(ocean_settings()$continuation_iter)
+  for(n in list(0,-1,1.5,NA_real_,Inf,"100",numeric(),2^31))
+    testthat::expect_error(ocean_settings(continuation_iter=n),"positive integer")
+  settings<-ocean_settings(profile="paper",action="continue",continuation_iter=12000)
+  testthat::expect_identical(settings$continuation_iter,12000L)
+  testthat::local_mocked_bindings(eivgp_module_identity=function()"test",.package="eivGP")
+  id<-ocean_identity(root,root,ocean_settings())
+  testthat::expect_identical(id,ocean_identity(root,root,settings))
+  testthat::expect_identical(ocean_continuation_iterations(root,"paper",1,"O20",12000,TRUE),12000L)
+  testthat::expect_identical(ocean_continuation_iterations(root,"paper",1,"O20"),12000L)
+  testthat::expect_identical(ocean_continuation_label(root),"+12,000")
+  testthat::expect_error(ocean_continuation_iterations(root,"paper",1,"O20",10000,TRUE),
+    "differs from the saved task")
+  # A separate task can choose another length; the report must display both.
+  testthat::expect_identical(ocean_continuation_iterations(root,"paper",1,"O50",10000,TRUE),10000L)
+  testthat::expect_identical(ocean_continuation_label(root),"+10,000 / +12,000")
+  task<-data.frame(module="continuation",fold=1,cell="O20")
+  testthat::expect_true(any(grepl("continuation_settings.rds",ocean_task_files(task,stage="continue"),fixed=TRUE)))
+  testthat::expect_true(any(grepl("continuation_settings.rds",ocean_task_files(task,stage="analyze"),fixed=TRUE)))
+  path<-file.path(root,"full5_class4/fold01/O20/convergence_parameters.csv")
+  ocean_atomic_csv(data.frame(rhat=1.2,ess_bulk=20,ess_tail=10),path)
+  decisions<-ocean_continuation_decisions(root)
+  testthat::expect_identical(decisions$decision[decisions$fold==1 & decisions$cell=="O20"],"append_12000")
+})

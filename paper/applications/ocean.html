@@ -984,10 +984,11 @@ LVGP and EzGP fitting/prediction routines. CC
 finite prediction can be returned with a flagged optimizer code; task
 completion alone does not establish optimizer convergence.</li>
 <li><strong>Explicit continuation:</strong>
-<code>ocean.R --action=continue</code> adds one extra 80 iterations if
-initial maximum finite Rhat exceeds 1.01, minimum finite bulk ESS is
-below 400, or finite values are unavailable;
-<code>u_block_size=8</code>.</li>
+<code>ocean.R --action=continue</code> adds one extra round with 80
+iterations per chain (saved task budgets; configurable with
+<code>--continuation-iter</code>) if initial maximum finite Rhat exceeds
+1.01, minimum finite bulk ESS is below 400, or finite values are
+unavailable; <code>u_block_size=8</code>.</li>
 <li><strong>Review:</strong> finite diagnostics, tail ESS and undefined
 values are reported separately. Passing the screen does not establish
 model adequacy, identification or precision of every functional.</li>
@@ -4231,7 +4232,7 @@ Supplementary: session information
 ## [1] stats     graphics  grDevices utils     datasets  methods   base     
 ## 
 ## other attached packages:
-## [1] patchwork_1.3.2  ggplot2_4.0.3    eivGP_0.4.0.9004
+## [1] patchwork_1.3.2  ggplot2_4.0.3    eivGP_0.4.0.9005
 ## 
 ## loaded via a namespace (and not attached):
 ##  [1] sass_0.4.10         future_1.75.0       generics_0.1.4     

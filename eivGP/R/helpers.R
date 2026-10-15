@@ -11096,10 +11096,18 @@ ocean_settings <- function(profile = "paper", action = "plan", folds = 1:5,
   cells = c("O0", "O20", "O50"),
   modules = c("eiv", "original_baselines", "continuation", "complete_case_baselines",
     "prediction", "diagnostics", "surface_comparison"),
-  task_ids = character(), cores = 4L, run_id = "local", continuation_iter = NULL) {
+  task_ids = character(), cores = 4L, run_id = "local", continuation_iter = NULL, chains = NULL, iter = NULL, burn = NULL) {
   profile <- match.arg(profile, c("paper", "quick", "pilot"))
   action <- match.arg(action, c("plan", "fit", "run", "analyze", "continue", "report"))
   if(action=="run")action<-"fit"
+  if(is.null(iter))iter<-if(profile=="paper")100000L else 80L
+  if(is.null(burn))burn<-if(profile=="paper")5000L else 30L
+  iter<-mixedgp_as_integer_strict(iter,"iter",1L,1L)
+  burn<-mixedgp_as_integer_strict(burn,"burn",0L,1L)
+  if(burn>=iter)stop("burn must be smaller than iter.")
+  if(is.null(chains))chains<-if(profile=="quick")1L else 4L
+  chains<-mixedgp_as_integer_strict(chains,"chains",1L,1L)
+  if(profile=="quick" && chains!=1L)stop("quick uses one chain; choose pilot or paper for multiple chains.")
   if(!is.null(continuation_iter))
     continuation_iter <- ocean_continuation_policy(profile,continuation_iter)$n_iter
   folds <- as.integer(unlist(folds)); cells <- as.character(unlist(cells))
@@ -11121,9 +11129,8 @@ ocean_settings <- function(profile = "paper", action = "plan", folds = 1:5,
   list(profile = profile, action = action, folds = unique(folds), cells = unique(cells),
     modules = unique(modules), task_ids = unique(task_ids), cores = as.integer(cores),
     run_id = run_id, continuation_iter = continuation_iter,
-    iter = if (profile == "paper") 20000L else 80L,
-    burn = if (profile == "paper") 5000L else 30L,
-    chains = if (profile != "quick") 4L else 1L, u_block = 8L)
+    iter = iter, burn = burn,
+    chains = chains, u_block = 8L)
 }
 
 # 2. A complete, stable task catalogue, irrespective of the device's subset.
@@ -11340,7 +11347,7 @@ ocean_prepare_inputs <- function(data_dir) {
 ocean_identity <- function(repository_dir,data_dir,settings) {
   packages<-c("eivGP","kergp","LVGP","EzGP")
   versions<-setNames(vapply(packages,function(p)as.character(utils::packageVersion(p)),""),packages)
-  paths<-sort(list.files(data_dir,"[.]csv$",full.names=TRUE))
+  paths<-sort(list.files(data_dir,"[.]csv$",full.names=TRUE),method="radix")
   functions<-c("fit_eivgp","continue_eivgp","predict_eivgp","impute_eivgp",
     "run_published_mixedgp_competitors","mixedgp_adapter_ucgp","mixedgp_adapter_lvgp","mixedgp_adapter_ezgp")
   list(schema="ocean-package-CC-v2",profile=settings$profile,
@@ -11409,12 +11416,62 @@ ocean_run_task <- function(task,repository_dir,output_dir,settings,inputs,identi
     if(task$module=="eiv") env$run_eiv(task$fold,task$cell,d$train,d$test,fold_out)
     else env$run_baselines(task$fold,d$train,d$test,fold_out)
   } else if(task$module=="continuation") {
-    dependency <- sprintf("eiv_fold%02d_%s",task$fold,task$cell)
+    dependency <- sprintf("fit_eiv_fold%02d_%s",task$fold,task$cell)
     if(!ocean_verify_receipt(output_dir,dependency,identity)) stop("Missing initial task: ",dependency)
     env$out <- file.path(output_dir,"continuation_plus20k")
     env$original_path <- function(fold,cell) file.path(output_dir,"full5_class4",sprintf("fold%02d",fold),cell,"fit.rds")
     ocean_continuation_functions(env); env$run_one(task$fold,task$cell)
   } else stop("Unknown application task module: ",task$module)
+  invisible(NULL)
+}
+
+# Preview the first wave of EIV fits; idle resources require pending work.
+# This changes execution concurrency only, never the requested chain count.
+ocean_core_plan <- function(cores,n_fits,chains=4L) {
+  cores<-mixedgp_as_integer_strict(cores,"cores",1L,1L)
+  n_fits<-mixedgp_as_integer_strict(n_fits,"n_fits",0L,1L)
+  chains<-mixedgp_as_integer_strict(chains,"chains",1L,1L)
+  n<-as.integer(min(n_fits,ceiling(cores/chains)))
+  allocation<-if(n)as.integer(pmin(chains,pmax(0,cores-(seq_len(n)-1)*chains))) else integer()
+  list(total_cores=cores,chains_per_fit=chains,concurrent_fits=n,
+    task_cores=allocation,active_cores=sum(allocation),pending_fits=n_fits-n)
+}
+
+# Run independent fits against one shared CPU budget. Each fork reserves only
+# its assigned chain slots; the coordinator alone publishes aggregate status.
+ocean_schedule <- function(indices, caps, cores, FUN, on_start, on_done) {
+  stopifnot(length(indices)==length(caps),all(caps>=1L),cores>=1L)
+  if(!length(indices))return(invisible(NULL))
+  if(.Platform$OS.type!="unix" || cores==1L) {
+    for(k in seq_along(indices)) {
+      on_start(indices[k],1L,Sys.getpid(),1L)
+      on_done(indices[k],FUN(indices[k],1L),0L)
+    }
+    return(invisible(NULL))
+  }
+  running<-list();next_task<-1L;active<-0L
+  on.exit({
+    if(length(running)) {
+      for(x in running)try(tools::pskill(x$job$pid),silent=TRUE)
+      try(parallel::mccollect(lapply(running,`[[`,"job"),wait=FALSE),silent=TRUE)
+    }
+  },add=TRUE)
+  while(next_task<=length(indices) || length(running)) {
+    while(next_task<=length(indices) && active<cores) {
+      k<-next_task;i<-indices[k];allocated<-ocean_core_plan(cores-active,1L,caps[k])$task_cores[1L]
+      child<-parallel::mcparallel(FUN(i,allocated),mc.set.seed=FALSE,silent=TRUE)
+      running[[as.character(child$pid)]]<-list(job=child,index=i,cores=allocated)
+      active<-active+allocated
+      on_start(i,allocated,child$pid,active)
+      next_task<-next_task+1L
+    }
+    completed<-parallel::mccollect(lapply(running,`[[`,"job"),wait=FALSE)
+    if(is.null(completed)) {Sys.sleep(.05);next}
+    for(pid in names(completed)) {
+      item<-running[[pid]];active<-active-item$cores;running[[pid]]<-NULL
+      on_done(item$index,completed[[pid]],active)
+    }
+  }
   invisible(NULL)
 }
 
@@ -11425,6 +11482,7 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
   import_dirs <- as.character(unlist(import_dirs)); import_dirs <- import_dirs[nzchar(import_dirs)]
   inputs <- ocean_prepare_inputs(data_dir); selected <- ocean_select_tasks(settings)
   stage<-settings$action
+  if(stage%in%c("analyze","report"))settings$cores<-1L
   if(stage=="fit")selected<-selected[selected$module!="continuation",,drop=FALSE]
   if(stage=="continue")selected<-selected[selected$module=="continuation",,drop=FALSE]
   if(stage=="analyze")selected<-selected[selected$module%in%c("eiv","continuation"),,drop=FALSE]
@@ -11457,24 +11515,29 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
       ocean_atomic_csv(inputs$folds[[paste(f,"O20",sep="/")]]$masks,path)
     }
     ocean_atomic_rds(settings,file.path(output_dir,"execution_settings.rds"))
+    ocean_atomic_rds(settings,file.path(output_dir,paste0("execution_settings_",stage,".rds")))
     ocean_combine_results(import_dirs,output_dir,identity)
     job <- file.path(output_dir,"jobs",settings$run_id)
     status <- if(execute) selected else selected[FALSE,,drop=FALSE]
     status$state <- rep("PENDING",nrow(status)); status$detail <- rep("",nrow(status))
     status$elapsed_seconds <- rep(NA_real_,nrow(status))
+    status$allocated_cores<-rep(NA_integer_,nrow(status))
+    status$worker_pid<-rep(NA_integer_,nrow(status))
     publish <- function(state,current="none") {
       ocean_atomic_csv(status,file.path(job,"task_status.csv"))
       ocean_atomic_lines(c(paste("state:",state),paste("updated:",format(Sys.time(),"%Y-%m-%d %H:%M:%S %z")),
         paste("pid:",Sys.getpid()),paste("current:",current),
         sprintf("executed done: %d/%d; failed: %d; conditional skips: %d",sum(status$state %in% c("DONE","REUSED")),nrow(status)-sum(status$state=="SKIPPED_CONVERGED"),sum(status$state=="FAILED"),sum(status$state=="SKIPPED_CONVERGED")),
-        "Unselected tasks are not counted as completed. Fits are serial; EIV chains may use multiple cores."),
+        paste("Total core budget:",settings$cores,"; analysis is serial. See execution_schedule.csv and task logs.")),
         file.path(job,"PROGRESS.txt"))
     }
     ocean_atomic_csv(inputs$audit,file.path(job,"design_audit.csv"))
     capture.output(utils::sessionInfo(),file=file.path(job,"sessionInfo.txt"))
+    pending<-integer();ids<-character(nrow(selected))
     for(i in if(execute) seq_len(nrow(selected)) else integer()) {
       task <- selected[i,,drop=FALSE]; id <- task$task_id
       if(stage%in%c("fit","continue") && task$module%in%c("eiv","continuation"))id<-paste0("fit_",id)
+      ids[i]<-id
       rownames(task) <- NULL # Assignment position is not part of task identity.
       if(task$module=="continuation") {
         dependency<-sprintf("fit_eiv_fold%02d_%s",task$fold,task$cell)
@@ -11501,22 +11564,53 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
       cfg <- file.path(output_dir,"workflow_tasks",paste0(id,".config.rds"))
       if(file.exists(cfg) && !identical(readRDS(cfg),list(identity=identity,task=task))) stop("Partial-task identity mismatch: ",id)
       ocean_atomic_rds(list(identity=identity,task=task),cfg)
-      status$state[i]<-"RUNNING";publish("RUNNING",id)
-      t0 <- proc.time()[3]
-      outcome <- tryCatch({
-        ocean_run_task(task,repository_dir,output_dir,settings,inputs,identity)
-        files <- ocean_task_files(task,settings$profile,stage)
+      pending<-c(pending,i)
+    }
+    events<-data.frame(task_id=character(),event=character(),time=numeric(),
+      worker_pid=integer(),allocated_cores=integer(),active_cores=integer())
+    ocean_atomic_csv(events,file.path(job,"execution_schedule.csv"))
+    event<-function(i,type,active) {
+      events<<-rbind(events,data.frame(task_id=ids[i],event=type,time=as.numeric(Sys.time()),
+        worker_pid=status$worker_pid[i],allocated_cores=status$allocated_cores[i],active_cores=active))
+      ocean_atomic_csv(events,file.path(job,"execution_schedule.csv"))
+    }
+    work<-function(i,allocated) {
+      task<-selected[i,,drop=FALSE];rownames(task)<-NULL;id<-ids[i]
+      local_settings<-settings;local_settings$cores<-allocated
+      log_path<-file.path(job,"tasks",paste0(id,".log"))
+      dir.create(dirname(log_path),recursive=TRUE,showWarnings=FALSE)
+      log<-file(log_path,open="at");old_message<-getConnection(sink.number(type="message"))
+      sink(log);sink(log,type="message")
+      on.exit({sink(old_message,type="message");sink();close(log)},add=TRUE)
+      cat("Task:",id,"PID:",Sys.getpid(),"allocated cores:",allocated,"stage:",stage,"\n")
+      t0<-proc.time()[3]
+      outcome<-tryCatch({
+        ocean_run_task(task,repository_dir,output_dir,local_settings,inputs,identity)
+        files<-ocean_task_files(task,settings$profile,stage)
         stopifnot(all(file.exists(file.path(output_dir,files))))
         ocean_atomic_rds(list(identity=identity,task=task,files=files,
           hashes=ocean_hashes(file.path(output_dir,files)),finished=as.character(Sys.time())),
           file.path(output_dir,"workflow_tasks",paste0(id,".done.rds")))
         NULL
       },error=function(e)e)
-      status$elapsed_seconds[i]<-as.numeric(proc.time()[3]-t0)
-      status$state[i]<-if(inherits(outcome,"error")) "FAILED" else "DONE"
-      status$detail[i]<-if(inherits(outcome,"error")) conditionMessage(outcome) else ""
-      publish("RUNNING",id)
+      detail<-if(inherits(outcome,"error"))conditionMessage(outcome) else ""
+      if(nzchar(detail))cat("FAILED:",detail,"\n")
+      list(state=if(inherits(outcome,"error"))"FAILED" else "DONE",detail=detail,
+        elapsed_seconds=as.numeric(proc.time()[3]-t0))
     }
+    start_task<-function(i,allocated,pid,active) {
+      status$state[i]<<-"RUNNING";status$allocated_cores[i]<<-allocated;status$worker_pid[i]<<-pid
+      event(i,"START",active);publish("RUNNING",ids[i])
+    }
+    finish_task<-function(i,result,active) {
+      if(!is.list(result) || is.null(result$state))result<-list(state="FAILED",
+        detail="Worker exited without a result; inspect its task log and memory limits.",elapsed_seconds=NA_real_)
+      status$state[i]<<-result$state;status$detail[i]<<-result$detail
+      status$elapsed_seconds[i]<<-result$elapsed_seconds
+      event(i,"FINISH",active);publish("RUNNING",ids[i])
+    }
+    caps<-ifelse(selected$module[pending]%in%c("eiv","continuation"),settings$chains,1L)
+    ocean_schedule(pending,caps,settings$cores,work,start_task,finish_task)
     publish(if(any(status$state=="FAILED")) "SELECTED_COMPLETE_WITH_FAILURES" else "SELECTED_COMPLETE")
     ocean_atomic_lines(capture.output(print(status,row.names=FALSE)),file.path(job,"SUMMARY.txt"))
     if(any(status$state=="FAILED")) stop("Some selected tasks failed; inspect ",file.path(job,"task_status.csv"))
@@ -11785,7 +11879,7 @@ run_one <- function(fold, cell) {
              diag = diagnostic_row(fit))
     return(invisible(NULL))
   }
-  set_task(fold, cell, "RUNNING", "continuing four chains")
+  set_task(fold, cell, "RUNNING", "continuing saved chains")
   write_progress("RUNNING", sprintf("fold%02d %s", fold, cell), "continuing original chains")
   t0 <- Sys.time()
   if(identical(get0("stage",inherits=TRUE),"analyze") && !file.exists(fit_path))
@@ -11957,6 +12051,7 @@ run_ocean_analysis <- function(data_dir,output_dir,action="plan",profile="paper"
 }
 ocean_analysis_impl <- function(repository_dir,data_dir,output_dir,settings,import_dirs=character(),
   cc_output_dir="",diagnostics_dir="",representative_fold=1L) {
+  if(settings$action%in%c("analyze","report"))settings$cores<-1L
   a<-ocean_execute(repository_dir,data_dir,output_dir,settings,import_dirs)
   if(settings$action%in%c("plan","fit","continue"))return(a)
   if("prediction" %in% settings$modules && !is.null(a$prediction)) {

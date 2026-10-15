@@ -1839,7 +1839,7 @@ ocean_combine_results <- function(source_dirs, output_dir, identity) {
     if(!file.exists(path) || !identical(readRDS(path),identity)) stop("Incompatible imported run: ",source)
     done <- list.files(file.path(source,"workflow_tasks"),"[.]done[.]rds$",full.names=TRUE)
     for(receipt_path in done) {
-      receipt <- readRDS(receipt_path); id <- receipt$task$task_id
+      receipt <- readRDS(receipt_path); id <- sub("[.]done[.]rds$","",basename(receipt_path))
       ocean_verify_receipt(source,id,identity)
       for(rel in receipt$files) {
         from <- file.path(source,rel); to <- file.path(output_dir,rel)

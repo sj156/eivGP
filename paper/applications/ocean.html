@@ -466,9 +466,10 @@ on a fixed, class-balanced cohort.</p>
 <div id="computation-settings" class="section level2">
 <h2>1. Computation settings</h2>
 <ul>
-<li><strong>Workflow:</strong> run <code>ocean.R --action=fit</code>,
-then <code>--action=analyze</code> (single worker); this notebook reads
-saved results and renders the report.</li>
+<li><strong>Workflow:</strong> <code>ocean.R --action=fit</code> fits
+models, analyzes saved chains using one worker, and renders this report.
+Explicit <code>continue</code> updates the same analysis and
+report.</li>
 <li><strong>Action:</strong> <code>report</code> reads saved fits;
 <code>plan</code> displays the proposed analysis without fitting.</li>
 <li><strong>Dataset:</strong> <code>ocean200</code>,
@@ -889,7 +890,8 @@ transfer performance.
 <h2>3. Model fitting and numerical assessment</h2>
 <p>The following chunk reads saved fits, predictions and imputations.
 Model fitting and explicit continuation are separate
-<code>ocean.R</code> actions; analysis uses one worker.</p>
+<code>ocean.R</code> actions; each automatically runs single-worker
+analysis and renders the report.</p>
 <pre class="r fold-show"><code>analysis &lt;- ocean_analysis(
   repository_dir, data_dir, output_dir, settings,
   cc_output_dir=cc_output_dir, diagnostics_dir=diagnostics_dir,
@@ -4232,7 +4234,7 @@ Supplementary: session information
 ## [1] stats     graphics  grDevices utils     datasets  methods   base     
 ## 
 ## other attached packages:
-## [1] patchwork_1.3.2  ggplot2_4.0.3    eivGP_0.4.0.9005
+## [1] patchwork_1.3.2  ggplot2_4.0.3    eivGP_0.4.0.9007
 ## 
 ## loaded via a namespace (and not attached):
 ##  [1] sass_0.4.10         future_1.75.0       generics_0.1.4     

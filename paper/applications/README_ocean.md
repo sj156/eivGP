@@ -1,28 +1,28 @@
 # Ocean application
 
-`ocean.R` is the command-line experiment entrypoint: it separates fitting, explicit continuation and single-worker analysis. `ocean.Rmd` reads saved results and
-generates the reader-facing HTML; it does not fit models or continue MCMC. Only `ocean.html` is versioned as the complete five-fold, short-chain
-`pilot` example report for the 200-profile cohort.
-The package follows the upstream structure: Ocean execution and core model calls
-are in `helpers.R`; tables, figures and diagnostics are in `plotting.R`.
-The shared `mcmc.R` sampler is unchanged.
+`ocean.R` runs fitting, single-worker analysis and HTML generation in one command.
+Explicit continuation updates the saved chains, analysis and HTML. Internally,
+fitting and analysis remain separate stages. `ocean.Rmd` is the reader-facing
+report and reads saved results; it cannot fit models or continue MCMC.
+Only `paper/applications/ocean.html` is versioned as a complete example report.
+Ocean execution lives in `helpers.R`, reporting in `plotting.R`; the shared
+`mcmc.R` sampler is unchanged.
 
 ## Install
 
-From the repository root, install this checkout (eivGP 0.4.0.9005):
+From the repository root, install this checkout (eivGP 0.4.0.9007):
 
-```r
-dir.create("library",showWarnings=FALSE)
-.libPaths(c(normalizePath("library"),.libPaths()))
-source("tools/build_package.R")
-install.packages("eivGP",repos=NULL,type="source",lib=.libPaths()[1])
-# Let command-line runners find this same installation:
-Sys.setenv(EIVGP_R_LIBRARY=normalizePath("library"))
+```sh
+Rscript tools/build_package.R
+Rscript -e 'dir.create(".r-library",showWarnings=FALSE); install.packages("eivGP",repos=NULL,type="source",lib=".r-library")'
 ```
 
+The CLI automatically finds `.r-library/`. For another installation directory,
+export `EIVGP_R_LIBRARY` in the Terminal that runs the commands.
 Dependencies: dplyr, tidyr, ggplot2, knitr, patchwork, posterior, TruncatedNormal,
-digest, rmarkdown, kergp 0.5.8, LVGP 2.1.6 and EzGP 0.1.0. HTML rendering requires
-Pandoc. Restart R after updating an installed package.
+digest, rmarkdown, kergp 0.5.8, LVGP 2.1.6 and EzGP 0.1.0. HTML requires Pandoc
+on PATH or `RSTUDIO_PANDOC`; the CLI checks this before starting computation.
+Restart R after updating an installed package.
 
 ## Choose the dataset
 
@@ -72,75 +72,82 @@ salinity, their squares and cross-products. Training calibration is nested at
 20%/50%, with class/cell coverage and boundary anchors. Test-u masks use R seed
 `202609260 + fold`, with nested class-balanced 20%/50% quotas.
 
-## Fit, analyze and explicitly continue
+## Fit and explicitly continue
 
-Run from the repository root after installation. Set `EIVGP_R_LIBRARY` to a
-custom installation directory; otherwise the CLI uses `.r-library/` when present.
-The installed module identity must match this checkout.
+Run from the repository root. These commands default to the 500-profile cohort.
 
 ```sh
-# If installed in library/ using the instructions above:
-export EIVGP_R_LIBRARY="$(pwd)/library"
+# Inspect the tasks and resource plan without fitting.
+Rscript paper/applications/ocean.R --action=plan --profile=paper --dataset=ocean500 --cores=16 --chains=4 --iter=100000
 
-# Validate inputs and inspect the task catalogue.
-Rscript paper/applications/ocean.R --action=plan --profile=paper --dataset=ocean500
+# Fit, then analyze using one worker and generate HTML.
+Rscript paper/applications/ocean.R --action=fit --profile=paper --dataset=ocean500 --cores=16 --chains=4 --iter=100000
 
-# Fit initial models and save checkpoints; no automatic continuation or EIV analysis.
-Rscript paper/applications/ocean.R --action=fit --profile=paper --dataset=ocean500 --cores=4
-
-# Analyze saved chains, predict, score and plot; always one worker, no MCMC.
-Rscript paper/applications/ocean.R --action=analyze --profile=paper --dataset=ocean500
-
-# If the initial diagnostic screen flags fits, explicitly request one extension.
-Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=4
-
-# Analyze the newly extended chains before rendering the final report.
-Rscript paper/applications/ocean.R --action=analyze --profile=paper --dataset=ocean500
+# Extend initially flagged fits, then update analysis and HTML automatically.
+Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=16
 ```
 
-`fit` saves EIV checkpoints and package-generated basic diagnostics. Native
-comparators are fitted through their existing package adapters, which also
-return native prediction outputs. EIV predictions, imputations, scores and full
-report diagnostics belong to `analyze`. `run` is an alias for `fit`.
+`--cores` is a total fitting budget. A shared queue runs independent
+fold/calibration tasks and assigns up to `--chains` cores to each EIV fit;
+comparator tasks receive one core each. All active allocations together stay
+within the total budget. Completed tasks free resources for the next task.
+The four-chain examples can use 12, 16 or 56 cores for 3, 4 or 14 simultaneous
+EIV fits when enough work is pending. More chains can be selected explicitly
+before fitting; the resource planner never changes the statistical chain count.
+Windows falls back to serial execution.
 
-`continue` performs at most the existing one-round extension on selected fits
-flagged by the initial finite-Rhat/bulk-ESS screen; it never runs automatically.
-A fit passing that screen is skipped. Repeating the same stage reuses compatible
-outputs. Initial results remain available for analysis before an extension is
-requested; convergence flags stay visible.
+After the fitting queue finishes, the coordinator analyzes saved chains using
+one worker and renders `ocean.html` in the result root. There is no analysis-worker
+option or overlap between fitting and analysis. Low-level package fit/analyze
+stages remain separately callable. `run` aliases `fit`.
 
-The `paper` profile retains four chains, 20,000 initial iterations, 5,000 burn-in
-and a default 20,000-iteration explicit extension per chain. `pilot` retains four chains, 80 initial
-iterations, 30 burn-in and an 80-iteration extension. `quick` uses one fold and
-one chain; its task catalogue omits continuation and the full diagnostic modules.
-Analysis is always serial; there is no diagnostics-worker option. `cores` controls
-MCMC chain parallelism, not the number of chains.
-
-Set the extension length when running `continue`, for example:
+Defaults: paper uses four chains, 100,000 initial iterations per chain and 5,000
+burn-in; pilot uses four chains, 80 initial iterations and 30 burn-in. `quick`
+uses one chain and fold 1. Set `--chains` and `--iter` before starting a new
+paper/pilot fit; `--burn` is optional. `iter` counts total iterations per chain,
+including burn-in, and must exceed `burn`. For example, a new fit can use:
 
 ```sh
-Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=10000 --cores=4
+Rscript paper/applications/ocean.R --action=fit --profile=paper --dataset=ocean500 --chains=8 --iter=60000 --burn=5000 --cores=16 --output=results/ocean/ocean500/custom
 ```
 
-`--continuation-iter` is the number of additional iterations **per chain**.
-Omit it for the default (paper: 20,000; pilot: 80). Initial `fit` does not need
-this option. Each continued task records its length; later `analyze` and report
-commands read that value automatically. Repeating `continue` reuses the saved
-extension, and requesting a different length for an already-started task fails
-rather than silently reusing or appending to it. There is still only one round.
+Later commands infer the saved initial chain count, iteration count and burn-in.
+`continue` retains these settings: requesting a different `--chains`, `--iter`
+or `--burn` is rejected. Use `--continuation-iter` for **additional iterations
+per existing chain**; burn-in is not repeated. `cores` can change between stages.
+
+`continue` performs at most one explicit extension on fits flagged by the initial
+finite-Rhat/bulk-ESS screen; it never runs automatically. Passing fits are skipped.
+The default added iterations per chain are paper 20,000 and pilot 80. Choose a
+different length at the continuation step:
+
+```sh
+Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=10000 --cores=16
+```
+
+Saved extension lengths drive reuse and report labels. Requesting a different
+length for an already-started extension fails. Verified checkpoints survive
+analysis/report failures; rerun `analyze` or `report` after correcting the issue.
 
 Results default to `results/ocean/<dataset>/<profile>/`; `--output` overrides it.
-Keep the same dataset, profile, output root and task selections across stages.
-Use a fresh root for changed inputs, installed source or initial-fit numerical settings.
-`--folds=1,3`, `--cells=O20,O50`, `--modules=...` and `--task-ids=...` select work.
-Give each process its own output root. `--import-dirs` imports only compatible
-completed tasks; `--data-root` selects custom prepared inputs. See `--help`.
+`--folds`, `--cells`, `--modules` and `--task-ids` select tasks. Keep one owner per
+output root; changed source, data or initial-fit numerical settings require a
+fresh root. `--import-dirs` imports compatible verified tasks; `--data-root`
+selects custom prepared inputs. Task logs are under `jobs/<run_id>/tasks/`;
+`task_status.csv` and `execution_schedule.csv` retain PIDs, core allocations,
+completion and failures.
 
 ## Generate HTML from saved results
 
-After `analyze`, render the reader-facing Rmd using the same inputs and result
-root. It reads saved fits/results and cached calculations; it cannot fit or extend
-MCMC. Any necessary report-side calculation also runs in one worker.
+`fit` and `continue` already generate HTML. To update results without MCMC:
+
+```sh
+Rscript paper/applications/ocean.R --action=analyze --profile=paper --dataset=ocean500
+Rscript paper/applications/ocean.R --action=report --profile=paper --dataset=ocean500
+```
+
+`analyze` reads saved chains and rebuilds predictions/diagnostics/HTML; `report`
+reads saved predictions and renders HTML. Direct Rmd rendering is also available:
 
 ```r
 rmarkdown::render("paper/applications/ocean.Rmd",
@@ -149,8 +156,7 @@ rmarkdown::render("paper/applications/ocean.Rmd",
     run_id="ocean500_paper_report",appendix=TRUE))
 ```
 
-`ocean.R --action=report` reads existing predictions and rebuilds report summaries
-without fitting; use `analyze` first to create predictions from new checkpoints.
+Use `analyze` to create predictions from any checkpoints produced through the low-level fitting API.
 The Rmd defaults to `report`, also accepts `plan`, and rejects fitting actions.
 Custom package libraries must also be on the R session's `.libPaths()`.
 

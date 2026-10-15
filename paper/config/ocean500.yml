@@ -1,6 +1,6 @@
 dataset: "ocean500"
 profile: "paper"
 action: "report"
-cores: 4
+cores: 1
 output_dir: "results/ocean/ocean500/paper"
 run_id: "ocean500_paper"

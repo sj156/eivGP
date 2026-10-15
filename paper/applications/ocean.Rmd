@@ -12,7 +12,7 @@ params:
   cells: ["O0", "O20", "O50"]
   modules: ["eiv", "original_baselines", "continuation", "complete_case_baselines", "prediction", "diagnostics", "surface_comparison"]
   task_ids: ""
-  cores: 4
+  cores: 1
   run_id: "local"
   dataset: "ocean500"
   data_dir: ""
@@ -30,7 +30,7 @@ nested measurement masks are constructed on a fixed, class-balanced cohort.
 
 ## 1. Computation settings
 
-- **Workflow:** run `ocean.R --action=fit`, then `--action=analyze` (single worker); this notebook reads saved results and renders the report.
+- **Workflow:** `ocean.R --action=fit` fits models, analyzes saved chains using one worker, and renders this report. Explicit `continue` updates the same analysis and report.
 - **Action:** `report` reads saved fits; `plan` displays the proposed analysis without fitting.
 - **Dataset:** `ocean200`, `ocean500` or `ocean1000`; prepare the 1000-profile folds once using `data/ocean_silicate/prepare_folds.R`.
 - **Selection:** `folds`, `cells` and `modules` select tasks without changing seeds or numerical settings.
@@ -55,6 +55,11 @@ settings <- ocean_settings(profile=params$profile,action=params$action,folds=par
   cells=params$cells,modules=params$modules,task_ids=params$task_ids,cores=params$cores,run_id=params$run_id)
 data_dir <- ocean_dataset_dir(repository_dir,dataset,params$data_dir)
 output_dir <- ocean_output_dir(repository_dir,dataset,settings$profile,params$output_dir)
+identity_path <- file.path(output_dir,"workflow_identity.rds")
+if(file.exists(identity_path)) {
+  saved_numerics <- readRDS(identity_path)$numerics
+  for(key in c("chains","iter","burn"))settings[[key]] <- saved_numerics[[key]]
+}
 if(settings$action=="report" && !dir.exists(output_dir))
   stop("Saved results not found: ",output_dir,". Run ocean.R first, or specify the existing output_dir.")
 diagnostics_dir <- if(nzchar(params$diagnostics_dir)) ocean_resolve_path(params$diagnostics_dir,repository_dir) else file.path(output_dir,"diagnostics")
@@ -192,7 +197,7 @@ cat(ocean_table_html(design_review$overlap,"Cruise overlap in held-out predictio
 ## 3. Model fitting and numerical assessment
 
 The following chunk reads saved fits, predictions and imputations. Model fitting
-and explicit continuation are separate `ocean.R` actions; analysis uses one worker.
+and explicit continuation are separate `ocean.R` actions; each automatically runs single-worker analysis and renders the report.
 
 ```{r saved-results, class.source="fold-show", results="hide"}
 analysis <- ocean_analysis(

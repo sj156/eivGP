@@ -1,11 +1,11 @@
 {
   "date": "2026-10-15",
-  "package_version": "0.4.0.9005",
+  "package_version": "0.4.0.9007",
   "base_commit": "677791de6637298ead40d87a534ccd761722d1d5",
   "protected_non_ocean_function_definitions": 470,
   "core_sampler_file_unchanged": true,
   "package_tests": {
-    "pass": 820,
+    "pass": 916,
     "fail": 0,
     "warn": 0,
     "skip": 0
@@ -60,7 +60,7 @@
     "R_generated_inputs": true,
     "html_generated": true
   },
-  "revision_scope": "Approved public publication of configurable per-chain Ocean continuation and explicit README command examples.",
+  "revision_scope": "Public integration of verified private one-command workflows, shared CPU scheduling, and configurable initial sampling budgets.",
   "continuation_regression": {
     "fix": "Parenthesize the sum of training and test row counts before membership checking.",
     "supported_sizes_tested": [
@@ -142,13 +142,15 @@
     "fitting_guard_passed": true
   },
   "workflow_entrypoints": {
-    "experiment": "ocean.R --action=fit",
+    "experiment": "ocean.R --action=fit (fit + analysis + HTML)",
     "analysis": "ocean.R --action=analyze",
-    "continuation": "ocean.R --action=continue",
+    "continuation": "ocean.R --action=continue (extension + analysis + HTML)",
     "analysis_workers": 1,
     "diagnostics_worker_option_removed": true,
     "automatic_continuation": false,
-    "html": "ocean.Rmd (report)"
+    "html": "ocean.Rmd (report)",
+    "automatic_analysis_after_fit_or_continue": true,
+    "automatic_html": true
   },
   "merged_upstream_commit": "ebc297b4f7901f0acbb4329658753327204122a5",
   "default_dataset": "ocean500",
@@ -204,65 +206,152 @@
     "pilot_default_per_chain": 80,
     "budget_selected_at_continue": true,
     "budget_in_task_receipt": true,
-    "public_repository_updated": true
+    "public_repository_updated": false
+  },
+  "oneclick_multicore_validation": {
+    "literal_readme_commands": 2,
+    "folds": [
+      1,
+      2
+    ],
+    "fit_tasks_done": 8,
+    "continuation_tasks_done": 2,
+    "observed_peak_core_reservations": 8,
+    "analysis_core_limit": 1,
+    "analysis_after_fit_barrier": true,
+    "html_after_both_commands": true,
+    "analyze_and_report_rebuilds_pass": true,
+    "chain_hashes_and_mtimes_unchanged": true,
+    "sampler_draw_counts": [
+      200,
+      360
+    ],
+    "custom_two_chain_fit": true,
+    "inferred_two_chain_continuation": true,
+    "before_draws": 100,
+    "after_draws": 110,
+    "serial_parallel_draws_identical": true,
+    "fields_compared": [
+      "samples_u",
+      "samples_tau",
+      "samples_logtheta",
+      "samples_sigma2",
+      "samples_V",
+      "samples_r",
+      "samples_J",
+      "samples_pi",
+      "samples_by_chain"
+    ],
+    "paper500_plan_core_budgets": [
+      12,
+      16,
+      56
+    ],
+    "paper500_eiv_concurrency_preview": [
+      3,
+      4,
+      14
+    ],
+    "paper_default_chains": 4,
+    "formal_iterations_per_chain": 20000,
+    "finite_bulk_ess_screen_threshold": 400,
+    "new_100000_iteration_or_1000_ess_rule": "not inferred or implemented; statistical target definition pending",
+    "complete_saved_report": {
+      "tables": 19,
+      "embedded_images": 10,
+      "supplementary_blocks": 9,
+      "sampler_and_comparator_calls_guarded": true,
+      "saved_fits_and_receipts_unchanged": true
+    },
+    "linux_runtime_tested": false,
+    "public_repository_updated": false
+  },
+  "paper_budget_validation": {
+    "defaults": {
+      "chains": 4,
+      "iterations_per_chain": 100000,
+      "burn_in": 5000,
+      "continuation_iterations_per_chain": 20000
+    },
+    "custom_paper_execution": {
+      "profile": "paper",
+      "initial_chains": 2,
+      "initial_iterations_per_chain": 84,
+      "burn_in": 30,
+      "initial_pooled_draws": 108,
+      "additional_iterations_per_chain": 7,
+      "continued_pooled_draws": 122,
+      "original_settings_inferred": true,
+      "different_chain_count_rejected": true,
+      "different_initial_iteration_count_rejected": true,
+      "different_burn_in_rejected": true,
+      "html_reports_saved_settings": true,
+      "chain_files_unchanged_by_rejections": true
+    },
+    "literal_readme_workflow": {
+      "literal_readme_commands": 2,
+      "folds": [
+        1,
+        2
+      ],
+      "fit_tasks_done": 8,
+      "continuation_tasks_done": 2,
+      "observed_peak_core_reservations": 8,
+      "analysis_core_limit": 1,
+      "analysis_after_fit_barrier": true,
+      "html_after_both_commands": true,
+      "analyze_and_report_rebuilds_pass": true,
+      "chain_hashes_and_mtimes_unchanged": true,
+      "sampler_draw_counts": [
+        200,
+        360
+      ]
+    },
+    "complete_saved_report": {
+      "tables": 19,
+      "embedded_images": 10,
+      "supplementary_blocks": 9,
+      "fitting_calls_guarded": true,
+      "saved_fits_and_receipts_unchanged": true
+    },
+    "formal_100000_iteration_run_performed": false,
+    "public_repository_updated": false
   },
   "public_release_validation": {
     "date": "2026-10-15",
-    "public_base_commit": "ebc297b4f7901f0acbb4329658753327204122a5",
-    "installed_source_version": "0.4.0.9003",
-    "package_assertions_passed": 791,
-    "default_dataset": "ocean500",
-    "default_plan_profiles": 500,
-    "default_plan_tasks": 65,
-    "report_action": "report",
-    "report_source": "previously completed 200-profile full pilot",
-    "html_tables": 19,
-    "html_embedded_images": 10,
-    "supplementary_blocks": 9,
-    "fitting_calls_blocked_during_render": true,
-    "saved_fit_files_unchanged": true,
-    "upstream_numerical_files_unchanged": true,
-    "core_sampler_unchanged": true,
-    "frozen_input_csv_unchanged": true
-  },
-  "staged_public_terminal_validation": {
-    "date": "2026-10-15",
-    "public_parent": "1616f2cba53dc512cb4a4c8d3588511af8fae420",
-    "version": "0.4.0.9005",
-    "package_assertions_passed": 820,
-    "literal_main_readme_terminal_commands_passed": 6,
-    "dataset": "ocean200",
-    "folds": [
-      1
-    ],
-    "cells": [
-      "O20"
-    ],
-    "analysis_workers": 1,
-    "fit_tasks_done": 4,
-    "explicit_extension_tasks_done": 1,
-    "fit_and_analysis_receipt_checks_passed": true,
-    "html_generated": true,
-    "formal_500_fitting": false,
-    "extension_iterations_per_chain": 40,
-    "default_reuse_verified": true,
-    "conflicting_length_rejected": true
-  },
-  "continuation_public_release_validation": {
-    "source_private_commit": "acb8130ba9cbb9bdc7845a58d3edb403dd52822c",
-    "host_os": "macOS",
-    "linux_runtime_tested": false,
-    "package_assertions_passed": 820,
-    "literal_terminal_workflow_passed": true,
-    "custom_iterations_per_chain": 40,
+    "private_source_commit": "258365696792adb5fb3a75a53444ed0b76d5e6e3",
+    "public_base_commit": "8cbf0c0f6b940c3a595f88e78d85c177c61d9ae5",
+    "package_tests_pass": 916,
+    "literal_readme_workflow": {
+      "literal_readme_commands": 2,
+      "folds": [
+        1,
+        2
+      ],
+      "fit_tasks_done": 8,
+      "continuation_tasks_done": 2,
+      "observed_peak_core_reservations": 8,
+      "analysis_core_limit": 1,
+      "analysis_after_fit_barrier": true,
+      "html_after_both_commands": true,
+      "analyze_and_report_rebuilds_pass": true,
+      "chain_hashes_and_mtimes_unchanged": true,
+      "sampler_draw_counts": [
+        200,
+        360
+      ]
+    },
     "complete_saved_report": {
       "tables": 19,
-      "images": 10,
-      "supplementary_blocks": 9,
-      "fitting_guards_passed": true,
-      "fits_and_receipts_unchanged": true
+      "embedded_images": 10,
+      "supplementary_blocks": 9
     },
-    "protected_non_ocean_helper_definitions": 215,
-    "sampler_synthetic_and_data_unchanged": true
+    "guarded_render_no_fitting": true,
+    "saved_fits_and_receipts_unchanged": true,
+    "sampler_synthetic_data_unchanged": true,
+    "runtime_platform": "macOS",
+    "linux_runtime_tested": false,
+    "formal_100000_iteration_run_performed": false,
+    "ram_scheduler_added": false
   }
 }

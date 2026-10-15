@@ -1,0 +1,107 @@
+\section{Numerical Studies}
+\label{sec:numerical-studies}
+
+The experiments ask when continuous inputs help despite being recorded as ordinal categories, and what response feedback contributes to learning $m(x,c)$, $f(x,u)$, and missing training inputs. The univariate DGM provides a category-sufficient negative control; the multivariate DGM tests noisy proxies and unobserved category combinations. We organize the evidence by insight. \textbf{TBD} marks pending analyses and displays, not anticipated results. Retained historical findings remain subject to their original computational qualifications.
+
+\subsection{Design and fair comparisons}
+\label{sec:simulation-protocol}
+\label{sec:sim-univariate-deterministic}
+Each setting contains 50 paired replications with $n=n_{\rm test}=100$ and nested calibration subsets $\mathcal O$. In the univariate DGM, $U\sim N(0,1)$ is discretized at normal sextiles, and $X\in[-2,2]$. With $h(x,u)=\cos(0.9\pi u)+0.35(x/2)\sin(0.9\pi u)$ and $\bar h(x,c)=E\{h(x,U)\mid C=c\}$, let
+\begin{equation}
+\label{eq:study1-heterogeneity-dgm-main}
+ f_{0,\eta}(x,u,c)=0.5\sin(\pi x/2)+\bar h(x,c)
+                 +\eta\{h(x,u)-\bar h(x,c)\},\qquad \eta\in\{0,1\}.
+\end{equation}
+Response noise has standard deviation $0.1$, and $|\mathcal O|\in\{0,20,50\}$. Both regimes have the same observable mean. At $\eta=0$, categories suffice for the response; at $\eta=1$, continuous position matters within a category. The contrast also changes surface smoothness, so it does not isolate heterogeneity from compatibility with a smooth GP prior.
+
+\label{sec:sim-multivariate-probit}
+The multivariate DGM has $\bU\sim N_2(0,I_2)$, $\bX\in[-1,1]^2$, and scores $\bS=\bA_q\bU+\boldsymbol\zeta$. The loading matrix has rows $(1.70,0)$, $(0.20,1.70)$, $(1.20,0.70)$, and $(0.70,1.20)$; its first $q$ rows define two or four proxies, each discretized at its marginal quartiles. Gaussian score errors are independent with unit variance. The response surface includes latent--latent and quantitative--latent interactions, with noise standard deviation $0.12$; its formula is in Appendix~\ref{app:study2-details}. We retain the existing two-proxy comparison, four-proxy calibration curve, and logistic-error sensitivity analysis in the appendix. The additional fits use only the four-proxy Gaussian setting at $|\mathcal O|=20,50$.
+
+UC--GP \citep{qian2008gaussian,zhou2011simple}, LVGP \citep{zhang2020latent}, and EzGP \citep{xiao2021ezgp} each have two information protocols. The categorical-only version uses all $(Y,X,C)$ records. The complete-case version, denoted by ``--CC'', uses $(Y,X,U,C)$ on $\mathcal O$, treating $U$ as additional continuous inputs while retaining $C$. Thus it receives the available calibration measurements but sacrifices incomplete records. EIV--GP uses all responses, categories, and observed training inputs. Neither comparison by itself isolates an inferential mechanism: one changes access to measurements, and the other changes the effective response-training sample.
+
+All prospective predictions use only $(X^*,C^*)$. Complete-case competitors integrate unknown $U^*$ under the same response-free measurement fit, using common integration draws. Mean error is evaluated against $m_0$; predictive CRPS evaluates the full response distribution. Surface recovery evaluates $f_0$ at known physical inputs, and imputation scores concern withheld \emph{training} inputs whose responses are observed. A categorical model, including a fitted $f(X,U,C)$, is not automatically a comparable physical $f(X,U)$ estimator. These targets are therefore scored only for eligible methods. The existing CC--GP and PI--GP baselines remain supplementary: the former integrates test-input uncertainty, whereas the saved PI--GP implementation plugs in conditional input means at training and prediction.
+
+\subsection{When do continuous inputs help?}
+The univariate control prevents a predictive advantage from being presumed merely because a method has latent inputs. At calibration 50, the historical comparisons favor LVGP when categories suffice and EIV--GP under heterogeneity (Table~\ref{tab:numerical-boundary}). The corresponding mean errors show that the comparison concerns learning $m_0$, as well as predicting noisy responses. These results motivate, rather than replace, the matched feedback experiment below.
+
+\begin{table}[!htbp]
+\centering\small
+\caption{Historical univariate comparison at calibration 50: means (MCSEs) over 50 datasets. LVGP is the best categorical comparator for these losses. Bold marks the lower loss within each regime, not significance. Full comparisons and diagnostics are in the appendix.}
+\label{tab:numerical-boundary}
+\begin{tabular}{llrr}
+\toprule
+Regime & Method & $m_0$ RMSE & Predictive CRPS\\
+\midrule
+Category-sufficient ($\eta=0$) & EIV--GP & 0.151 (0.003) & 0.106 (0.001)\\
+ & LVGP & \textbf{0.051} (0.001) & \textbf{0.064} (0.001)\\
+Heterogeneous ($\eta=1$) & EIV--GP & \textbf{0.094} (0.004) & \textbf{0.255} (0.003)\\
+ & LVGP & 0.203 (0.008) & 0.295 (0.004)\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[!htbp]
+\centering\small
+\fbox{\begin{minipage}[t][2.1cm][c]{0.29\linewidth}\centering
+(a) Same mean, different within-category variation\\[4pt]\textbf{TBD: design curves}
+\end{minipage}}\hfill
+\fbox{\begin{minipage}[t][2.1cm][c]{0.29\linewidth}\centering
+(b) Does the predictive advantage change with $\eta$?\\[4pt]\textbf{TBD: paired contrasts}
+\end{minipage}}\hfill
+\fbox{\begin{minipage}[t][2.1cm][c]{0.29\linewidth}\centering
+(c) Is the advantage larger for unseen combinations?\\[4pt]\textbf{TBD: stratified contrasts}
+\end{minipage}}
+\caption{Planned evidence for when the method helps. (a) Generating curves illustrate the fixed observable mean and changing within-category response variation. (b) Paired EIV--GP-minus-LVGP CRPS differences compare both univariate regimes at calibration 20 and 50. (c) Four-proxy, calibration-50 differences compare EIV--GP with every categorical-only and complete-case competitor in seen and unseen strata. Negative differences favor EIV--GP; panels (b,c) will show replication-level uncertainty and matched sample counts. Panel (a) is illustrative; it is not fitted evidence.}
+\label{fig:numerical-when}
+\end{figure}
+
+With four proxies there are 256 possible category combinations but only 100 training records. A combination is \emph{unseen} if its complete category vector is absent from the full training sample; the definition is shared by all methods, including those fitted on complete cases. Previously saved four-proxy data contain an average of 49.1 unseen test records, whereas the two-proxy setting has only 0.22. We therefore use four proxies for the stratified comparison. \textbf{TBD:} combine the saved categorical-only stratification with complete-case results, report seen and unseen CRPS with matched replication uncertainty, and estimate the difference between their method contrasts. A lower unseen loss alone does not establish that the method's relative advantage is greater there.
+
+\begin{table}[!htbp]
+\centering\small
+\caption{Planned four-proxy comparison under equal prospective information. Columns report mean RMSE and unseen-combination predictive CRPS at two calibration sizes. Each TBD will be replaced by a replication mean (MCSE), with completion counts and failures disclosed. Categorical-only training does not change with calibration. Seen-stratum comparisons appear in Figure~\ref{fig:numerical-when}(c); all losses and interval scores belong in the appendix.}
+\label{tab:numerical-calibration-fairness}
+\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{2}{c}{$|\mathcal O|=20$} & \multicolumn{2}{c}{$|\mathcal O|=50$}\\
+Method & $m_0$ RMSE & Unseen CRPS & $m_0$ RMSE & Unseen CRPS\\
+\midrule
+EIV--GP & TBD & TBD & TBD & TBD\\
+CUT & TBD & TBD & TBD & TBD\\
+UC--GP & TBD & TBD & TBD & TBD\\
+LVGP & TBD & TBD & TBD & TBD\\
+EzGP & TBD & TBD & TBD & TBD\\
+UC--GP--CC & TBD & TBD & TBD & TBD\\
+LVGP--CC & TBD & TBD & TBD & TBD\\
+EzGP--CC & TBD & TBD & TBD & TBD\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{What does response feedback contribute?}
+To isolate feedback within the specified model, CUT shares EIV--GP's data, measurement priors, response-GP priors, and conditional sampling procedure, but prevents responses from updating the measurement distribution. Its target is
+\[
+ p(\bU_{\rm mis},\psi\mid C,\bU_{\mathcal O})\,
+ p(\theta,f\mid X,Y,\bU),
+\]
+where $\theta$ denotes response-GP parameters. Conditional GP fits are averaged with equal weights over response-free input draws; no response-based reweighting is applied. Both methods integrate training and prospective input uncertainty. Their contrast therefore avoids conflating feedback with conditional-mean substitution or a change from Bayesian inference to maximum likelihood.
+
+\begin{figure}[!htbp]
+\centering\small
+\fbox{\begin{minipage}[t][1.8cm][c]{0.29\linewidth}\centering
+(a) Observable mean $m$\\[4pt]\textbf{TBD: paired RMSE difference}
+\end{minipage}}\hfill
+\fbox{\begin{minipage}[t][1.8cm][c]{0.29\linewidth}\centering
+(b) Physical surface $f$\\[4pt]\textbf{TBD: paired RMSE difference}
+\end{minipage}}\hfill
+\fbox{\begin{minipage}[t][1.8cm][c]{0.29\linewidth}\centering
+(c) Missing training $U$\\[4pt]\textbf{TBD: paired RMSE difference}
+\end{minipage}}
+\caption{Planned mechanism comparison: EIV--GP minus CUT at calibration 20 and 50, with paired replication uncertainty. Each panel evaluates a different target. Surface errors use independent test $(X,U)$ coordinates, preserving quantitative--latent interactions rather than conditioning them away at $X=0$. Imputation excludes observed inputs and uses training responses only in EIV--GP. Axes retain each target's units and are not compared across panels. Coverage and width will be reported together in the appendix.}
+\label{fig:numerical-feedback}
+\end{figure}
+
+\textbf{TBD:} estimate the three paired contrasts in Figure~\ref{fig:numerical-feedback}, quantify their sensitivity to nested Monte Carlo budgets, and assess interval coverage alongside width. Improved surface estimation need not eliminate individual-input uncertainty; finite noisy proxies may leave uncertainty even when the population model is learned. Any benefit of feedback will be interpreted within these DGMs and the shared model assumptions, rather than as a general causal guarantee. Zero, adverse, and target-specific effects will be reported.
+
+\paragraph{Numerical reliability and remaining work.}
+Historical target checks pass for 229 of 300 EIV--GP fits in the univariate study and 200 of 300 in the multivariate study; at four-proxy calibration 20 the count is only 7 of 50. Completed fits remain visible, and replication MCSEs do not account for within-fit error. \textbf{TBD:} diagnose and repair the relevant fits, complete the 300 new complete-case competitor fits and 100 CUT jobs, and rescore compatible EIV--GP fits on the same targets. Fresh-checkout reproduction can refit EIV--GP when saved fits are unavailable. Final completion counts, diagnostics, runtime, and full target-by-DGM results are \textbf{TBD} in Appendix~\ref{app:numerical-details}; the GitHub workflow records seeds and provenance and resumes incomplete jobs.

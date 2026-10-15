@@ -49,3 +49,8 @@ replication/**/*.utf8.md
 # Local installations and private execution artifacts
 /library/
 *.Rproj
+
+# Checkout-local numerical environment and restored package cache
+/.r-library/
+/renv/library/
+/renv/staging/

@@ -1,0 +1,33 @@
+name: Numerical reproducibility smoke checks
+on:
+  workflow_dispatch:
+  push:
+    paths: ['eivGP/**', 'paper/numerical/**', 'tools/setup_numerical.R', 'renv.lock', '.github/workflows/numerical-smoke.yml']
+  pull_request:
+    paths: ['eivGP/**', 'paper/numerical/**', 'tools/setup_numerical.R', 'renv.lock', '.github/workflows/numerical-smoke.yml']
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+      VECLIB_MAXIMUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.6.0'
+      - name: Restore dependencies and install checkout
+        run: Rscript tools/setup_numerical.R
+      - name: Validate locked environment and generated data
+        run: |
+          Rscript tools/setup_numerical.R --check
+          Rscript paper/numerical/check-portability.R
+      - name: Exercise model and prediction interfaces
+        run: Rscript paper/numerical/check-supplement.R

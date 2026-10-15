@@ -57,10 +57,27 @@ the version included with RStudio.
 See [paper/README.md](paper/README.md) for the four workflows and exact commands.
 The numerical HTML reports read the selected saved paper exports. The Ocean HTML examples use short-budget results; full-budget application findings remain pending. Rendering does not run MCMC unless `action="run"` is explicitly selected.
 
-Large data, fits, restart checkpoints, and caches stay in the external results
-folder configured by `EIVGP_RESULTS_ROOT`. Existing results are not migrated or
-rewritten by installation. New code identities require separate run identities;
-old caches must not be renamed to force reuse.
+Numerical experiments can be reproduced from this checkout alone on macOS or
+Linux. No archived fits or private datasets are needed. Run:
+
+```sh
+Rscript tools/setup_numerical.R
+Rscript paper/numerical/supplement.R --action=plan
+Rscript paper/numerical/supplement.R --action=data
+```
+
+The setup restores `renv.lock` and installs this package into `.r-library/`.
+See [paper/numerical/README.md](paper/numerical/README.md) for paper-profile
+runs, resuming missing work, both original DGPs, scoring and diagnostic checks.
+Only explicit `--action=run` commands start model fitting. The revised
+[numerical section](paper/numerical/manuscript/section.tex) marks pending
+results and displays as TBD. Generated data and fits stay in ignored local
+`results/` directories; numerical inputs are generated from fixed seeds.
+
+[paper/README.md](paper/README.md) also describes historical report readers and
+real-data workflows. Their external application data are outside the scope of
+the synthetic numerical reproduction. Historical report files are optional;
+they are not needed for the fresh-checkout commands above.
 
 ## Develop and test
 

@@ -50,3 +50,18 @@ before running fits; do not delete or overwrite old files to force a match.
 Development and publication still have separate default data locations:
 shared storage/subsetting remains to be completed, although their generators,
 seeds and per-replication designs now agree.
+
+
+## Targeted mechanism additions (pending)
+
+The existing DGPs remain unchanged. Add complete-case UC-GP/LVGP/EzGP and the
+matched response-free CUT comparison only at Gaussian q=4, calibration 20/50,
+50 replications. Categorical-only fits use all (X,C,Y); complete-case versions
+retain C and treat U as additional continuous inputs. The main manuscript is
+organized by insights, with two tables and two 1x3 figures. New comparisons,
+mechanism findings, numerical repairs and final displays are explicitly TBD.
+
+The fresh-checkout runner also fits FULL and categorical-only baselines so
+reproduction never depends on archived private outputs. Categorical-only fits
+are shared across calibration sizes. See [the numerical workflow](paper/numerical/README.md)
+for dependency restoration, generation, scoring, diagnostics and commands.

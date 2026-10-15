@@ -18,7 +18,15 @@ study2_analysis <- function(results_root, action=c("report","plan","data","fit",
     competitors=if(profile=="quick")character() else c("UC-GP","LVGP","EzGP"))
 }
 if(sys.nframe()==0L) {
-  args<-commandArgs(trailingOnly=TRUE);root<-Sys.getenv("EIVGP_RESULTS_ROOT")
-  if(!nzchar(root)) stop("Set EIVGP_RESULTS_ROOT to the external results folder.")
-  print(study2_analysis(root,action=if(length(args))args[1] else "report"))
+  args<-commandArgs(trailingOnly=TRUE)
+  if(length(args)&&all(grepl("^--",args))) {
+    script<-sub("^--file=","",grep("^--file=",commandArgs(FALSE),value=TRUE)[1])
+    env<-new.env(parent=globalenv())
+    sys.source(file.path(dirname(normalizePath(script)),"run-study.R"),envir=env)
+    env$run_study_cli(c("--study=study2",args))
+  } else {
+    root<-Sys.getenv("EIVGP_RESULTS_ROOT")
+    if(!nzchar(root))stop("Set EIVGP_RESULTS_ROOT, or use --action=plan --data-root=... --output=...")
+    print(study2_analysis(root,action=if(length(args))args[1] else "report"))
+  }
 }

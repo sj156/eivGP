@@ -1,7 +1,13 @@
 # Paper analyses
 
-Each analysis has one batch `.R` entrypoint, one executable `.Rmd`, and its
-rendered `.html`. All reusable computation and reporting comes from `eivGP`.
+Numerical experiments now have a [fresh-checkout workflow](numerical/README.md)
+for macOS and Linux: `Rscript tools/setup_numerical.R`, then
+`Rscript paper/numerical/supplement.R --action=plan`. It generates synthetic
+data and needs no historical exports. The package supplies model fitting;
+the numerical runners define the study-specific comparisons and scoring.
+
+The original study/application notebooks and their rendered HTML remain below
+as historical report readers.
 
 | Analysis | Batch | Notebook | Read report |
 |---|---|---|---|
@@ -10,7 +16,7 @@ rendered `.html`. All reusable computation and reporting comes from `eivGP`.
 | Ocean | [R](applications/ocean.R) | [Rmd](applications/ocean.Rmd) | [HTML](applications/ocean.html) |
 | ADNI | [R](applications/adni.R) | [Rmd](applications/adni.Rmd) | [HTML](applications/adni.html) |
 
-## Read the selected paper results
+## Read the selected historical results (optional)
 
 From the repository root, after installing the package:
 
@@ -37,33 +43,21 @@ Read the merged exports once, without appending original fits again. Scores
 retain diagnostic warnings. Replication MCSEs and MCMC diagnostics describe
 different sources of uncertainty.
 
-## Run new numerical experiments
+## Run numerical experiments from source
 
-Each batch script accepts `plan`, `data`, `fit`, or `run`; its default profile is
-`paper`. `fit` performs data preparation and our model fitting; `run` also
-reports results and runs the competitor packages. Full paper runs are expensive.
-Inspect settings with `plan` first:
+Use [numerical/README.md](numerical/README.md) for the dependency lock,
+fixed-seed data generation, targeted FULL/CUT/competitor comparisons, resuming
+incomplete jobs, and pending manuscript displays. The two original grids use:
 
 ```sh
-Rscript paper/numerical/study1.R plan
-Rscript paper/numerical/study1.R run
+Rscript paper/numerical/study1.R --action=plan --profile=paper --cores=4
+Rscript paper/numerical/study2.R --action=plan --profile=paper --cores=4
 ```
 
-For a quick workflow check, or to set the CPU budget explicitly:
-
-```r
-source("paper/numerical/study1.R")
-result <- study1_analysis(Sys.getenv("EIVGP_RESULTS_ROOT"), action="run",
-                          profile="quick", cores=1L)
-```
-
-`quick` skips external competitors and is not an inferential analysis. The
-`development` and `paper` profiles use all three competitor packages. Study II
-uses the same interface. New runs get code-dependent identities and leave the
-selected paper exports intact. See [NUMERICAL_DESIGN.md](../NUMERICAL_DESIGN.md)
-for settings. To report a new run, supply its `reporting/combined` directory as
-`tables_dir` to the script/notebook; competitor tables can be supplied with
-`competitor_dir`. The default report always uses the selected historical export.
+Replace `plan` by `data` to generate synthetic inputs, or by `run` to generate,
+fit and aggregate. All default paths are checkout-relative under `results/`.
+The legacy positional report API remains available only for explicitly
+supplied historical exports; it is not needed for fresh reproduction.
 
 ## Application workflows
 
@@ -83,3 +77,5 @@ Rscript paper/applications/adni.R /external/adni-data /external/new-adni-run pla
 ```
 
 Use separate output roots for changed package/input identities. Fits retain chain histories and terminal states for diagnostics and continuation. Existing archives are not automatically migrated or deleted.
+
+Targeted numerical additions (complete-case competitors and matched response-free CUT), explicit command-line reruns, checkpoints and scoring are documented in [numerical/README.md](numerical/README.md). The existing study entrypoints also accept the new `--name=value` CLI; their report functions remain backward compatible.

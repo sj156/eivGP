@@ -143,14 +143,14 @@ rules](paper/numerical/README.md#resume-transfer-and-optional-imports).
 
 #### Where results are saved
 
-With no environment/path overrides, paths are relative to this checkout:
+With no environment/path overrides, numerical outputs are saved under `~/eivGP-results/`, outside the checkout:
 
 | Path | Contents |
 | --- | --- |
-| `results/data/study1/`, `results/data/study2/` | Fixed-seed synthetic datasets shared across methods |
-| `results/study1/core/<run-id>-<fingerprint>/` | Univariate run, caches, diagnostics and aggregate outputs |
-| `results/study2/core/<run-id>-<fingerprint>/` | Original multivariate run and aggregate outputs |
-| `results/study2/mechanism/` | Targeted comparison jobs, diagnostics and score tables |
+| `~/eivGP-results/data/study1/`, `~/eivGP-results/data/study2/` | Fixed-seed synthetic datasets shared across methods |
+| `~/eivGP-results/study1/core/<run-id>-<fingerprint>/` | Univariate run, caches, diagnostics and aggregate outputs |
+| `~/eivGP-results/study2/core/<run-id>-<fingerprint>/` | Original multivariate run and aggregate outputs |
+| `~/eivGP-results/study2/mechanism/` | Targeted comparison jobs, diagnostics and score tables |
 | `.r-library/` | Local R installation and dependency environment |
 
 Core runs put status files in `config/`, aggregate CSVs in `combined/`, and
@@ -167,6 +167,17 @@ Repeat these overrides on every run/report command. `EIVGP_RESULTS_ROOT` and
 outputs outside Dropbox/Overleaf. Do not run two processes against the same
 output root. The two studies have separate default roots.
 
+#### Checkpoints and runtime forecasts
+
+Sampling saves explicitly every 300 seconds or 1,000 iterations, whichever is
+reached first, plus at completion. Time checks occur at iteration boundaries.
+Timing and chain forecasts refresh at least every 60 seconds of sampling, also
+at iteration boundaries; batch forecasts update as tasks start and finish.
+Use `--checkpoint-seconds=120 --checkpoint-iterations=500` to change the save
+interval. These operational settings do not change the statistical model.
+See [restart and timing details](paper/numerical/README.md#checkpoints-and-runtime-forecasts)
+for file locations, forecast scope, and recovery after a power outage.
+
 #### Check completion and convergence
 
 **Completion means outputs were computed; it does not mean convergence passed.**
@@ -174,11 +185,11 @@ Inspect both the status and diagnostic files:
 
 ```sh
 # Locate core run status and gate summaries (use the printed run directory).
-find results/study1/core results/study2/core -type f \
+find "$HOME/eivGP-results/study1/core" "$HOME/eivGP-results/study2/core" -type f \
   \( -name cell_status.csv -o -name diagnostic_gates.csv -o -name statuses.csv \)
 
 # Count mechanism jobs by completion and diagnostic status; show problems.
-Rscript -e 's <- read.csv("results/study2/mechanism/status.csv"); print(with(s, table(status, diagnostics_pass, useNA="ifany"))); print(s[s$status != "complete" | is.na(s$diagnostics_pass) | !s$diagnostics_pass, ])'
+Rscript -e 's <- read.csv(path.expand("~/eivGP-results/study2/mechanism/status.csv")); print(with(s, table(status, diagnostics_pass, useNA="ifany"))); print(s[s$status != "complete" | is.na(s$diagnostics_pass) | !s$diagnostics_pass, ])'
 ```
 
 Run these after the relevant workflow has created its outputs. For core runs,

@@ -52,7 +52,7 @@ Rscript paper/numerical/study2.R --component=mechanism --action=run --reps=1:50 
 Rscript paper/numerical/study2.R --component=mechanism --action=report
 ```
 
-Data default to `results/data/study2/`; results default to `results/study2/mechanism/`. Missing datasets are also generated automatically by `--action=run`. Data generation always uses the original n=100, n_test=100, q=4, m=4 design and calibration grid 0/20/50/80; the mechanism component fits only 20/50. Dataset seed is `1000000 + 10000*rep + 1`, with calibration seed one higher. Sampling seeds are recorded separately. A `--profile=quick` run keeps this DGP but uses deliberately inadequate MCMC and optimizer budgets, in a separate `--output=results/quick` directory. It tests software, not the scientific claims.
+Data default to `~/eivGP-results/data/study2/`; results default to `~/eivGP-results/study2/mechanism/`. Missing datasets are also generated automatically by `--action=run`. Data generation always uses the original n=100, n_test=100, q=4, m=4 design and calibration grid 0/20/50/80; the mechanism component fits only 20/50. Dataset seed is `1000000 + 10000*rep + 1`, with calibration seed one higher. Sampling seeds are recorded separately. A `--profile=quick` run keeps this DGP but uses deliberately inadequate MCMC and optimizer budgets, in a separate `--output=results/quick` directory. It tests software, not the scientific claims.
 
 To run **only the new work** when compatible old FULL/categorical results are available:
 
@@ -103,7 +103,7 @@ Rscript paper/numerical/study2.R --action=plan --profile=paper --cores=4
 # Change plan to data to generate, or to run to generate, fit and aggregate.
 ```
 
-Defaults are `results/data/study1`, `results/data/study2`, and separate `results/study1`, `results/study2` run roots, with `core/` and (Study II) `mechanism/` subdirectories. An explicit `--output` sets the parent root for both components. Explicit `--data-root` and `--output` remain available. The old positional report APIs and notebooks are optional readers for historical exports; they are not prerequisites for these fresh-run commands. Local data, fit and build directories are ignored by Git. No experimental output is written to Overleaf.
+Defaults are `~/eivGP-results/data/study1`, `~/eivGP-results/data/study2`, and separate `~/eivGP-results/study1`, `~/eivGP-results/study2` run roots, with `core/` and (Study II) `mechanism/` subdirectories. An explicit `--output` sets the parent root for both components. Explicit `--data-root` and `--output` remain available. The old positional report APIs and notebooks are optional readers for historical exports; they are not prerequisites for these fresh-run commands. Local data, fit and build directories are ignored by Git. No experimental output is written to Overleaf.
 
 ## Output retention
 
@@ -122,3 +122,73 @@ These changes reduce duplication, not the scientific iteration budgets. A
 publication-scale disk-size bound has not been measured; failed diagnostics can
 still retain substantial histories. Measure a representative replication before
 allocating the full run.
+
+
+## Checkpoints and runtime forecasts
+
+With no path overrides, outputs go to `~/eivGP-results/study1/` and
+`~/eivGP-results/study2/`; generated data go to `~/eivGP-results/data/<study>/`.
+`--output` and `--data-root` take precedence over `EIVGP_RESULTS_ROOT` and
+`EIVGP_DATA_ROOT`, which take precedence over these defaults. Existing results
+are not moved. To resume an older run, explicitly select its original output
+and data directories and use the compatible code/package version.
+
+Both study entrypoints enable disk checkpoints for the shared GP sampler and
+Study II CUT measurement sampler, including warmup. Every chain saves at the
+first iteration boundary after 300 seconds or 1,000 iterations since its last
+save, and at completion. Override with `--checkpoint-seconds=120` and/or
+`--checkpoint-iterations=500`. A single slow iteration can exceed the requested
+time interval. Third-party optimizers and prediction calculations retain their
+existing completed-stage caching; they do not gain within-iteration restart.
+
+`<output>/checkpoints/<fit-identity>/chain-XX.rds` stores all draws, current
+state, RNG state, and (for GP chains) computational cache and counters. Inputs,
+sampling settings, seeds, package module hashes, R version/platform and RNG kind
+identify a fit. Reissuing the same command restores saved iterations and reuses
+completed chains. Writes use a temporary file and same-directory rename, leaving
+the previous checkpoint intact until replacement succeeds. This protects against
+partial writes; it is not a guarantee against filesystem or disk failure.
+Keep sufficient free disk space: raw restart files retain full chain arrays,
+in addition to final analysis artifacts, and a write temporarily needs room for
+both versions. No draws are thinned for checkpointing.
+
+After a crash, a `<fit-identity>/LOCK/owner.csv` may remain. Verify its recorded
+host and PID are no longer running before removing that exact `LOCK` directory.
+Also check mechanism `RUN.lock` and job `.lock` directories as described above.
+Never run two processes against the same output root. Do not change code,
+dependencies, inputs or scientific settings to resume a run. Checkpoint cadence
+and core count may change. The new implementation does not reconstruct partial
+chains from older runs that never saved them.
+
+Each chain owns `chain-XX-timing.csv` (latest) and
+`chain-XX-timing-history.csv` (history). They record UTC update time, current and
+saved iterations, warmup/sampling/completion phase, elapsed active wall seconds,
+remaining seconds and estimated finish time. Updates occur after 60 seconds or
+a checkpoint, at iteration boundaries. Elapsed time carries forward from the
+last saved checkpoint on restart; downtime and lost unsaved work are excluded.
+The chain forecast extrapolates its observed average iteration cost, so early
+warmup estimates are provisional and do not include queued chains, diagnostics,
+prediction or other fits. These are runtime estimates, not convergence forecasts.
+
+Core replication timing lives beside each replication status CSV in its
+`.timing/` directory; mechanism job timing lives in `mechanism/timing/`.
+Per-task RDS records preserve completed-attempt durations and accumulated
+recorded task seconds, including caught failures. `forecast-<PID>.csv` and its
+history update on task starts/completions/failures/cache hits. Use the latest UTC
+update across these worker-owned files. Core forecasts cover that replication
+batch only, using mean completed-replication wall time divided by configured
+replication workers; mechanism forecasts use separate mean times by method and
+serial job scheduling. Running tasks are conservatively counted as full remaining
+tasks. A forecast remains NA until every unfinished group has an observed completed
+duration. Cache-load time never substitutes for model runtime. Predictions are
+rough planning estimates: heterogeneous tasks, restart work, scheduling and shared
+measurement costs can change them. No single batch forecast claims to cover all
+later study cells or competitors. Completed final batch forecasts report zero
+remaining work; task seconds are summed work, not elapsed end-to-end wall time
+when workers run in parallel.
+
+```sh
+# Discover current chain and batch forecasts under the default roots.
+find "$HOME/eivGP-results" -type f \
+  \( -name 'chain-*-timing.csv' -o -name 'forecast-[0-9]*.csv' \)
+```

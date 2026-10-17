@@ -6246,8 +6246,11 @@ mixedgp_run_replications <- function(X, FUN, n_cores, seeds, status_path,
       updated_at = format(Sys.time(), tz = "UTC", usetz = TRUE)), task_paths[i])
   }
   for (i in seq_along(X)) if (!file.exists(task_paths[i])) record(i, "pending")
+  timing <- mixedgp_batch_timing(paste0(status_path,".timing"),
+    vapply(X,function(x)paste(x,collapse=","),""), workers=n_cores)
   worker <- function(i) {
     record(i, "running")
+    timing(i,"running")
     started <- proc.time()[["elapsed"]]
     result <- tryCatch(list(ok = TRUE, value = FUN(X[[i]]), message = "", call = "",
                   elapsed = proc.time()[["elapsed"]] - started),
@@ -6256,6 +6259,9 @@ mixedgp_run_replications <- function(X, FUN, n_cores, seeds, status_path,
         call = paste(deparse(conditionCall(e)), collapse = " "),
         elapsed = proc.time()[["elapsed"]] - started))
     record(i, if (result$ok) "success" else "failed", result$message, result$elapsed)
+    timing(i,if(result$ok && isTRUE(attr(result$value,"eivgp_cache_hit"))) "cached" else
+      if(result$ok) "complete" else "failed",result$elapsed)
+    if(result$ok) attr(result$value,"eivgp_cache_hit") <- NULL
     result
   }
   results <- parallel_map(as.list(seq_along(X)), worker, n_cores = n_cores,
@@ -8223,7 +8229,7 @@ run_or_load_study1_replication <- function(rr) {
         tolower(as.character(cached$metadata$frozen_data_md5)),
         tolower(unname(tools::md5sum(data_path)))
       )
-    if (isTRUE(cache_valid)) return(cached)
+    if (isTRUE(cache_valid)) { attr(cached,"eivgp_cache_hit") <- TRUE; return(cached) }
     message("Ignoring incompatible Study I cache: ", rep_file)
   }
   message("Study I replication ", rr, " of ", n_rep)
@@ -9860,7 +9866,7 @@ run_or_load_study2_replication <- function(ii) {
         tolower(as.character(cached$metadata$frozen_data_md5)),
         tolower(unname(tools::md5sum(data_path)))
       )
-    if (isTRUE(cache_valid)) return(cached)
+    if (isTRUE(cache_valid)) { attr(cached,"eivgp_cache_hit") <- TRUE; return(cached) }
     message("Ignoring incompatible Study II cache: ", rep_files[ii])
   }
   out <- run_one_study2_replication(rep_id, scenario)
@@ -10564,6 +10570,9 @@ run_numerical_study <- function(config, action=c("plan","data","fit","run","repo
     if(any(status$status!="success")) stop("Reporting failed; inspect status outputs.")
     return(invisible(list(run_dir=run_dir,status=status)))
   }
+  old_checkpoint <- options(eivGP.checkpoint_root=getOption("eivGP.checkpoint_root",
+    file.path(mixedgp_run_directory(config),"checkpoints")))
+  on.exit(options(old_checkpoint),add=TRUE)
   config$stages<-switch(action,data="data",fit=c("data","fit"),run=c("data","fit","aggregate"))
   result<-mixedgp_run_simulation(config)
   if(action=="run" && length(competitors)) {
@@ -12110,8 +12119,8 @@ ocean_analysis_impl <- function(repository_dir,data_dir,output_dir,settings,impo
 # ---- numerical paper workflow: isolated helpers avoid application name collisions ----
 eivgp_numerical_api <- function(repo_root) {
   NUMERICAL_REPO_ROOT <- normalizePath(repo_root,mustWork=TRUE)
-  numerical_default_data <- function(study)file.path(NUMERICAL_REPO_ROOT,"results","data",study)
-  numerical_default_output <- function(study)file.path(NUMERICAL_REPO_ROOT,"results",study)
+  numerical_default_data <- function(study)file.path(path.expand("~/eivGP-results"),"data",study)
+  numerical_default_output <- function(study)file.path(path.expand("~/eivGP-results"),study)
   numerical_package_check <- function()invisible(TRUE) # checkout CLI validates locked environment
 F <- function(name) getFromNamespace(name, "eivGP")
 atomic_rds <- function(x,path) {
@@ -12163,6 +12172,9 @@ settings <- function(a) {
 }
 # This API intentionally does not accept y, X, or evaluation truth.
 measurement_cut <- function(C,U_obs,cfg,seed) {
+  disk <- mixedgp_sampler_disk(list(component="cut-measurement",C=C,U_obs=U_obs,
+    iter=cfg$iter,warmup=cfg$warmup,outer=cfg$outer,seed=seed))
+  if(!is.null(disk))on.exit(unlink(file.path(disk,"LOCK"),recursive=TRUE),add=TRUE)
   run<-function(chain) {
     set.seed(seed+10000L*chain)
     ctx<-list(C=C,U_obs=U_obs,n=nrow(C),p=2L,q=ncol(C),d=ncol(U_obs),m_vec=rep(4L,ncol(C)),
@@ -12173,7 +12185,36 @@ measurement_cut <- function(C,U_obs,cfg,seed) {
     K<-cfg$iter-cfg$warmup;states<-vector("list",cfg$outer/4)
     selected<-unique(round(seq(1,K,length.out=cfg$outer/4)))
     trace<-matrix(NA_real_,K,length(ctx$missing)*ctx$d+ctx$q*ctx$d+sum(ctx$m_vec))
-    for(it in seq_len(cfg$iter)) {
+    path <- if(!is.null(disk))file.path(disk,sprintf("chain-%02d.rds",chain))else NULL
+    start <- 0L; elapsed_before <- 0; started <- proc.time()[["elapsed"]]
+    if(!is.null(path)&&file.exists(path)) {
+      cp<-readRDS(path); start<-cp$iteration;st<-cp$state;states<-cp$states;trace<-cp$trace
+      elapsed_before<-cp$elapsed_seconds;F("mixedgp_restore_rng_state")(cp$rng)
+    }
+    last_save<-last_progress<-proc.time()[["elapsed"]];last_iteration<-start
+    checkpoint<-function(it,force=FALSE) {
+      if(is.null(path))return(invisible(NULL))
+      now<-proc.time()[["elapsed"]];elapsed<-elapsed_before+now-started
+      saving<-force || now-last_save>=getOption("eivGP.checkpoint_seconds",300) ||
+        it-last_iteration>=getOption("eivGP.checkpoint_iterations",1000L)
+      if(saving) {
+        mixedgp_checkpoint_write(list(iteration=it,state=st,states=states,trace=trace,
+          rng=F("mixedgp_rng_state")(),elapsed_seconds=elapsed),path)
+        last_save<<-proc.time()[["elapsed"]];last_iteration<<-it
+      }
+      if(saving || now-last_progress>=60) {
+        elapsed<-elapsed_before+proc.time()[["elapsed"]]-started
+        remaining<-if(it>0)elapsed/it*(cfg$iter-it)else NA_real_
+        mixedgp_timing_record(sub("[.]rds$","-timing.csv",path),data.frame(
+          updated_at=format(Sys.time(),tz="UTC",usetz=TRUE),chain=chain,iteration=it,
+          target_iteration=cfg$iter,checkpoint_iteration=last_iteration,
+          phase=if(it==cfg$iter)"complete" else if(it<=cfg$warmup)"warmup" else "sampling",
+          elapsed_seconds=elapsed,remaining_seconds=remaining,
+          estimated_finish_utc=if(is.finite(remaining))format(Sys.time()+remaining,tz="UTC",usetz=TRUE)else NA_character_))
+        last_progress<<-proc.time()[["elapsed"]]
+      }
+    }
+    if(start<cfg$iter)for(it in seq.int(start+1L,cfg$iter)) {
       for(rows in split(ctx$missing,ceiling(seq_along(ctx$missing)/8))) {
         old<-as.vector(st$U[rows,,drop=FALSE]);base<-st
         proposal<-F("mixedgp_v030_ess")(old,function(v){s<-base;s$U[rows,]<-v;logmeas(s)})
@@ -12190,7 +12231,9 @@ measurement_cut <- function(C,U_obs,cfg,seed) {
         trace[k,]<-c(st$U[ctx$missing,,drop=FALSE],dec$A,unlist(dec$pi))
         if(k%in%selected)states[[match(k,selected)]]<-list(U=st$U,A=dec$A,tau=lapply(dec$tau,function(t)t[-c(1,length(t))]),chain=chain,iteration=it)
       }
+      checkpoint(it)
     }
+    checkpoint(cfg$iter,force=TRUE)
     list(states=states,trace=trace)
   }
   z<-if(.Platform$OS.type=="unix"&&cfg$cores>1)parallel::mclapply(1:4,run,mc.cores=min(4,cfg$cores),mc.set.seed=FALSE)else lapply(1:4,run)
@@ -12463,15 +12506,17 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
   on.exit(unlink(runlock,recursive=TRUE),add=TRUE)
   writeLines(as.character(Sys.getpid()),file.path(runlock,"pid"))
   atomic_rds(alljobs,registry)
+  timing <- mixedgp_batch_timing(file.path(cfg$output,"timing"),jobs$job,groups=jobs$method)
   failed<-0L
   for(j in seq_len(nrow(jobs))) {
     job<-jobs[j,];folder<-file.path(cfg$output,job$job);scorefile<-file.path(folder,"scores.rds")
-    if(file.exists(scorefile))next
+    if(file.exists(scorefile)) { timing(j,"cached"); next }
     dir.create(folder,recursive=TRUE,showWarnings=FALSE)
     # Atomic lock prevents two workers writing the same job. Remove only after checking no process owns it.
     lock<-paste0(folder,".lock");if(!dir.create(lock,showWarnings=FALSE))stop("Job locked: ",lock)
     writeLines(as.character(Sys.getpid()),file.path(lock,"pid"))
     message("Running ",job$job)
+    timing(j,"running"); job_started <- proc.time()[["elapsed"]]
     tryCatch({
       artifact<-readRDS(files[as.character(job$rep)]);dat<-artifact$data
       stopifnot(artifact$study=="study2",artifact$scenario=="primary",artifact$design$q==4,artifact$design$d==2)
@@ -12553,7 +12598,8 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
       pred$U<-NULL
       atomic_rds(pred,file.path(folder,"predictions.rds"))
       atomic_rds(scores,scorefile);unlink(file.path(folder,"failure.rds"))
-    },error=function(e){failed<<-failed+1L;atomic_rds(list(message=conditionMessage(e),time=Sys.time()),file.path(folder,"failure.rds"));message("FAILED: ",conditionMessage(e))},finally=unlink(lock,recursive=TRUE))
+      timing(j,"complete",proc.time()[["elapsed"]]-job_started)
+    },error=function(e){timing(j,"failed",proc.time()[["elapsed"]]-job_started);failed<<-failed+1L;atomic_rds(list(message=conditionMessage(e),time=Sys.time()),file.path(folder,"failure.rds"));message("FAILED: ",conditionMessage(e))},finally=unlink(lock,recursive=TRUE))
   }
   aggregate_scores(alljobs,cfg$output)
   if(failed)stop(failed," jobs failed; see status.csv. Rerun the identical command to retry.")
@@ -12577,7 +12623,19 @@ run_paper_study <- function(study=c("study1","study2"), args=list(), repo_root=g
   data<-get("data-root",Sys.getenv("EIVGP_DATA_ROOT",api$numerical_default_data(study)))
   if(!nzchar(root)||!nzchar(data)||grepl("Dropbox|Overleaf",root,ignore.case=TRUE))stop("Supply a non-synced local output root and data root")
   if(action!="plan" && grepl("Dropbox|Overleaf",data,ignore.case=TRUE))stop("Copy frozen inputs to a local data-root before running")
-  common<-c("component","action","profile","output","data-root","cores","competitors")
+  root <- path.expand(root); data <- path.expand(data)
+  checkpoint_seconds <- as.numeric(get("checkpoint-seconds","300"))
+  checkpoint_iterations <- as.numeric(get("checkpoint-iterations","1000"))
+  if(length(checkpoint_seconds)!=1L || !is.finite(checkpoint_seconds) || checkpoint_seconds<=0 ||
+     length(checkpoint_iterations)!=1L || !is.finite(checkpoint_iterations) || checkpoint_iterations<1 ||
+     checkpoint_iterations!=floor(checkpoint_iterations)) stop("Checkpoint intervals must be positive (iterations must be integral)")
+  old_checkpoint <- options(eivGP.checkpoint_root=file.path(root,"checkpoints"),
+    eivGP.checkpoint_seconds=checkpoint_seconds,eivGP.checkpoint_iterations=checkpoint_iterations)
+  on.exit(options(old_checkpoint),add=TRUE)
+  if(action %in% c("fit","run")) message("Outputs: ",root,"; checkpoints every ",
+    checkpoint_seconds," seconds or ",checkpoint_iterations," iterations, at iteration boundaries.")
+  common<-c("component","action","profile","output","data-root","cores","competitors",
+    "checkpoint-seconds","checkpoint-iterations")
   targeted<-c("reps","calib","methods","outer","inner-draws","latent","iter","warmup","inner-iter","inner-warmup","seed","full-fit-map")
   if(length(setdiff(names(args),c(common,targeted))))stop("Unknown options: ",paste(setdiff(names(args),c(common,targeted)),collapse=", "))
   if(component!="mechanism" && any(names(args)%in%targeted))stop("Replication/method/sampler selections require component=mechanism; the core grid uses its fixed profile")
@@ -12590,9 +12648,90 @@ run_paper_study <- function(study=c("study1","study2"), args=list(), repo_root=g
     result$core<-run_numerical_study(config,action,competitors=competitors)
   }
   if(study=="study2" && component%in%c("all","mechanism")) {
-    a<-args[setdiff(names(args),c("component","competitors"))]
+    a<-args[setdiff(names(args),c("component","competitors","checkpoint-seconds","checkpoint-iterations"))]
     a$output<-file.path(root,"mechanism");a[["data-root"]]<-data
     result$mechanism<-api$run_mechanism(api$settings(a),action)
   }
   invisible(result)
+}
+
+# Restart files are committed by rename on the same filesystem. Never truncate
+# a valid checkpoint in place. Timing is operational metadata, not MCMC evidence.
+mixedgp_checkpoint_write <- function(object, path) {
+  dir.create(dirname(path), recursive=TRUE, showWarnings=FALSE)
+  tmp <- tempfile(".checkpoint-", tmpdir=dirname(path))
+  on.exit(unlink(tmp), add=TRUE)
+  saveRDS(object, tmp, compress=FALSE, version=3L)
+  if (!file.rename(tmp, path)) stop("Cannot publish checkpoint; prior file retained: ", path)
+  invisible(path)
+}
+
+mixedgp_timing_record <- function(path, row) {
+  # Each chain/task owns its own history; no concurrent append to a shared file.
+  history <- sub("[.]csv$", "-history.csv", path)
+  old <- if(file.exists(history)) utils::read.csv(history, stringsAsFactors=FALSE) else NULL
+  mixedgp_atomic_write_csv(rbind(old, row), history)
+  mixedgp_atomic_write_csv(row, path)
+}
+
+mixedgp_sampler_disk <- function(identity) {
+  root <- getOption("eivGP.checkpoint_root", NULL)
+  if (is.null(root)) return(NULL)
+  identity <- list(schema=1L, model=identity, modules=eivgp_module_identity(),
+    R=R.version.string, platform=R.version$platform, rng_kind=RNGkind())
+  tmp <- tempfile(); on.exit(unlink(tmp), add=TRUE)
+  saveRDS(identity, tmp, compress=FALSE, version=3L)
+  directory <- file.path(root, unname(tools::md5sum(tmp)))
+  dir.create(directory, recursive=TRUE, showWarnings=FALSE)
+  lock <- file.path(directory, "LOCK")
+  if (!dir.create(lock, showWarnings=FALSE)) stop(
+    "Checkpoint is locked: ", lock,
+    ". Check owner.csv; remove this lock directory only after its process has stopped.")
+  ok <- FALSE
+  on.exit(if(!ok) unlink(lock,recursive=TRUE), add=TRUE)
+  utils::write.csv(data.frame(pid=Sys.getpid(),host=Sys.info()[["nodename"]],
+    started_utc=format(Sys.time(),tz="UTC",usetz=TRUE)), file.path(lock,"owner.csv"),row.names=FALSE)
+  manifest <- file.path(directory,"identity.rds")
+  if(file.exists(manifest)) {
+    if(!identical(readRDS(manifest),identity)) stop("Checkpoint identity mismatch: ",directory)
+  } else mixedgp_checkpoint_write(identity,manifest)
+  ok <- TRUE
+  directory
+}
+
+# A batch forecast uses observed completed-task wall times. Separate groups
+# prevent fast comparator fits from setting the forecast for expensive CUT jobs.
+mixedgp_batch_timing <- function(directory, ids, groups=rep("replication",length(ids)), workers=1L) {
+  dir.create(directory,recursive=TRUE,showWarnings=FALSE)
+  paths <- file.path(directory, paste0(make.names(ids,unique=TRUE),".rds"))
+  update <- function(i,status,seconds=NA_real_) {
+    previous <- if(file.exists(paths[i]))readRDS(paths[i])else NULL
+    duration <- if(status %in% c("cached","running") && !is.null(previous))previous$duration_seconds else if(status=="cached")NA_real_ else seconds
+    attempts <- if(is.null(previous))0 else previous$total_seconds
+    if(status %in% c("complete","failed") && is.finite(seconds))attempts <- attempts+seconds
+    row <- list(id=ids[i],group=groups[i],status=status,duration_seconds=duration,
+      total_seconds=attempts,updated_at=format(Sys.time(),tz="UTC",usetz=TRUE))
+    mixedgp_checkpoint_write(row,paths[i])
+    rows <- lapply(paths,function(p)if(file.exists(p))readRDS(p)else NULL)
+    pending <- vapply(rows,function(x)is.null(x)||!x$status%in%c("complete","cached"),logical(1))
+    estimate <- numeric(length(ids)); observed <- integer(length(ids))
+    for(g in unique(groups)) {
+      finished <- Filter(function(x)!is.null(x)&&x$group==g&&x$status%in%c("complete","cached")&&
+        is.finite(x$duration_seconds)&&x$duration_seconds>0,rows)
+      rate <- if(length(finished))mean(vapply(finished,`[[`,0,"duration_seconds"))else NA_real_
+      estimate[groups==g & pending] <- rate
+      observed[groups==g] <- length(finished)
+    }
+    remaining <- if(anyNA(estimate))NA_real_ else sum(estimate)/max(1L,workers)
+    # Each worker owns a forecast snapshot: concurrent workers never overwrite history.
+    mixedgp_timing_record(file.path(directory,paste0("forecast-",Sys.getpid(),".csv")),data.frame(
+      updated_at=row$updated_at, completed=sum(!pending),total=length(ids),
+      observed_completed_tasks=sum(vapply(rows,function(x)!is.null(x)&&is.finite(x$duration_seconds)&&
+        x$status%in%c("complete","cached"),logical(1))),
+      recorded_task_seconds=sum(vapply(rows,function(x)if(is.null(x))0 else x$total_seconds,0)),
+      assumed_workers=workers,remaining_seconds=remaining,
+      estimated_finish_utc=if(is.finite(remaining))format(Sys.time()+remaining,tz="UTC",usetz=TRUE)else NA_character_))
+    invisible(row)
+  }
+  update
 }

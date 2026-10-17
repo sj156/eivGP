@@ -13,8 +13,8 @@ numerical_repo_root <- function() {
 NUMERICAL_REPO_ROOT<-numerical_repo_root()
 lib<-Sys.getenv("EIVGP_R_LIBRARY",file.path(NUMERICAL_REPO_ROOT,".r-library"))
 if(dir.exists(lib)).libPaths(c(normalizePath(lib),.libPaths()))
-numerical_default_data <- function(study)file.path(NUMERICAL_REPO_ROOT,"results","data",study)
-numerical_default_output <- function(name)file.path(NUMERICAL_REPO_ROOT,"results",name)
+numerical_default_data <- function(study)file.path(path.expand("~/eivGP-results"),"data",study)
+numerical_default_output <- function(name)file.path(path.expand("~/eivGP-results"),name)
 numerical_package_check <- function() {
   if(!requireNamespace("eivGP",quietly=TRUE)||packageVersion("eivGP")<"0.4.0")stop("Run Rscript tools/setup_numerical.R from the checkout first")
   if(!requireNamespace("jsonlite",quietly=TRUE))stop("Restore the numerical dependencies first")

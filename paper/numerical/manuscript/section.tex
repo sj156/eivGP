@@ -1,7 +1,7 @@
 \section{Numerical Studies}
 \label{sec:numerical-studies}
 
-The experiments ask when continuous inputs help despite being recorded as ordinal categories, and what response feedback contributes to learning $m(x,c)$, $f(x,u)$, and missing training inputs. The univariate DGM provides a category-sufficient negative control; the multivariate DGM tests noisy proxies and unobserved category combinations. We organize the evidence by insight. \textbf{TBD} marks pending analyses and displays, not anticipated results. Retained historical findings remain subject to their original computational qualifications.
+The experiments ask when continuous inputs help despite being recorded as ordinal categories, and what response feedback contributes to learning $m(x,c)$, $f(x,u)$, and missing training inputs. The univariate DGM provides a category-sufficient negative control; the multivariate DGM tests noisy proxies and unobserved category combinations. We organize the evidence by insight. \textbf{TBD} marks pending analyses and displays, not anticipated results. The completed Study~I results are accompanied by a saved-chain diagnostic audit and paired sensitivity analyses; additional comparison experiments remain pending.
 
 \subsection{Design and fair comparisons}
 \label{sec:simulation-protocol}
@@ -22,20 +22,24 @@ UC--GP \citep{qian2008gaussian,zhou2011simple}, LVGP \citep{zhang2020latent}, an
 All prospective predictions use only $(X^*,C^*)$. Complete-case competitors integrate unknown $U^*$ under the same response-free measurement fit, using common integration draws. Mean error is evaluated against $m_0$; predictive CRPS evaluates the full response distribution. Surface recovery evaluates $f_0$ at known physical inputs, and imputation scores concern withheld \emph{training} inputs whose responses are observed. A categorical model, including a fitted $f(X,U,C)$, is not automatically a comparable physical $f(X,U)$ estimator. These targets are therefore scored only for eligible methods. The existing CC--GP and PI--GP baselines remain supplementary: the former integrates test-input uncertainty, whereas the saved PI--GP implementation plugs in conditional input means at training and prediction.
 
 \subsection{When do continuous inputs help?}
-The univariate control prevents a predictive advantage from being presumed merely because a method has latent inputs. At calibration 50, the historical comparisons favor LVGP when categories suffice and EIV--GP under heterogeneity (Table~\ref{tab:numerical-boundary}). The corresponding mean errors show that the comparison concerns learning $m_0$, as well as predicting noisy responses. These results motivate, rather than replace, the matched feedback experiment below.
+The univariate control prevents a predictive advantage from being presumed merely because a method has latent inputs. At calibration 50, the completed comparisons favor LVGP when categories suffice and EIV--GP under heterogeneity (Table~\ref{tab:numerical-boundary}). The EIV--GP-minus-LVGP predictive RMSE difference is $0.0699$ (paired MCSE $0.0028$) at $\eta=0$ and $-0.0359$ ($0.0042$) at $\eta=1$. CRPS and log predictive scores show the same reversal. Thus a continuous latent-input model is useful in the heterogeneous regime considered here, but is not uniformly preferable to a categorical model. The contrast changes both within-category variation and compatibility with a smooth physical-input GP, and EIV--GP also receives calibration measurements unavailable to these categorical competitors. It does not isolate response feedback.
+
+Calibration has a similarly regime-dependent effect. Increasing $|\mathcal O|$ from 0 to 50 changes EIV--GP predictive RMSE by $0.0135$ (paired MCSE $0.0020$) at $\eta=0$ and $-0.0214$ ($0.0035$) at $\eta=1$. More physical-input information therefore need not improve finite-sample prediction under the fitted model when categories already suffice. Model compatibility is a possible explanation, not a mechanism established by this experiment. These findings motivate the matched feedback experiment below.
+
+The directions of these contrasts persist when pairs with failed target diagnostics are omitted as a sensitivity check (Appendix~\ref{app:study1-completed-diagnostics}). This check does not replace the all-replication estimates or certify convergence: filtering can change the sampled datasets, and the stricter raw-and-target screen leaves few uncalibrated fits. We therefore distinguish the stable regime-dependent prediction pattern from unresolved within-fit precision and uncertainty-calibration claims.
 
 \begin{table}[!htbp]
 \centering\small
-\caption{Historical univariate comparison at calibration 50: means (MCSEs) over 50 datasets. LVGP is the best categorical comparator for these losses. Bold marks the lower loss within each regime, not significance. Full comparisons and diagnostics are in the appendix.}
+\caption{Completed univariate comparison at calibration 50: means (MCSEs) over 50 datasets, including diagnostic-flagged fits. Predictions use only test $(X,C)$; EIV--GP additionally uses 50 exact training inputs, whereas LVGP uses categorical inputs. Bold marks the lower loss within each regime, not significance. Paired contrasts and diagnostic sensitivity appear in the text and appendix.}
 \label{tab:numerical-boundary}
 \begin{tabular}{llrr}
 \toprule
-Regime & Method & $m_0$ RMSE & Predictive CRPS\\
+Regime & Method & Predictive RMSE & Predictive CRPS\\
 \midrule
-Category-sufficient ($\eta=0$) & EIV--GP & 0.151 (0.003) & 0.106 (0.001)\\
- & LVGP & \textbf{0.051} (0.001) & \textbf{0.064} (0.001)\\
-Heterogeneous ($\eta=1$) & EIV--GP & \textbf{0.094} (0.004) & \textbf{0.255} (0.003)\\
- & LVGP & 0.203 (0.008) & 0.295 (0.004)\\
+Category-sufficient ($\eta=0$) & EIV--GP & 0.183 (0.003) & 0.106 (0.001)\\
+ & LVGP & \textbf{0.113} (0.001) & \textbf{0.064} (0.001)\\
+Heterogeneous ($\eta=1$) & EIV--GP & \textbf{0.493} (0.006) & \textbf{0.255} (0.003)\\
+ & LVGP & 0.529 (0.007) & 0.295 (0.004)\\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -104,4 +108,4 @@ where $\theta$ denotes response-GP parameters. Conditional GP fits are averaged 
 \textbf{TBD:} estimate the three paired contrasts in Figure~\ref{fig:numerical-feedback}, quantify their sensitivity to nested Monte Carlo budgets, and assess interval coverage alongside width. Improved surface estimation need not eliminate individual-input uncertainty; finite noisy proxies may leave uncertainty even when the population model is learned. Any benefit of feedback will be interpreted within these DGMs and the shared model assumptions, rather than as a general causal guarantee. Zero, adverse, and target-specific effects will be reported.
 
 \paragraph{Numerical reliability and remaining work.}
-Historical target checks pass for 229 of 300 EIV--GP fits in the univariate study and 200 of 300 in the multivariate study; at four-proxy calibration 20 the count is only 7 of 50. Completed fits remain visible, and replication MCSEs do not account for within-fit error. \textbf{TBD:} diagnose and repair the relevant fits, complete the 300 new complete-case competitor fits and 100 CUT jobs, and rescore compatible EIV--GP fits on the same targets. Fresh-checkout reproduction can refit EIV--GP when saved fits are unavailable. Final completion counts, diagnostics, runtime, and full target-by-DGM results are \textbf{TBD} in Appendix~\ref{app:numerical-details}; the GitHub workflow records seeds and provenance and resumes incomplete jobs.
+Study~I target checks pass for 229 of 300 EIV--GP fits. Its saved-chain audit distinguishes undefined discrete-parameter diagnostics from 71 target failures and 77 additional raw-parameter failures; these warrant targeted exploration and precision checks rather than a wholesale restart. Longer runs and a more efficient transition are follow-up questions, not established remedies. Historical target checks pass for 200 of 300 fits in the multivariate study; at four-proxy calibration 20 the count is only 7 of 50. Completed fits remain visible, and replication MCSEs do not account for within-fit error. \textbf{TBD:} diagnose and repair the relevant fits, complete the 300 new complete-case competitor fits and 100 CUT jobs, and rescore compatible EIV--GP fits on the same targets. Fresh-checkout reproduction can refit EIV--GP when saved fits are unavailable. Final completion counts, diagnostics, runtime, and full target-by-DGM results are \textbf{TBD} in Appendix~\ref{app:numerical-details}; the GitHub workflow records seeds and provenance and resumes incomplete jobs.

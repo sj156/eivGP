@@ -8344,6 +8344,11 @@ mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
   workers <- min(n_chains, backend$cores)
   use_fork <- parallel_chains && backend$backend == "fork" && workers > 1L
   if (!use_fork) workers <- 1L
+  disk <- mixedgp_sampler_disk(list(X=X, y=y, C=C, U_obs=U_obs, m_vec=m_vec,
+    measurement=measurement, ident=ident, kernel=spec, n_iter=n_iter, burn=burn,
+    n_chains=n_chains, seed=seed, priors=priors, control=control,
+    store_scores=store_scores, resume=.resume))
+  if (!is.null(disk)) on.exit(unlink(file.path(disk, "LOCK"), recursive=TRUE), add=TRUE)
   run_chain <- function(cc) {
     ctx <- new.env(parent = environment())
     ctx$X <- X; ctx$y <- y; ctx$C <- C; ctx$U_obs <- U_obs
@@ -8395,9 +8400,53 @@ mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
     colnames(draws$samples_logtheta) <- c("log_rho", paste0("log_theta_x", seq_len(p)),
                                          paste0("log_theta_u", seq_len(d)))
     saved <- 0L
-    for (iteration in seq.int(start + 1L, n_iter)) {
+    chain_start <- start
+    elapsed_before <- 0
+    clock_start <- proc.time()[["elapsed"]]
+    path <- if (!is.null(disk)) file.path(disk, sprintf("chain-%02d.rds", cc)) else NULL
+    if (!is.null(path) && file.exists(path)) {
+      cp <- readRDS(path)
+      if (!identical(cp$schema, 1L) || cp$iteration < start || cp$iteration > n_iter)
+        stop("Invalid sampler disk checkpoint: ", path)
+      state <- cp$state; initial <- cp$initial; draws <- cp$draws; saved <- cp$saved
+      chain_start <- cp$iteration; elapsed_before <- cp$elapsed_seconds
+      list2env(cp$counts, ctx$counts)
+      ctx$cache$key <- cp$cache$key; ctx$cache$value <- cp$cache$value
+      mixedgp_restore_rng_state(cp$rng)
+      message("Resuming chain ", cc, " at iteration ", chain_start, "/", n_iter)
+    }
+    last_save <- last_progress <- proc.time()[["elapsed"]]
+    last_iteration <- chain_start
+    checkpoint <- function(iteration, force=FALSE) {
+      if (is.null(path)) return(invisible(NULL))
+      now <- proc.time()[["elapsed"]]
+      elapsed <- elapsed_before + now - clock_start
+      saving <- force || now-last_save >= getOption("eivGP.checkpoint_seconds", 300) ||
+        iteration-last_iteration >= getOption("eivGP.checkpoint_iterations", 1000L)
+      if (saving) {
+        mixedgp_checkpoint_write(list(schema=1L, iteration=iteration, state=state,
+          initial=initial, draws=draws, saved=saved, counts=as.list(ctx$counts),
+          cache=list(key=ctx$cache$key,value=ctx$cache$value), rng=mixedgp_rng_state(),
+          elapsed_seconds=elapsed), path)
+        last_save <<- proc.time()[["elapsed"]]; last_iteration <<- iteration
+      }
+      if (saving || now-last_progress >= 60) {
+        elapsed <- elapsed_before + proc.time()[["elapsed"]] - clock_start
+        # Rate is local to this chain; queued chains and prediction are not included.
+        remaining <- if (iteration > start) elapsed/(iteration-start)*(n_iter-iteration) else NA_real_
+        mixedgp_timing_record(sub("[.]rds$", "-timing.csv", path), data.frame(
+          updated_at=format(Sys.time(),tz="UTC",usetz=TRUE), chain=cc,
+          iteration=iteration, target_iteration=n_iter, checkpoint_iteration=last_iteration,
+          phase=if(iteration==n_iter) "complete" else if(iteration<=burn) "warmup" else "sampling",
+          elapsed_seconds=elapsed, remaining_seconds=remaining,
+          estimated_finish_utc=if(is.finite(remaining)) format(Sys.time()+remaining,tz="UTC",usetz=TRUE) else NA_character_))
+        last_progress <<- proc.time()[["elapsed"]]
+      }
+      invisible(NULL)
+    }
+    if (chain_start < n_iter) for (iteration in seq.int(chain_start + 1L, n_iter)) {
       state <- mixedgp_v030_sweep(state, ctx, iteration)
-      if (iteration <= burn) next
+      if (iteration <= burn) { checkpoint(iteration); next }
       saved <- saved + 1L
       dec <- mixedgp_v030_decode(state, ctx)
       if (length(observed) && !isTRUE(all.equal(unname(state$U[observed, , drop = FALSE]),
@@ -8427,7 +8476,9 @@ mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
       draws$samples_V[saved] <- V; draws$samples_r[saved] <- dec$r
       draws$samples_J[saved, ] <- state$J
       draws$samples_pi[saved, ] <- unlist(dec$pi, use.names = FALSE)
+      checkpoint(iteration)
     }
+    checkpoint(n_iter, force=TRUE)
     counters <- as.list(ctx$counts)
     counters$theta_eval_total <- counters$theta_ess_eval_total
     counters$mean_abs_angle <- counters$abs_angle_sum / max(1, counters$angle_count)

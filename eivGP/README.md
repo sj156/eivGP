@@ -1,11 +1,12 @@
-# eivGP 0.4.0.9008
+# eivGP 0.4.0.9010
 
 The package fits errors-in-variables Gaussian processes with ordinal inputs.
 Public APIs support fitting, prediction, imputation, diagnostics, continuation,
 and reporting. The implementation follows the upstream three-module structure:
 
 - `helpers.R`: data preparation, model utilities and analysis workflows, including Ocean execution and core-model calls.
-- `mcmc.R`: posterior sampling, fitting and continuation; unchanged from the upstream base.
+- `mcmc.R`: posterior sampling, fitting and exact continuation.
+- `hmc.R`: joint HMC coordinates, warmup adaptation and diagnostics.
 - `plotting.R`: summaries, tables, figures and report generation, including Ocean reporting and diagnostics.
 
 Package metadata and static-analysis declarations remain in their existing files.
@@ -16,3 +17,8 @@ See the [repository guide](../README.md) for installation,
 the [paper guide](../paper/README.md) for the four analysis workflows,
 and the [Ocean guide](../paper/applications/README_ocean.md) for all three cohort sizes.
 Use `help(package="eivGP")` for function documentation.
+
+Choose `sampler="ESS"` (default), `"HMC"`, or `"HYBRID"`. The hybrid adds
+a complete ESS sweep after every 20 HMC iterations; change that frequency
+with `sampler_control=list(hybrid_every=20L)`. Continuation preserves the
+selected kernel, frequency, frozen adaptation and RNG state.

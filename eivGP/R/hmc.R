@@ -58,7 +58,7 @@ mixedgp_hmc_joint <- function(state,ctx,iteration,burn) {
 
 # Diagnostic-only recovery; does not draw randomness or modify sampler states.
 mixedgp_hmc_attach_diagnostics <- function(fit) {
- if(!identical(fit$control$sampler,"HMC"))return(fit)
+ if(!isTRUE(fit$control$sampler %in% c("HMC", "HYBRID")))return(fit)
  tab<-do.call(rbind,lapply(seq_along(fit$checkpoint$states),function(ch){
   h<-fit$checkpoint$states[[ch]]$state$hmc
   v<-h$history[h$history[,"iteration"]>fit$checkpoint$burn,,drop=FALSE]

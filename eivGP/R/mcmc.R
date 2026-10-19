@@ -7735,7 +7735,7 @@ mixedgp_v030_control <- function(control = list(), n_mis) {
   if (!is.list(control) || (length(control) && (is.null(names(control)) ||
       any(!nzchar(names(control))) || anyDuplicated(names(control)))))
     stop("sampler_control must be a uniquely named list.")
-  bad <- setdiff(names(control), names(out))
+  bad <- setdiff(names(control), c(names(out), "hybrid_every"))
   if (length(bad)) stop("Unknown sampler_control fields: ", paste(bad, collapse = ", "))
   out <- utils::modifyList(out, control)
   for (nm in c("u_block_size", "ess_max_steps", "max_dictionary_size"))
@@ -7743,13 +7743,19 @@ mixedgp_v030_control <- function(control = list(), n_mis) {
   out$cross_every <- mixedgp_as_integer_strict(out$cross_every, "cross_every", 0L, 1L)
   out$dictionary_mode <- match.arg(out$dictionary_mode, c("conditional", "marginal"))
   out$threshold_update <- match.arg(out$threshold_update, c("gibbs", "ess"))
-  out$sampler <- match.arg(out$sampler, c("ESS", "HMC"))
+  out$sampler <- match.arg(out$sampler, c("ESS", "HMC", "HYBRID"))
+  if (out$sampler == "HYBRID") {
+    out$hybrid_every <- mixedgp_as_integer_strict(
+      if (is.null(out$hybrid_every)) 20L else out$hybrid_every, "hybrid_every", 1L, 1L)
+  } else if (!is.null(out$hybrid_every)) {
+    stop("hybrid_every is only used with sampler = 'HYBRID'.")
+  }
   if (!is.list(out$hmc) || !setequal(names(out$hmc), c("step","leapfrog","target_accept"))) stop("Invalid HMC controls.")
   if (length(out$hmc$step)!=1L || !is.finite(out$hmc$step) || out$hmc$step<=0 ||
       length(out$hmc$target_accept)!=1L || !is.finite(out$hmc$target_accept) || out$hmc$target_accept<=0 || out$hmc$target_accept>=1) stop("Invalid HMC step or target acceptance.")
   out$hmc$leapfrog <- mixedgp_as_integer_strict(out$hmc$leapfrog,"HMC leapfrog",1L,2L)
   if(out$hmc$leapfrog[1]>out$hmc$leapfrog[2])stop("HMC leapfrog bounds must be ordered.")
-  if(out$sampler=="HMC" && out$dictionary_mode!="conditional")stop("HMC requires conditional dictionary updates; use ESS for marginal mode.")
+  if(out$sampler %in% c("HMC", "HYBRID") && out$dictionary_mode!="conditional")stop("HMC and HYBRID require conditional dictionary updates; use ESS for marginal mode.")
   out$gp_block_schur <- mixedgp_validate_flag(out$gp_block_schur, "gp_block_schur")
   out
 }
@@ -8170,7 +8176,7 @@ mixedgp_v030_record_ess <- function(ctx, result, block) {
 }
 
 
-mixedgp_v030_sweep <- function(state, ctx, iteration) {
+mixedgp_v030_sweep_base <- function(state, ctx, iteration) {
   mis <- ctx$missing
   blocks <- if (length(mis)) split(mis[sample.int(length(mis))],
                 ceiling(seq_along(mis) / ctx$control$u_block_size)) else list()
@@ -8312,6 +8318,23 @@ mixedgp_v030_sweep <- function(state, ctx, iteration) {
 }
 
 
+# Fixed, state-independent composition; keep pure-kernel RNG streams unchanged.
+mixedgp_v030_sweep <- function(state, ctx, iteration) {
+  if (!identical(ctx$control$sampler, "HYBRID"))
+    return(mixedgp_v030_sweep_base(state, ctx, iteration))
+  on.exit(ctx$control$sampler <- "HYBRID")
+  ctx$control$sampler <- "HMC"
+  state <- mixedgp_v030_sweep_base(state, ctx, iteration)
+  if (iteration %% ctx$control$hybrid_every == 0L) {
+    ctx$control$sampler <- "ESS"
+    state <- mixedgp_v030_sweep_base(state, ctx, iteration)
+    state$hybrid_extra_sweeps <- if (is.null(state$hybrid_extra_sweeps)) 1L else
+      state$hybrid_extra_sweeps + 1L
+  }
+  state
+}
+
+
 mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
                              measurement = c("threshold", "probit"), ident = "none",
                              kernel = "se", matern_nu = 2.5,
@@ -8344,12 +8367,12 @@ mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
   if (n_iter <= burn) stop("n_iter must exceed burn.")
   priors <- mixedgp_v030_priors(priors, p, d, m_vec)
   control <- mixedgp_v030_control(sampler_control, length(missing_rows))
-  if(control$sampler=="HMC" && !(spec$name=="se" || spec$matern_nu %in% c(1.5,2.5)))
+  if(control$sampler %in% c("HMC", "HYBRID") && !(spec$name=="se" || spec$matern_nu %in% c(1.5,2.5)))
     stop("HMC supports SE and Matern 3/2 or 5/2 kernels; select ESS for other smoothness values.")
   dictionary <- if (control$dictionary_mode == "marginal")
     mixedgp_v030_dictionary(priors, control$max_dictionary_size) else NULL
   if (!is.null(.resume) && !identical(mixedgp_v030_control(.resume$control, length(missing_rows)), control))
-    stop("Continuation cannot change sampler controls, including ESS/HMC or HMC tuning.")
+    stop("Continuation cannot change sampler controls, including the sampler, hybrid frequency or HMC tuning.")
   start <- if (is.null(.resume)) 0L else .resume$iteration
   if (!is.null(.resume) && (!identical(.resume$version, 2L) ||
       !identical(.resume$sampler_version, "0.3.1") || length(.resume$states) != n_chains ||
@@ -8730,7 +8753,7 @@ mixedgp_v030_fit_object <- function(result, data, engine, kernel, matern_nu,
   mcmc$chain_stats <- do.call(rbind, lapply(chains, function(chain) chain$stats))
   fit <- list(data = data, kernel = list(name = kernel, matern_nu = matern_nu),
               priors = result$priors, gp_prior = result$priors, control = result$control,
-              sampler_strategy = if (result$control$sampler == "HMC") "collapsed_dictionary_hmc" else "collapsed_dictionary_ess",
+              sampler_strategy = switch(result$control$sampler, HMC = "collapsed_dictionary_hmc", HYBRID = "collapsed_dictionary_hybrid", "collapsed_dictionary_ess"),
               sampler_version = "0.3.1", mcmc = mcmc,
               checkpoint = list(version = 2L, sampler_version = "0.3.1",
                 iteration = result$iteration, burn = result$burn, thin = 1L,
@@ -8748,7 +8771,7 @@ mixedgp_v030_fit_object <- function(result, data, engine, kernel, matern_nu,
   }
   finite_summary <- function(x, f) if (length(x) && all(is.finite(x))) f(x) else NA_real_
   diagnostic_summary <- data.frame(
-    sampler_version = "0.3.1", sampler_strategy = if (result$control$sampler == "HMC") "collapsed_dictionary_hmc" else "collapsed_dictionary_ess",
+    sampler_version = "0.3.1", sampler_strategy = switch(result$control$sampler, HMC = "collapsed_dictionary_hmc", HYBRID = "collapsed_dictionary_hybrid", "collapsed_dictionary_ess"),
     kernel = kernel, matern_nu = matern_nu, n_chains = length(chains),
     parallel_backend = result$parallel_backend, parallel_cores = result$parallel_cores,
     n_iter = result$iteration, burn = result$burn, thin = 1L,
@@ -9897,8 +9920,11 @@ mixedgp_resolve_latent_scale <- function(object,
 #'   `loading_sd`. `u_dictionary` is a list of positive coordinate grids or a
 #'   positive matrix with one complete latent-kernel parameter vector per row.
 #' @param sampler Main continuous update: `"ESS"` (default) for blocked
-#'   elliptical slice sampling, or `"HMC"` for joint Hamiltonian Monte Carlo.
-#'   Both retain the existing measurement and dictionary updates. HMC supports
+#'   elliptical slice sampling, `"HMC"` for joint Hamiltonian Monte Carlo, or
+#'   `"HYBRID"` for joint HMC plus a complete ESS sweep every 20 iterations.
+#'   Set `sampler_control$hybrid_every` to a positive integer to change that
+#'   fixed schedule; it cannot change during continuation.
+#'   All retain measurement and dictionary updates. HMC and HYBRID support
 #'   conditional dictionary updates with SE or Matern 3/2 and 5/2 kernels.
 #' @param sampler_control Named list controlling the collapsed sampler:
 #'   `u_block_size`, `cross_every`, `ess_max_steps`, `dictionary_mode`,
@@ -9963,7 +9989,7 @@ fit_eivgp <- function(X,
                       n_cores = NULL,
                       priors = list(),
                       sampler_control = list(),
-                      sampler = c("ESS", "HMC"),
+                      sampler = c("ESS", "HMC", "HYBRID"),
                       ...) {
   fit_call <- match.call()
   sampler <- match.arg(sampler)
@@ -10161,7 +10187,8 @@ fit_eivgp <- function(X,
     latent_kernel_prior = "finite dictionary",
     variance_parameterization = "V { r R + (1-r) I }; V total variance, r signal fraction",
     sampler_version = "0.3.1",
-    sampler = if (fit$control$sampler == "HMC")
+    sampler = if (fit$control$sampler == "HYBRID")
+      paste0("collapsed total variance, finite kernel dictionary, joint HMC plus a complete ESS sweep every ", fit$control$hybrid_every, " iterations") else if (fit$control$sampler == "HMC")
       "collapsed total variance, finite kernel dictionary, joint HMC within Gibbs" else
       "collapsed total variance, finite kernel dictionary, blocked elliptical slice",
     loading_structure = if (engine == "multivariate") ident else NA_character_,

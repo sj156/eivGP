@@ -1,3 +1,12 @@
+# eivGP 0.4.0.9010
+
+- Add the opt-in `sampler="HYBRID"`: joint HMC with one complete ESS sweep
+  after every `hybrid_every` iterations (default 20), targeting the same full
+  GP posterior. ESS remains the default.
+- Validate hybrid frequency, expose truthful sampler metadata and HMC
+  diagnostics, and preserve the schedule across exact continuation.
+- Preserve existing ESS/HMC trajectories and legacy checkpoint continuation.
+
 # eivGP 0.4.0
 
 - Consolidate reusable implementation into helpers, MCMC, and plotting/reporting modules.

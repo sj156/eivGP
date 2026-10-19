@@ -208,8 +208,8 @@ testthat::test_that("Study I cutpoint transport uses missing counts and fixes ca
     decoded$tau[[1L]][classes], decoded$tau[[1L]][classes + 1L])
   ## Isolate the actual sweep's residual closures while holding all but its
   ## cross move fixed. The mocked GP is a known nonconstant function of U.
-  isolated <- new.env(parent = environment(mixedgp_v030_sweep))
-  sweep <- mixedgp_v030_sweep
+  isolated <- new.env(parent = environment(mixedgp_v030_sweep_base))
+  sweep <- mixedgp_v030_sweep_base
   environment(sweep) <- isolated
   calls <- 0L
   cross_state <- NULL

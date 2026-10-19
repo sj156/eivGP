@@ -54,7 +54,7 @@ The build helper refreshes the module identity manifest and checks parsing. It
 never generates or replaces the package source. Reports require Pandoc, such as
 the version included with RStudio.
 
-## Choose ESS or HMC
+## Choose ESS, HMC or the HMC–ESS hybrid
 
 The two engines support an explicit main continuous-update option:
 
@@ -63,24 +63,39 @@ fit_ess <- fit_eivgp(X, y, C, U_obs = U_obs, engine = "univariate",
                     sampler = "ESS")
 fit_hmc <- fit_eivgp(X, y, C, U_obs = U_obs, engine = "univariate",
                     sampler = "HMC")
+fit_hybrid <- fit_eivgp(X, y, C, U_obs = U_obs, engine = "univariate",
+                       sampler = "HYBRID",
+                       sampler_control = list(hybrid_every = 20L))
 # For Study II-style data, use engine="multivariate", latent_dim=2L.
 continued <- continue_eivgp(fit_hmc, n_iter = 1000L)
 fit_hmc$diagnostics$hmc  # chain-specific acceptance and energy-error diagnostics
 ```
 
-ESS remains the default. Joint HMC moves all missing inputs, observed-input
+ESS remains the default. In the representative matched-CPU comparison, the
+every-20 hybrid improved efficiency on many targets but did not remove
+persistent scientific-target separation in the difficult calibrated Study I
+case. A favorable median effective sample size does not validate posterior
+basin weights. Joint HMC moves all missing inputs, observed-input
 kernel coefficients and the signal fraction together, retaining the same
 full-GP posterior and existing measurement/dictionary updates. Thus auxiliary
 ESS updates remain in the HMC-within-Gibbs algorithm. HMC supports conditional
 dictionary updates and SE or Matérn 3/2 and 5/2 kernels; select ESS for other
 kernel smoothness values or marginal dictionary updates. Unsupported explicit
-HMC requests raise an error.
+HMC or HYBRID requests raise an error.
+
+HYBRID performs the same HMC sweep at every iteration and adds a complete
+ESS sweep after every 20 iterations by default, retaining one draw after the
+combined transition. `hybrid_every` must be a positive integer and applies only
+to HYBRID. This composes posterior-preserving kernels without changing the
+full GP, priors, or calibration constraints. The extra sweep includes the
+measurement and dictionary updates. Its count is saved in each checkpoint
+state as `hybrid_extra_sweeps`.
 
 HMC controls can be supplied through
 `sampler_control=list(hmc=list(step=.05, leapfrog=c(8L,24L), target_accept=.8))`.
 Step size and a diagonal mass matrix adapt during warmup only. Continuation
 preserves the sampler, frozen metric, step size and RNG state; it cannot switch
-methods or tuning. The default retains every post-warmup draw. Inspect
+methods, hybrid frequency or tuning. The default retains every post-warmup draw. Inspect
 scientific-target R-hat, bulk/tail ESS and MCSE rather than assuming that a
 higher median ESS per second certifies all posterior quantities.
 

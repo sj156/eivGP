@@ -60,3 +60,32 @@ averaging host-level means. Integration variants are not new replications.
 Exploratory sampler experiments are kept outside the repository; they are
 not prerequisites for these follow-up commands. Superseded shell launchers
 have been retired outside the repository. No application scripts are changed.
+
+
+### Automatic replication parallelism
+
+For both follow-up entrypoints, `--cores=N` is the total CPU budget. On Mac and
+Linux, the runner dynamically schedules independent replications with up to four
+chain processes per replication: `--cores=56` runs up to 14 replications at once.
+Methods and calibration levels within each replication stay sequential so they
+can safely reuse measurement fits. Study I runs its two regimes sequentially.
+Prediction and optimization phases may use fewer cores than MCMC; utilization is
+not guaranteed to stay at 100%. More simultaneous replications require more RAM.
+
+Keep the same `--reps`, `--output`, and other scientific options when restarting.
+The scheduler retains the original batch paths and skips completed scores. It
+accepts the explicitly recorded scheduling-only predecessor hashes, while still
+rejecting changes to inference code, dependencies, data, or scientific settings.
+Stop the old run before updating/restarting; never start a second writer in its
+output directory. Abrupt termination may leave locks: confirm all old parent and
+child processes have exited before removing a stale lock.
+
+Use single-threaded numerical libraries when launching R to avoid nested BLAS
+oversubscription:
+
+```bash
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1
+```
+
+No external `xargs` pool is needed. Install the matching updated GitHub package
+before restarting these entrypoints. Existing processes retain their old scheduler.

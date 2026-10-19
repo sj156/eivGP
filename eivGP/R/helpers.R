@@ -12569,7 +12569,7 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
     dependency_lock=unname(tools::md5sum(file.path(NUMERICAL_REPO_ROOT,"renv.lock"))),
     full_map_hash=if(nzchar(cfg$full_fit_map))unname(tools::md5sum(cfg$full_fit_map))else NULL)
   manifest<-file.path(cfg$output,"protocol.rds")
-  if(file.exists(manifest)&&!identical(readRDS(manifest),identity))stop("Configuration/code changed: use a new output directory")
+  if(file.exists(manifest)&&!mixedgp_followup_identity_equal(readRDS(manifest),identity))stop("Configuration/code changed: use a new output directory")
   if(!file.exists(manifest))atomic_rds(identity,manifest)
   capture.output(sessionInfo(),file=file.path(cfg$output,"sessionInfo.txt"))
   revision<-tryCatch(system2("git",c("-C",shQuote(NUMERICAL_REPO_ROOT),"rev-parse","HEAD"),stdout=TRUE,stderr=FALSE),error=function(e)"unavailable")
@@ -12589,9 +12589,12 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
   on.exit(unlink(runlock,recursive=TRUE),add=TRUE)
   writeLines(as.character(Sys.getpid()),file.path(runlock,"pid"))
   atomic_rds(alljobs,registry)
-  timing <- mixedgp_batch_timing(file.path(cfg$output,"timing"),jobs$job,groups=jobs$method)
+  allocation <- mixedgp_followup_allocation(cfg$cores,length(cfg$reps))
+  timing <- mixedgp_batch_timing(file.path(cfg$output,"timing"),jobs$job,groups=jobs$method,workers=allocation$workers)
+  run_rep <- function(indices) {
+  cfg$cores <- allocation$chains
   failed<-0L
-  for(j in seq_len(nrow(jobs))) {
+  for(j in indices) {
     job<-jobs[j,];folder<-file.path(cfg$output,job$job);scorefile<-file.path(folder,"scores.rds")
     if(file.exists(scorefile)) { timing(j,"cached"); next }
     dir.create(folder,recursive=TRUE,showWarnings=FALSE)
@@ -12684,6 +12687,9 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
       timing(j,"complete",proc.time()[["elapsed"]]-job_started)
     },error=function(e){timing(j,"failed",proc.time()[["elapsed"]]-job_started);failed<<-failed+1L;atomic_rds(list(message=conditionMessage(e),time=Sys.time()),file.path(folder,"failure.rds"));message("FAILED: ",conditionMessage(e))},finally=unlink(lock,recursive=TRUE))
   }
+  failed
+  }
+  failed <- sum(mixedgp_followup_apply(split(seq_len(nrow(jobs)),jobs$rep),run_rep,allocation))
   aggregate_scores(alljobs,cfg$output)
   if(failed)stop(failed," jobs failed; see status.csv. Rerun the identical command to retry.")
   invisible(jobs)
@@ -12754,11 +12760,15 @@ mixedgp_study1_cc_workflow <- function(args,repo_root,root,data_root,action) {
       eta=e,package_manifest=eivgp_module_identity(),R=as.character(getRversion()),
       versions=setNames(vapply(c("kergp","LVGP","EzGP","posterior"),function(p)as.character(packageVersion(p)),""),c("kergp","LVGP","EzGP","posterior")))
     protocol<-file.path(out,"protocol.rds")
-    if(file.exists(protocol)&&!identical(readRDS(protocol),identity))stop("Configuration/code changed; use a new Study I output directory")
+    if(file.exists(protocol)&&!mixedgp_followup_identity_equal(readRDS(protocol),identity))stop("Configuration/code changed; use a new Study I output directory")
     if(!file.exists(protocol))api$atomic_rds(identity,protocol)
     registry<-file.path(out,"job_registry.rds");alljobs<-if(file.exists(registry))unique(rbind(readRDS(registry),selected))else selected
     if(action=="run")api$atomic_rds(alljobs,registry)
-    for(j in if(action=="run")seq_len(nrow(selected))else integer()) {
+    allocation <- mixedgp_followup_allocation(cfg$cores,length(cfg$reps))
+    run_rep <- function(indices) {
+    cfg$cores <- allocation$chains
+    failures <- 0L
+    for(j in indices) {
       job<-selected[j,];folder<-file.path(out,job$job);dir.create(folder,recursive=TRUE,showWarnings=FALSE)
       scorefile<-file.path(folder,"scores.rds");if(file.exists(scorefile))next
       message("Running Study I ",cell," ",job$job)
@@ -12798,6 +12808,10 @@ mixedgp_study1_cc_workflow <- function(args,repo_root,root,data_root,action) {
         api$atomic_rds(list(pass=passes),file.path(folder,"diagnostics.rds"));unlink(file.path(folder,"failure.rds"))
       },error=function(err){failures<<-failures+1L;api$atomic_rds(list(message=conditionMessage(err),time=Sys.time()),file.path(folder,"failure.rds"));message("FAILED: ",conditionMessage(err))})
     }
+    failures
+    }
+    if(action=="run") failures <- failures + sum(mixedgp_followup_apply(
+      split(seq_len(nrow(selected)),selected$rep),run_rep,allocation))
     result[[cell]]<-api$aggregate_scores(alljobs,out)
   }
   if(failures)stop(failures," Study I jobs failed; inspect per-regime status.csv; identical reruns retry failures")
@@ -12907,7 +12921,7 @@ mixedgp_timing_record <- function(path, row) {
 mixedgp_sampler_disk <- function(identity) {
   root <- getOption("eivGP.checkpoint_root", NULL)
   if (is.null(root)) return(NULL)
-  identity <- list(schema=1L, model=identity, modules=eivgp_module_identity(),
+  identity <- list(schema=1L, model=identity, modules=mixedgp_followup_checkpoint_modules(),
     R=R.version.string, platform=R.version$platform, rng_kind=RNGkind())
   tmp <- tempfile(); on.exit(unlink(tmp), add=TRUE)
   saveRDS(identity, tmp, compress=FALSE, version=3L)
@@ -13057,4 +13071,63 @@ mixedgp_publication_workflow <- function(study, args, repo_root) {
   write.csv(jobs,file.path(out,"planned_jobs.csv"),row.names=FALSE)
   results<-lapply(plans,function(a)run_paper_study(study,a,repo_root))
   invisible(list(jobs=jobs,results=results))
+}
+
+
+# Independent replications own their caches; chains share each worker's budget.
+mixedgp_followup_allocation <- function(cores, replications) {
+  stopifnot(length(cores)==1L,is.finite(cores),cores>=1L,cores==floor(cores),
+    length(replications)==1L,replications>=1L)
+  workers <- if(.Platform$OS.type=="unix") min(replications,max(1L,cores%/%4L)) else 1L
+  list(workers=as.integer(workers),chains=as.integer(min(4L,cores%/%workers)),cores=cores)
+}
+
+mixedgp_followup_apply <- function(groups, fun, allocation) {
+  message("CPU budget ",allocation$cores,": ",allocation$workers,
+    " independent replication workers, up to ",allocation$chains," chains per worker.")
+  run <- function(x) {
+    # Explicit per-job seeds/checkpoint RNG determine the scientific random streams.
+    fun(x)
+  }
+  ans <- if(allocation$workers>1L) parallel::mclapply(groups,run,
+    mc.cores=allocation$workers,mc.preschedule=FALSE,mc.set.seed=FALSE,
+    mc.allow.recursive=TRUE) else lapply(groups,run)
+  if(any(vapply(ans,function(x)inherits(x,"try-error")||is.null(x),logical(1))))
+    stop("A replication worker failed or was interrupted; retained checkpoints can be resumed.")
+  unlist(ans,use.names=FALSE)
+}
+
+mixedgp_followup_identity_equal <- function(saved,current,compat=NULL) {
+  if(identical(saved,current))return(TRUE)
+  # Whitelist a verified orchestration-only edit, never arbitrary inference changes.
+  if(is.null(compat)) {
+    path <- system.file("followup-scheduler-compatibility.csv",package="eivGP")
+    if(!nzchar(path))return(FALSE)
+    compat <- utils::read.csv(path,stringsAsFactors=FALSE)
+  }
+  normalize <- function(x) {
+    for(i in seq_len(nrow(compat))) {
+      row <- compat[i,]
+      if(row$field=="helpers.R" && identical(unname(x$package_manifest["helpers.R"]),row$new))
+        x$package_manifest["helpers.R"] <- row$old
+      if(row$field=="mechanism" && identical(unname(x$code["mechanism"]),row$new))
+        x$code["mechanism"] <- row$old
+    }
+    x
+  }
+  identical(normalize(saved),normalize(current))
+}
+
+
+# Preserve checkpoint directory keys across the audited scheduling-only edit.
+mixedgp_followup_checkpoint_modules <- function() {
+  modules <- eivgp_module_identity()
+  path <- system.file("followup-scheduler-compatibility.csv",package="eivGP")
+  if(nzchar(path)) {
+    compat <- utils::read.csv(path,stringsAsFactors=FALSE)
+    row <- compat[compat$field=="helpers.R",,drop=FALSE]
+    if(nrow(row)==1L && identical(unname(modules["helpers.R"]),row$new))
+      modules["helpers.R"] <- row$old
+  }
+  modules
 }

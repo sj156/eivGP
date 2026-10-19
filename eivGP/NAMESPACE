@@ -49,3 +49,10 @@ export(ocean_settings)
 export(ocean_workflow_api)
 
 export(run_paper_study)
+
+export(plot_mixing)
+export(plot_mcmc)
+export(save_mixing_plots)
+
+useDynLib(eivGP, .registration=TRUE)
+importFrom(Rcpp,evalCpp)

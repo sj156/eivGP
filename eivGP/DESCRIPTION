@@ -1,6 +1,6 @@
 Package: eivGP
 Title: Gaussian Process Regression with Ordinal Mixed Inputs
-Version: 0.4.0.9008
+Version: 0.4.0.9009
 Authors@R: c( person("Penghui", "Fu", role = "aut"), person("Xinye",
         "Chen", role = "aut"), person("Jianhua Z.", "Huang", role =
         "aut"), person("Sheng", "Jiang", , "jiangsheng@cuhk.edu.cn",
@@ -9,14 +9,15 @@ Description: Fits errors-in-variables Gaussian process regressions with
         numeric predictors, ordinal proxies, and optional calibration
         measurements. Uses collapsed variance inference, a finite
         latent-length dictionary, and no-thinning elliptical slice
-        sampling. Supports posterior prediction, latent-input
+        or joint Hamiltonian sampling. Supports posterior prediction, latent-input
         imputation, diagnostics, and continuation.
 License: MIT + file LICENSE
 Depends: R (>= 4.1.0)
-Imports: graphics, grDevices, dplyr, tidyr, ggplot2, knitr, patchwork, methods, parallel, posterior, stats, tools, TruncatedNormal,
+Imports: Rcpp, graphics, grDevices, dplyr, tidyr, ggplot2, knitr, patchwork, methods, parallel, posterior, stats, tools, TruncatedNormal,
         utils
 Suggests: digest, rmarkdown, EzGP, kergp, LVGP, testthat
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 8.0.0
-Collate: 'mcmc.R' 'helpers.R' 'plotting.R' 'eivGP-package.R' 'global-variables.R'
+LinkingTo: Rcpp, RcppArmadillo
+Collate: 'RcppExports.R' 'hmc.R' 'mcmc.R' 'helpers.R' 'plotting.R' 'eivGP-package.R' 'global-variables.R'

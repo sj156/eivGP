@@ -9,11 +9,17 @@ params:
   action: "report"
   profile: "paper"
   cores: 4
+  mixing_plots: true
   tables_dir: ""
   competitor_dir: ""
+  component: ""
+  options: !r list()
 ---
 
-This report reads the selected merged paper export by default. It includes all
+With an empty `component`, this report reads the historical merged paper export.
+Set `component: all` (or Study II `mechanism`) to report a new workflow run.
+`options` accepts the same named settings as the batch script; reporting must use
+the run's original profile, budgets and optional FULL map. It includes all
 completed fits, including diagnostic warnings. It does not rerun MCMC to render
 saved results. The source manifest is in `../manifests/study2/`.
 
@@ -23,26 +29,34 @@ here<-dirname(knitr::current_input(dir=TRUE))
 source(file.path(here,"study2.R"),local=TRUE)
 root<-if(nzchar(params$results_root)) params$results_root else Sys.getenv("EIVGP_RESULTS_ROOT")
 if(!nzchar(root))stop("Set results_root or EIVGP_RESULTS_ROOT.")
-result<-study2_analysis(root,params$action,params$profile,params$cores,
+modern<-nzchar(params$component)
+if(modern) {
+  repo<-normalizePath(file.path(here,"../.."))
+  controls<-modifyList(list(action=params$action,profile=params$profile,
+    `mixing-plots`=params$mixing_plots,cores=as.character(params$cores),component=params$component,output=root),params$options)
+  result<-study2_workflow(controls,repo)
+} else result<-study2_analysis(root,params$action,params$profile,params$cores,
   tables_dir=if(nzchar(params$tables_dir))params$tables_dir else NULL,
-  competitor_dir=if(nzchar(params$competitor_dir))params$competitor_dir else NULL)
+  competitor_dir=if(nzchar(params$competitor_dir))params$competitor_dir else NULL,
+  mixing_plots=params$mixing_plots)
 ```
 
 ## Method comparison
 
 EIV-GP is fitted by our package. UC-GP, LVGP, and EzGP use their respective
-packages through the package's comparison adapters. PI-GP and CC-GP are internal
-ablations. MCSEs describe variation across replications, not within-fit MCMC error.
+packages through the package's comparison adapters. Original published predictors use all `(X,C)` records and ignore calibration; `-CC` versions use only calibrated records with continuous `(X,U)` and categorical `C`, followed by response-free test-input integration. PI-GP and CC-GP are supplementary diagnostics; CUT is the matched feedback comparison. MCSEs describe variation across replications, not within-fit MCMC error.
 
 ```{r scores, results='asis'}
-if(params$action=="report") {
+if(params$action=="report" && !modern) {
   cat("Selected source:",result$source,"\n\n")
   print(eivGP::report_table(result$summary,caption="Scores and replication MCSEs"))
+} else if(modern && !is.null(result$mechanism)) {
+  print(eivGP::report_table(result$mechanism,caption="Mechanism scores; all diagnostic warnings retained"))
 } else print(result)
 ```
 
 ```{r comparison, fig.width=10, fig.height=5}
-if(params$action=="report") print(eivGP::plot_comparison(result$summary,"RMSE"))
+if(params$action=="report" && !modern) print(eivGP::plot_comparison(result$summary,"RMSE"))
 ```
 
 ## Diagnostics
@@ -51,8 +65,40 @@ Passing one diagnostic does not establish convergence for every estimand.
 No fits are excluded from the score summaries on the basis of diagnostics.
 
 ```{r diagnostics, results='asis'}
-if(params$action=="report") print(eivGP::report_table(eivGP::summarize_diagnostics(result$diagnostics)))
+if(params$action=="report" && !modern) print(eivGP::report_table(eivGP::summarize_diagnostics(result$diagnostics)))
 ```
+
+## Mixing plots
+
+The package saves three mixing figures (PDF and PNG) by default after `report`
+or `run`: R-hat versus bulk ESS, mean MCSE relative to posterior SD, and
+unavailable diagnostic counts. These use saved parameter-level CSVs only;
+no chains are refitted or target integrations recomputed. Raw and scientific
+quantities stay separate. Missing diagnostics are not treated as passes.
+Set `mixing_plots: false` (batch: `--mixing-plots=false`) to skip them.
+
+```{r mixing-figures, echo=FALSE, out.width="100%"}
+plots<-if(modern) attr(result,"mixing_plots") else result$mixing_plots
+pngs<-plots[grepl("[.]png$",plots)]
+if(length(pngs)) knitr::include_graphics(normalizePath(pngs))
+```
+
+For chain-level inspection, `eivGP::plot_mcmc(fit, parameters=c("V","r"))`
+returns a customizable ggplot. Use `type="rank"`, `"acf"`, or `"running_mean"`
+for complementary views. Supply named lists of chain vectors for scientific
+functionals already computed on every retained draw. The package does not
+silently recompute those expensive functionals for plotting.
+
+## Workflow status
+
+```{r workflow-status, results='asis'}
+if(modern && file.exists(file.path(root,"mechanism/status.csv")))
+  print(eivGP::report_table(read.csv(file.path(root,"mechanism/status.csv"))))
+```
+
+Pilot scores are computational evidence only. Review the adjacent
+`mechanism/report.html`, stage timings, full diagnostics and retained chains
+before increasing the simulation budget.
 
 ## Reproduction
 
@@ -65,3 +111,10 @@ produce new run IDs; do not rename old caches to force compatibility.
 packageVersion("eivGP")
 sessionInfo()
 ```
+
+## Publication completion runs
+
+The same batch entrypoint accepts `--component=publication` and
+`--stage=pilot`, `integration`, or `full`. Start with `--action=plan`.
+See [publication workflow](publication/README.md) for paired budgets, portable
+launchers, and the distinction between saved-fit rescoring and new MCMC.

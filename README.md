@@ -12,6 +12,8 @@ fitting, prediction, imputation, diagnostics, continuation, and reporting.
 eivGP/R/
   helpers.R     # data preparation, kernels, prediction, storage, workflow helpers
   mcmc.R        # posterior sampling, fitting, continuation, sampler diagnostics
+  hmc.R         # joint HMC coordinates, warmup adaptation and transitions
+eivGP/src/      # analytic GP/ordinal gradients and leapfrog integration
   plotting.R    # summaries, comparison tables, figures, report generation
 data/ocean_silicate/
   n200/         # frozen 200-profile data and five-fold inputs
@@ -28,7 +30,7 @@ tools/
   render_reports.R
 ```
 
-`eivGP/R/` is the authoritative implementation. The three implementation modules are installed together as one package, following the upstream structure. Metadata and static-analysis declarations remain separate. Analysis scripts call package APIs and select
+`eivGP/R/` is the authoritative implementation. The R modules and native HMC implementation are installed together as one package. Metadata and static-analysis declarations remain separate. Analysis scripts call package APIs and select
 settings, inputs, and output locations. Competitor adapters call `kergp`, `LVGP`,
 and `EzGP`. Reporting functions also live in the package.
 
@@ -38,7 +40,7 @@ Use R >= 4.1. Install dependencies once, then install this checkout:
 
 ```r
 install.packages(c("dplyr", "tidyr", "ggplot2", "knitr", "patchwork", "posterior",
-                   "TruncatedNormal", "digest", "rmarkdown", "testthat"))
+                   "TruncatedNormal", "digest", "rmarkdown", "testthat", "Rcpp", "RcppArmadillo"))
 # Needed when fitting the competitor methods:
 install.packages(c("kergp", "LVGP", "EzGP"))
 ```
@@ -51,6 +53,36 @@ R CMD INSTALL eivGP
 The build helper refreshes the module identity manifest and checks parsing. It
 never generates or replaces the package source. Reports require Pandoc, such as
 the version included with RStudio.
+
+## Choose ESS or HMC
+
+The two engines support an explicit main continuous-update option:
+
+```r
+fit_ess <- fit_eivgp(X, y, C, U_obs = U_obs, engine = "univariate",
+                    sampler = "ESS")
+fit_hmc <- fit_eivgp(X, y, C, U_obs = U_obs, engine = "univariate",
+                    sampler = "HMC")
+# For Study II-style data, use engine="multivariate", latent_dim=2L.
+continued <- continue_eivgp(fit_hmc, n_iter = 1000L)
+fit_hmc$diagnostics$hmc  # chain-specific acceptance and energy-error diagnostics
+```
+
+ESS remains the default. Joint HMC moves all missing inputs, observed-input
+kernel coefficients and the signal fraction together, retaining the same
+full-GP posterior and existing measurement/dictionary updates. Thus auxiliary
+ESS updates remain in the HMC-within-Gibbs algorithm. HMC supports conditional
+dictionary updates and SE or Matérn 3/2 and 5/2 kernels; select ESS for other
+kernel smoothness values or marginal dictionary updates. Unsupported explicit
+HMC requests raise an error.
+
+HMC controls can be supplied through
+`sampler_control=list(hmc=list(step=.05, leapfrog=c(8L,24L), target_accept=.8))`.
+Step size and a diagonal mass matrix adapt during warmup only. Continuation
+preserves the sampler, frozen metric, step size and RNG state; it cannot switch
+methods or tuning. The default retains every post-warmup draw. Inspect
+scientific-target R-hat, bulk/tail ESS and MCSE rather than assuming that a
+higher median ESS per second certifies all posterior quantities.
 
 ## Reproduce and read the paper analyses
 
@@ -116,14 +148,14 @@ grids reuse their available caches/checkpoints; interrupted work without a
 checkpoint may have to be recomputed.
 
 ```sh
-# Targeted comparisons only, including FULL and categorical-only baselines.
-# Start with one replication to assess cost and diagnostics.
+# Paired cost/mixing pilot: two replications, two calibration levels.
+# Four FULL references plus 16 new CUT/complete-case jobs.
 Rscript paper/numerical/study2.R --component=mechanism --action=run \
-  --profile=paper --reps=1 --cores=4
+  --profile=pilot --cores=4 --output="$HOME/eivGP-results/study2-pilot"
 
-# Expand or resume the same protocol; completed jobs are reused.
-Rscript paper/numerical/study2.R --component=mechanism --action=run \
-  --profile=paper --reps=1:50 --cores=4
+# Inspect mechanism/report.html and stage_timing.csv before scaling up.
+# Paper runs need a separate root because their sampling budgets differ.
+# After review, a fresh complete Study II run uses the default two components.
 
 # Only CUT and complete-case methods, if compatible baseline jobs already exist.
 Rscript paper/numerical/study2.R --component=mechanism --action=run \
@@ -156,7 +188,8 @@ With no environment/path overrides, numerical outputs are saved under `~/eivGP-r
 Core runs put status files in `config/`, aggregate CSVs in `combined/`, and
 combined competitor outputs in `reporting/comparison/`. Mechanism outputs include
 `point_scores.csv`, `replicate_scores.csv`, `summary.csv`, and
-`paired_differences.csv`. Per-job directories retain diagnostic files and
+`paired_differences.csv`, paired summaries and unseen-minus-seen interactions.
+`report.html` includes completion, diagnostics, paired scores and stage wall times. Per-job directories retain diagnostic files and
 predictions; shared directories retain measurement diagnostics.
 
 Use `--output=/absolute/local/path/study2` to change the study's parent result
@@ -201,7 +234,7 @@ leave later cells absent from the status table; compare with the planned grid.
 For mechanism runs, `status.csv` lists registered jobs as `complete`, `failed`,
 or `pending`; `diagnostics_pass` reports screening separately. A partial selection
 can be entirely complete while the full paper design remains unfinished.
-Inspect `full_diagnostics.csv`, `conditional-*-diagnostics.csv`, shared
+Inspect `full_diagnostics.csv`, `conditional-*.diagnostics.csv`, shared
 `measurement_diagnostics.csv`, and `integration_stability.csv` for flagged jobs.
 MCMC screens require R-hat <= 1.01 and bulk/tail ESS >= 400. Optimizer failures
 are also flagged. Scores from flagged fits remain visible and must not be
@@ -209,7 +242,7 @@ silently treated as validated results.
 
 A completed but diagnostically flagged job is not automatically refitted.
 Investigate it first; changed sampling budgets/code require a **new output
-root**, and failed-fit histories are retained for investigation. Passing screens
+root**, and all conditional-fit histories are retained for investigation. Passing screens
 still require target-specific mixing and nested-integration precision review.
 An abrupt kill can leave a `RUN.lock` or job `.lock`; inspect its PID and confirm
 the process has stopped before removing that exact lock. Never remove a live lock.
@@ -227,7 +260,7 @@ Report commands require existing results and the same settings/path overrides;
 they do not fill missing fits. For custom mechanism sampler budgets, repeat those
 flags when reporting. The [numerical guide](paper/numerical/README.md) describes
 statistical targets, provenance, and compact output retention. Publication-scale
-storage has not been measured; failed fits can still retain substantial history.
+storage has not been measured; all conditional fits retain chain histories.
 The [manuscript section](paper/numerical/manuscript/section.tex) retains TBDs for
 pending scientific validation and final displays.
 
@@ -325,7 +358,8 @@ selectors, output imports and dataset preparation.
 
 ## Develop and test
 
-Edit the three package modules, then refresh the manifest and reinstall. API
+Edit the package modules and native sampler sources, then refresh the manifest
+and reinstall. API
 exports and help pages are maintained in `NAMESPACE` and `man/`.
 
 ```r
@@ -337,3 +371,6 @@ testthat::test_dir("eivGP/tests/testthat", env=new.env(parent=asNamespace("eivGP
 Version 0.4.0 consolidates the implementation and analysis/reporting workflows.
 It retains the 0.3.1 sampler and scientific defaults. Package tests cover both
 engines, prediction, diagnostics, continuation, and lossless compact storage.
+
+
+Both numerical entry points now include the two published-competitor protocols: original `(X,C)` fits on all records and complete-case `(X,U,C)` fits with `U` continuous. `study1.R --component=complete-case --profile=pilot --action=run` starts a 12-job paired pilot; `study2.R --component=mechanism --profile=pilot --action=run` starts the CUT/CC pilot. Full Study I additions (600 CC fits) are separate from the existing 400 new Study II jobs. See [the numerical workflow](paper/numerical/README.md#two-versions-of-the-published-competitors-in-both-studies) for data access, diagnostics, reporting and the two-script paper reproduction commands. Pilots never launch the full grids automatically.

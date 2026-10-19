@@ -24,7 +24,9 @@ numerical_package_check <- function() {
   mismatch<-actual!=as.character(package_version(expected))
   if(any(mismatch))stop("Dependencies differ from renv.lock: ",paste(names(expected)[mismatch],collapse=", "),"; run tools/setup_numerical.R")
   installed<-getFromNamespace("eivgp_module_identity","eivGP")()
-  paths<-file.path(NUMERICAL_REPO_ROOT,"eivGP","R",names(installed))
+  modules<-names(installed)
+  native<-grepl("[.]cpp$|^Makevars",modules)
+  paths<-file.path(NUMERICAL_REPO_ROOT,"eivGP",ifelse(native,"src","R"),modules)
   if(!identical(unname(tools::md5sum(paths)),unname(installed)))
     stop("Installed eivGP differs from this checkout; rerun tools/setup_numerical.R")
 }

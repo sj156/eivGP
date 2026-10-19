@@ -3480,3 +3480,189 @@ ocean_u_distribution_report <- function(output_dir,inputs,representative_fold=1L
   }
   list(plot=p,pooled_plot=pooled,source=sources,common_ids=tr$cohort_id[ids],dest=dest)
 }
+
+# ---- Public mixing visualization API (saved results only) ----
+
+# Normalize without dropping nonfinite values or changing diagnostic flags.
+mixedgp_plot_diagnostics <- function(object) {
+  z <- if(inherits(object,"eivgp_diagnostics")) object$table else object
+  if(!is.data.frame(z) || !nrow(z)) stop("Supply a nonempty diagnostic data frame or eivgp_diagnostics.")
+  if(!"parameter" %in% names(z) && "variable" %in% names(z)) z$parameter <- z$variable
+  if(!all(c("parameter","rhat","ess_bulk","ess_tail") %in% names(z)))
+    stop("Diagnostics need parameter (or variable), rhat, ess_bulk, and ess_tail columns; run-level gate summaries are insufficient.")
+  for(n in c("rhat","ess_bulk","ess_tail")) if(!is.numeric(z[[n]])) stop(n," must be numeric.")
+  if(!"mcse_sd_ratio" %in% names(z)) z$mcse_sd_ratio <- NA_real_
+  if(!is.numeric(z$mcse_sd_ratio)) stop("mcse_sd_ratio must be numeric.")
+  if(!"diagnostic_role" %in% names(z)) z$diagnostic_role <- if("group" %in% names(z)) as.character(z$group) else "Monitored quantities"
+  z$diagnostic_role <- as.character(z$diagnostic_role)
+  z$diagnostic_role[is.na(z$diagnostic_role)] <- "Unspecified"
+  labels <- c(raw="Raw coordinates",target="Scientific targets",invariant="Measurement invariants",
+    raw_and_training_imputation="Raw / training imputation",scientific_panel="Scientific targets",
+    measurement_invariant="Measurement invariants",user_functional="User functionals")
+  known <- z$diagnostic_role %in% names(labels)
+  z$diagnostic_role[known] <- unname(labels[z$diagnostic_role[known]])
+  if(!"fit_id" %in% names(z)) {
+    keys <- intersect(c("scenario","rep","n_calib"),names(z))
+    z$fit_id <- if(length(keys)) do.call(paste,c(z[keys],sep=" / ")) else "Fit"
+  }
+  if(!"panel" %in% names(z)) {
+    keys <- intersect(c("scenario","n_calib"),names(z))
+    z$panel <- if(length(keys)) do.call(paste,c(lapply(keys,function(k)if(k=="n_calib")paste("calibration",z[[k]]) else z[[k]]),sep=" / ")) else "Diagnostics"
+  }
+  for(n in c("fit_id","panel")) z[[n]][is.na(z[[n]])] <- "Unspecified"
+  z
+}
+
+#' Visualize saved MCMC diagnostics with ggplot2
+#' @export
+plot_mixing <- function(object, type=c("overview","precision","coverage"),
+                        rhat_limit=NULL, ess_limit=NULL, mcse_limit=NULL) {
+  type <- match.arg(type); z <- mixedgp_plot_diagnostics(object)
+  settings <- if(inherits(object,"eivgp_diagnostics")) object$settings else list()
+  limit <- function(x,setting,default) {
+    if(is.null(x)) x <- if(is.null(setting)) default else setting
+    if(length(x)!=1L || !is.numeric(x) || !is.finite(x) || x<=0) stop("Plot limits must be positive finite scalars.")
+    x
+  }
+  rhat_limit <- limit(rhat_limit,settings$rhat_limit,1.01)
+  ess_limit <- limit(ess_limit,settings$bulk_ess_limit,400)
+  mcse_limit <- limit(mcse_limit,settings$mcse_sd_ratio_limit,.05)
+  if(rhat_limit<=1) stop("rhat_limit must exceed 1.")
+  extreme <- function(x,fun) if(any(is.finite(x))) fun(x[is.finite(x)]) else NA_real_
+  groups <- interaction(z$fit_id,z$panel,z$diagnostic_role,drop=TRUE,lex.order=TRUE)
+  s <- do.call(rbind,lapply(split(z,groups),function(q) data.frame(
+    fit_id=q$fit_id[1],panel=q$panel[1],role=q$diagnostic_role[1],
+    max_rhat=extreme(q$rhat,max),min_bulk=extreme(q$ess_bulk,min),
+    max_mcse_sd=extreme(q$mcse_sd_ratio,max),n=nrow(q),
+    unavailable=sum(!is.finite(q$rhat)|!is.finite(q$ess_bulk)|!is.finite(q$ess_tail)),
+    mcse_unavailable=sum(!is.finite(q$mcse_sd_ratio)))))
+  if(type=="overview") {
+    p <- ggplot2::ggplot(s,ggplot2::aes(x=.data$max_rhat,y=.data$min_bulk,color=.data$role))+
+      ggplot2::geom_vline(xintercept=rhat_limit,linetype=2,color="grey45")+
+      ggplot2::geom_hline(yintercept=ess_limit,linetype=2,color="grey45")+
+      ggplot2::geom_point(alpha=.75,size=2,na.rm=TRUE)+ggplot2::scale_y_log10()+
+      ggplot2::labs(title="Chain agreement and effective sample size",x="Largest finite R-hat",y="Smallest finite bulk ESS (log scale)")
+  } else if(type=="precision") {
+    p <- ggplot2::ggplot(s,ggplot2::aes(x=.data$max_rhat,y=.data$max_mcse_sd,color=.data$role))+
+      ggplot2::geom_vline(xintercept=rhat_limit,linetype=2,color="grey45")+
+      ggplot2::geom_hline(yintercept=mcse_limit,linetype=2,color="grey45")+
+      ggplot2::geom_point(alpha=.75,size=2,na.rm=TRUE)+
+      ggplot2::labs(title="Monte Carlo precision of monitored means",x="Largest finite R-hat",y="Largest finite MCSE / posterior SD")
+  } else {
+    s <- rbind(transform(s,metric="R-hat / bulk or tail ESS",count=s$unavailable),
+               transform(s,metric="Mean MCSE / posterior SD",count=s$mcse_unavailable))
+    p <- ggplot2::ggplot(s,ggplot2::aes(x=.data$role,y=.data$count,color=.data$metric))+
+      ggplot2::geom_point(position=ggplot2::position_dodge(width=.5),alpha=.6,size=2)+
+      ggplot2::labs(title="Unavailable diagnostic values",x=NULL,y="Unavailable quantities per fit",color=NULL)+
+      ggplot2::theme(axis.text.x=ggplot2::element_text(angle=20,hjust=1))
+  }
+  p <- p+ggplot2::facet_wrap(~panel,scales="free_x")+ggplot2::theme_minimal(base_size=11)+
+    ggplot2::theme(panel.grid.minor=ggplot2::element_blank(),legend.position="bottom")+
+    ggplot2::labs(color=NULL,subtitle=paste(nrow(z),"saved diagnostic rows;",length(unique(z$fit_id)),"fits"),
+      caption="Extrema use finite values; missing diagnostics are not passes. Reference lines are screens, not convergence guarantees.\nMCSE excludes integration error. See the coverage plot for unavailable values.")
+  if(type=="precision" && !any(is.finite(s$max_mcse_sd))) p <- p+
+    ggplot2::annotate("text",x=rhat_limit,y=mcse_limit,label="MCSE/SD was not saved; precision cannot be assessed",vjust=-1,size=3)
+  p
+}
+
+#' Plot retained chains without refitting or computing predictions
+#' @export
+plot_mcmc <- function(object, parameters=NULL,
+                      type=c("trace","rank","acf","running_mean"),
+                      max_points=2000L, lag_max=100L, bins=20L) {
+  type <- match.arg(type)
+  for(v in list(max_points,lag_max,bins)) if(length(v)!=1L || !is.numeric(v) || !is.finite(v) || v<2 || v!=floor(v))
+    stop("max_points, lag_max, and bins must be integers >= 2.")
+  if(inherits(object,"eivgp_fit") || (is.list(object) && !is.null(object$mcmc) && !is.null(object$mcmc$samples_by_chain))) {
+    series <- if(isTRUE(object$sampler_version %in% c("0.3.0","0.3.1"))) mixedgp_v030_raw_series(object) else
+      if(mixedgp_fit_engine(object)=="univariate") mixedgp_study1_raw_series(object) else mixedgp_study2_raw_series(object)
+  } else series <- object
+  if(!is.list(series) || !length(series) || is.null(names(series)) || any(!nzchar(names(series))) || anyDuplicated(names(series)))
+    stop("Supply a fit or a uniquely named list of functionals, each containing one numeric vector per chain.")
+  if(is.null(parameters)) parameters <- head(names(series),6L)
+  if(!is.character(parameters) || !length(parameters) || anyNA(parameters) || anyDuplicated(parameters) || any(!parameters %in% names(series)))
+    stop("parameters must name distinct available functionals.")
+  rows <- list(); max_stride <- 1L; nc <- NULL
+  for(name in parameters) {
+    chains <- series[[name]]
+    if(!is.list(chains) || length(chains)<2L || !all(vapply(chains,function(v)is.numeric(v)&&is.null(dim(v))&&length(v)>=4L&&all(is.finite(v)),logical(1))))
+      stop("Each functional needs >=2 chains of >=4 finite numeric draws; no draws are silently dropped.")
+    if(is.null(nc)) nc <- length(chains)
+    if(length(chains)!=nc) stop("Functionals must have the same chain count.")
+    if(type=="rank") {
+      ranks <- rank(unlist(chains,use.names=FALSE),ties.method="average")
+      ranks <- split(ranks,rep(seq_along(chains),lengths(chains)))
+    }
+    for(ch in seq_along(chains)) {
+      v <- chains[[ch]]; n <- length(v)
+      if(type %in% c("trace","running_mean")) {
+        stride <- max(1L,ceiling(n/max_points)); max_stride <- max(max_stride,stride)
+        ix <- unique(c(seq.int(1L,n,by=stride),n));y <- if(type=="running_mean")cumsum(v)/seq_len(n) else v
+        xx <- ix; yy <- y[ix]
+      } else if(type=="rank") {
+        xx <- seq_len(bins); yy <- hist(ranks[[ch]],breaks=seq(0,sum(lengths(chains)),length.out=bins+1L),plot=FALSE)$counts/n
+      } else {
+        xx <- 0:min(lag_max,n-1L)
+        yy <- if(stats::sd(v)==0)rep(NA_real_,length(xx)) else as.numeric(stats::acf(v,lag.max=max(xx),plot=FALSE)$acf)
+      }
+      rows[[length(rows)+1L]] <- data.frame(parameter=name,chain=factor(ch),x=xx,value=yy)
+    }
+  }
+  z <- do.call(rbind,rows)
+  p <- ggplot2::ggplot(z,ggplot2::aes(x=.data$x,y=.data$value,color=.data$chain,group=.data$chain))+
+    ggplot2::geom_line(alpha=.75,linewidth=.4,na.rm=TRUE)+
+    ggplot2::scale_color_manual(values=if(nc<=8L)c("#0072B2","#D55E00","#009E73","#CC79A7","#E69F00","#56B4E9","#F0E442","#000000")[seq_len(nc)] else grDevices::hcl.colors(nc,"Dark 3"))+ggplot2::facet_wrap(~parameter,scales="free_y")+
+    ggplot2::theme_minimal(base_size=11)+ggplot2::theme(panel.grid.minor=ggplot2::element_blank(),legend.position="bottom")+
+    ggplot2::labs(title=switch(type,trace="Retained-chain traces",rank="Between-chain pooled-rank balance",acf="Within-chain autocorrelation",running_mean="Cumulative chain means"),
+      x=switch(type,rank="Pooled-rank bin",acf="Lag in retained draws","Retained draw index (after warmup)"),
+      y=switch(type,rank="Fraction of chain",acf="Autocorrelation",running_mean="Running mean","Value"),color="Chain",
+      caption=paste0("Display stride up to ",max_stride,"; calculations use all retained draws. No prediction, refitting, or integration is performed.\nRanks use average ties; discrete/constant ranks require caution. ACF is undefined for constant chains."))
+  if(type=="rank") p <- p+ggplot2::geom_hline(yintercept=1/bins,linetype=2,color="grey50")
+  if(type=="acf" && anyNA(z$value)) p <- p+ggplot2::labs(subtitle="Constant-chain ACFs are unavailable and omitted; inspect the trace plot.")
+  p
+}
+
+#' Save a small default mixing report from diagnostic CSV files
+#' @export
+save_mixing_plots <- function(path, output_dir=file.path(path,"mixing-plots"),
+                              formats=c("pdf","png")) {
+  if(length(path)!=1L || !dir.exists(path)) stop("path must be an existing results directory.")
+  if(!length(formats) || any(!formats %in% c("pdf","png"))) stop("formats must contain pdf and/or png.")
+  files <- list.files(path,pattern="[.]csv$",recursive=TRUE,full.names=TRUE)
+  files <- files[!grepl("/\\._",files)]
+  names <- basename(files)
+  preferred <- grepl("(^|_)mcmc_(parameter|target)_diagnostics[.]csv$|^measurement_diagnostics[.]csv$|^conditional-[0-9]+[.]diagnostics[.]csv$|^full_diagnostics[.]csv$",names)
+  fallback <- grepl("(^|_)mcmc_diagnostic_details[.]csv$",names) & !dirname(files) %in% dirname(files[preferred])
+  files <- files[preferred|fallback]
+  if(!length(files)) {
+    warning("No parameter-level diagnostic CSVs found; aggregate gate summaries cannot replace them. No plots written.",call.=FALSE)
+    return(invisible(character()))
+  }
+  tables <- lapply(files,function(f) {
+    z <- utils::read.csv(f,stringsAsFactors=FALSE)
+    if(!nrow(z)) return(NULL)
+    z <- mixedgp_plot_diagnostics(z)
+    relative <- substring(f,nchar(sub("/+$","",path))+2L)
+    role <- if(grepl("_target_",basename(f)))"Scientific targets" else if(grepl("_parameter_",basename(f)))"Raw coordinates" else if(grepl("measurement",basename(f)))"Measurement" else "Saved quantities"
+    if(all(z$diagnostic_role=="Monitored quantities")) z$diagnostic_role <- role
+    leaf <- dirname(relative)
+    # Parameter and target CSVs describe the same fits; conditional files do not.
+    id <- if(grepl("^conditional-",basename(f))) relative else leaf
+    z$fit_id <- paste(id,z$fit_id,sep=" / ")
+    z$panel <- if(grepl("^(shared-)?rep[0-9]+-cal",basename(leaf)))
+      paste(basename(dirname(leaf)),sub(".*cal([0-9]+).*","cal \\1",basename(leaf)),role) else if(leaf==".") z$panel else paste(leaf,z$panel,sep=" / ")
+    z[,c("parameter","rhat","ess_bulk","ess_tail","mcse_sd_ratio","diagnostic_role","fit_id","panel")]
+  })
+  z <- do.call(rbind,tables)
+  if(is.null(z)||!nrow(z)) {warning("Diagnostic files are empty; no plots written.",call.=FALSE);return(invisible(character()))}
+  dir.create(output_dir,recursive=TRUE,showWarnings=FALSE)
+  paths <- character()
+  for(type in c("overview","precision","coverage")) for(ext in unique(formats)) {
+    dest <- file.path(output_dir,paste0("mixing_",type,".",ext))
+    ggplot2::ggsave(dest,plot_mixing(z,type),width=11,height=7,dpi=160,bg="white")
+    paths <- c(paths,dest)
+  }
+  utils::write.csv(data.frame(path=normalizePath(files),md5=unname(tools::md5sum(files))),
+    file.path(output_dir,"diagnostic_sources.csv"),row.names=FALSE)
+  invisible(paths)
+}

@@ -49,7 +49,30 @@ atomic_rds(list(pass=TRUE,states=list()),sp)
 invisible(retire_conditional_fit(fp,sp));stopifnot(file.exists(fp))
 atomic_rds(list(pass=TRUE,states=states),sp)
 retained<-retire_conditional_fit(fp,sp)
-stopifnot(!file.exists(fp),identical(retained$states,states),
+stopifnot(file.exists(fp),identical(retained$states,states),
           identical(p2,gp_evaluate(retained$states,z$train,changed,cfg,22)))
 unlink(sp)
-cat("PASS: lossless compact fit roundtrip, failed-fit retention, and passing-fit retirement with exact prediction reconstruction.\n")
+cat("PASS: lossless compact fit roundtrip, failed-fit retention, and all-fit retention with exact prediction reconstruction.\n")
+
+pilot<-settings(list(profile="pilot"))
+stopifnot(identical(pilot$reps,c(1L,25L)),pilot$outer==4L,length(pilot$methods)==5L)
+stopifnot(all(vapply(m$states,function(s)s$iteration,integer(1))==31L))
+# Archived wrappers contain compact fits; the matched importer must unpack them.
+atomic_rds(list(identity="test",fit=f),fp)
+restored<-read_matched_full(fp,z$train,m$states[[1]]$U)
+stopifnot(identical(restored,f));unlink(c(fp,sp))
+# Coordinate-specific aggregation and paired differences survive the report path.
+r<-tempfile();dir.create(r)
+atomic_rds(list(settings=pilot),file.path(r,"protocol.rds"))
+jobs<-data.frame(rep=c(1L,1L),calib=c(20L,20L),method=c("FULL","CUT"),job=c("a","b"))
+for(i in 1:2) {
+  dir.create(file.path(r,jobs$job[i]));zsc<-scores;zsc$method<-jobs$method[i]
+  zsc$sq_error[zsc$target=="U"&zsc$coordinate==2]<-100
+  atomic_rds(zsc,file.path(r,jobs$job[i],"scores.rds"))
+}
+aggregate_scores(jobs,r)
+ag<-read.csv(file.path(r,"replicate_scores.csv"))
+stopifnot(all(ag$rmse[ag$target=="U"&ag$coordinate==2]==10),
+  file.exists(file.path(r,"report.html")),file.exists(file.path(r,"paired_summary.csv")))
+unlink(r,recursive=TRUE)
+cat("PASS: pilot selection, interior outer states, archived FULL import, coordinate-specific paired reporting.\n")

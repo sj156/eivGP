@@ -12130,7 +12130,8 @@ atomic_rds <- function(x,path) {
 }
 retire_conditional_fit <- function(path, states_path) {
   saved<-readRDS(states_path)
-  if(isTRUE(saved$pass) && length(saved$states)>0L && file.exists(path))unlink(path)
+  # Preserve every conditional chain for later target diagnostics and continuation.
+  # The selected prediction states are an additional integration cache, not a replacement.
   saved
 }
 hash_object <- function(x) {
@@ -12149,19 +12150,24 @@ integers <- function(x) {
 }
 settings <- function(a) {
   allowed<-c("action","profile","data-root","output","reps","calib","methods","outer","inner-draws",
-    "latent","iter","warmup","inner-iter","inner-warmup","cores","seed","full-fit-map")
+    "latent","gp-response-latent","cc-response-latent","iter","warmup","inner-iter","inner-warmup","cores","seed","full-fit-map")
   if(length(setdiff(names(a),allowed)))stop("Unknown option: ",paste(setdiff(names(a),allowed),collapse=","))
   get<-function(k,default)if(is.null(a[[k]]))default else a[[k]]
   quick<-identical(get("profile","paper"),"quick")
-  if(!get("profile","paper")%in%c("paper","quick"))stop("profile must be paper or quick")
+  pilot<-identical(get("profile","paper"),"pilot")
+  if(!get("profile","paper")%in%c("paper","quick","pilot"))stop("profile must be paper, quick or pilot")
   cfg<-list(full_fit_map=get("full-fit-map",""),profile=get("profile","paper"),data_root=get("data-root",Sys.getenv("EIVGP_DATA_ROOT",numerical_default_data("study2"))),
-    output=get("output",Sys.getenv("EIVGP_MECHANISM_ROOT",numerical_default_output("study2/mechanism"))),reps=integers(get("reps",if(quick)"1"else"1:50")),
-    calib=integers(get("calib","20,50")),methods=strsplit(get("methods","FULL,CUT,UC-GP,LVGP,EzGP,UC-GP-CC,LVGP-CC,EzGP-CC"),",",fixed=TRUE)[[1]])
-  defaults<-if(quick)c(outer=4,inner_draws=1,latent=4,iter=40,warmup=20,inner_iter=40,inner_warmup=20,cores=1,seed=77101) else
+    output=get("output",Sys.getenv("EIVGP_MECHANISM_ROOT",numerical_default_output("study2/mechanism"))),reps=integers(get("reps",if(quick)"1"else if(pilot)"1,25"else"1:50")),
+    calib=integers(get("calib","20,50")),methods=strsplit(get("methods",if(pilot)"FULL,CUT,UC-GP-CC,LVGP-CC,EzGP-CC"else"FULL,CUT,UC-GP,LVGP,EzGP,UC-GP-CC,LVGP-CC,EzGP-CC"),",",fixed=TRUE)[[1]])
+  defaults<-if(quick)c(outer=4,inner_draws=1,latent=4,iter=40,warmup=20,inner_iter=40,inner_warmup=20,cores=1,seed=77101) else if(pilot)
+    c(outer=4,inner_draws=4,latent=16,iter=6000,warmup=2000,inner_iter=1500,inner_warmup=500,cores=4,seed=77101) else
     c(outer=64,inner_draws=4,latent=64,iter=20000,warmup=5000,inner_iter=4000,inner_warmup=1000,cores=4,seed=77101)
+  defaults<-c(defaults,gp_response_latent=1L,cc_response_latent=4L)
   for(k in names(defaults))cfg[[k]]<-as.integer(get(gsub("_","-",k),defaults[[k]]))
+  if(is.null(a[["cc-response-latent"]]))cfg$cc_response_latent<-min(4L,cfg$latent)
   if(any(!is.finite(unlist(cfg[names(defaults)])))||any(unlist(cfg[names(defaults)])<1))stop("Numeric controls must be positive")
   if(cfg$iter<=cfg$warmup||cfg$inner_iter<=cfg$inner_warmup||cfg$outer%%4!=0)stop("iterations must exceed warmup; outer must be divisible by four")
+  if(cfg$gp_response_latent>cfg$latent||cfg$cc_response_latent>cfg$latent)stop("Response integration draws cannot exceed latent draws")
   if(cfg$latent<2||cfg$inner_draws>cfg$inner_iter-cfg$inner_warmup)stop("Need at least two latent draws and enough retained conditional draws")
   if(cfg$outer/4>cfg$iter-cfg$warmup)stop("Too few measurement draws for outer selection")
   if(!all(cfg$calib%in%c(20,50)))stop("Study II mechanism component uses calibration 20 and 50 only")
@@ -12183,7 +12189,7 @@ measurement_cut <- function(C,U_obs,cfg,seed) {
     st<-F("mixedgp_v030_initial_state")(ctx)
     logmeas<-function(s)F("mixedgp_v030_measurement_loglik")(s,F("mixedgp_v030_decode")(s,ctx),ctx)
     K<-cfg$iter-cfg$warmup;states<-vector("list",cfg$outer/4)
-    selected<-unique(round(seq(1,K,length.out=cfg$outer/4)))
+    selected<-floor(((seq_len(cfg$outer/4)-.5)/(cfg$outer/4))*K)+1L
     trace<-matrix(NA_real_,K,length(ctx$missing)*ctx$d+ctx$q*ctx$d+sum(ctx$m_vec))
     path <- if(!is.null(disk))file.path(disk,sprintf("chain-%02d.rds",chain))else NULL
     start <- 0L; elapsed_before <- 0; started <- proc.time()[["elapsed"]]
@@ -12262,6 +12268,13 @@ record_gp_diagnostics <- function(fit,path,conditional=FALSE) {
   if(conditional)z<-z[grepl("^(V$|r$|theta_x|J\\[|dictionary_occupancy)",z$parameter),,drop=FALSE]
   else z<-z[is.finite(z$posterior_sd)&z$posterior_sd>0,,drop=FALSE]
   write.csv(z,path,row.names=FALSE)
+  finite<-is.finite(z$rhat)&is.finite(z$ess_bulk)&is.finite(z$ess_tail)
+  write.csv(data.frame(n_parameter=nrow(z),n_nonfinite=sum(!finite),
+    n_finite_failure=sum(finite & (z$rhat>1.01|z$ess_bulk<400|z$ess_tail<400)),
+    worst_rhat=if(any(is.finite(z$rhat)))max(z$rhat,na.rm=TRUE)else NA_real_,
+    min_bulk=if(any(is.finite(z$ess_bulk)))min(z$ess_bulk,na.rm=TRUE)else NA_real_,
+    min_tail=if(any(is.finite(z$ess_tail)))min(z$ess_tail,na.rm=TRUE)else NA_real_),
+    sub("[.]csv$","_summary.csv",path),row.names=FALSE)
   diagnostic_pass(z)
 }
 fit_full <- function(train,U_obs,cfg,seed,conditional=FALSE) {
@@ -12271,7 +12284,7 @@ fit_full <- function(train,U_obs,cfg,seed,conditional=FALSE) {
     seed=seed,parallel=cfg$cores>1,n_cores=cfg$cores,verbose=FALSE)
 }
 read_matched_full <- function(path,train,U_obs) {
-  fit<-readRDS(path)
+  fit<-F("mixedgp_read_artifact")(path)
   if(is.null(fit$mcmc)&&!is.null(fit$fit))fit<-fit$fit
   equal<-function(a,b)isTRUE(all.equal(unname(a),unname(b),check.attributes=FALSE,tolerance=1e-12))
   expected<-F("mixedgp_v030_priors")(list(),ncol(train$X),2L,rep(4L,4))
@@ -12308,16 +12321,23 @@ gp_evaluate <- function(states,train,test,cfg,seed) {
   Xt<-sweep(sweep(test$X,2,xy$X_center,"-"),2,xy$X_scale,"/")
   us<-prospective_u(states,test$C,cfg$latent,seed)
   N<-nrow(test$X);S<-length(states)
+  response_draws<-if(is.null(cfg$gp_response_latent))1L else cfg$gp_response_latent
+  if(response_draws<1L||response_draws>cfg$latent)stop("Invalid GP response integration budget")
   out<-lapply(c("y_mean","y_var","m_mean","m_var","f_mean","f_var"),function(x)matrix(NA_real_,N,S))
   names(out)<-c("y_mean","y_var","m_mean","m_var","f_mean","f_var")
+  out$y_mean<-out$y_var<-matrix(NA_real_,N,S*response_draws)
   for(s in seq_len(S)) {
     st<-states[[s]]
     predict<-function(x,u,cov=FALSE,noisy=FALSE)F("gp_predict_draw_general")(xy$X,st$U,xy$y,x,u,
       st$logtheta,st$sigma2,noisy=noisy,return_cov=cov)
     f<-predict(Xt,test$U);out$f_mean[,s]<-xy$y_center+xy$y_scale*f$mean;out$f_var[,s]<-xy$y_scale^2*f$var
-    # One independent prospective U per posterior component for the y mixture.
-    yp<-predict(Xt,matrix(us[[s]][1,,],N,2),noisy=TRUE)
-    out$y_mean[,s]<-xy$y_center+xy$y_scale*yp$mean;out$y_var[,s]<-xy$y_scale^2*yp$var
+    # Equal weight per posterior state and prospective input draw. This budget
+    # is distinct from integration of m and does not alter fitted states.
+    for(rr in seq_len(response_draws)) {
+      yp<-predict(Xt,matrix(us[[s]][rr,,],N,2),noisy=TRUE)
+      col<-(s-1L)*response_draws+rr
+      out$y_mean[,col]<-xy$y_center+xy$y_scale*yp$mean;out$y_var[,col]<-xy$y_scale^2*yp$var
+    }
     for(i in seq_len(N)) {
       mp<-predict(Xt[rep(i,cfg$latent),,drop=FALSE],matrix(us[[s]][,i,],cfg$latent,2),cov=TRUE)
       out$m_mean[i,s]<-xy$y_center+xy$y_scale*mean(mp$mean)
@@ -12330,17 +12350,17 @@ categorical_evaluate <- function(method,train,test,cfg,seed,path) {
   if(file.exists(path))return(readRDS(path))
   controls<-if(cfg$profile=="quick")switch(method,`UC-GP`=list(n_starts=2L),
     LVGP=list(n_starts=1L,max_retries=1L,max_iter_ini=10L,max_iter_lat=5L),
-    EzGP=list(tau_fractions=c(.01,.04),cv_folds=2L,maxeval=10L))else list()
+    EzGP=list(tau_fractions=c(.01,.04),cv_folds=2L,maxeval=10L))else if(!is.null(cfg$controls))cfg$controls[[method]]else list()
   model<-do.call(eivGP::fit_mixedgp_competitor,c(list(method=method,X=train$X,y=train$y,C=train$C,
-    new_X=test$X,new_C=test$C,m_vec=rep(4L,4),n_draw=1L,seed=seed),controls))
+    new_X=test$X,new_C=test$C,m_vec=if(is.null(cfg$m_vec))rep(4L,4)else cfg$m_vec,n_draw=1L,seed=seed),controls))
   atomic_rds(model,sub("predictions.rds$","fit.rds",path))
   out<-list(y_mean=matrix(model$predictive_mean,ncol=1),y_var=matrix(model$predictive_variance,ncol=1),
     m_point=as.numeric(model$predictive_mean),optimization_status=model$optimization_status)
   atomic_rds(out,path);out
 }
-cc_predict <- function(method,model,X,C) {
+cc_predict <- function(method,model,X,C,m_vec=rep(4L,4)) {
   if(method=="UC-GP") {
-    nd<-F("make_mixedgp_competitor_data")(X,C,rep(4L,4))
+    nd<-F("make_mixedgp_competitor_data")(X,C,m_vec)
     p<-stats::predict(model$fit,newdata=nd,type="UK",seCompute=TRUE,covCompute=FALSE,lightReturn=TRUE)
     mu<-as.numeric(p$mean);v<-as.numeric(p$sd)^2
   } else {
@@ -12351,19 +12371,22 @@ cc_predict <- function(method,model,X,C) {
 }
 cc_evaluate <- function(method,train,test,cal,us,cfg,seed,path) {
   base<-sub("-CC$","",method)
+  d<-ncol(train$U);m_vec<-if(is.null(cfg$m_vec))rep(4L,4)else cfg$m_vec
   if(file.exists(path))model<-readRDS(path)else {
-    controls<-if(cfg$profile=="quick")switch(base,`UC-GP`=list(n_starts=2L),LVGP=list(n_starts=1L,max_retries=1L,max_iter_ini=10L,max_iter_lat=5L),EzGP=list(tau_fractions=c(.01,.04),cv_folds=2L,maxeval=10L))else list()
+    controls<-if(cfg$profile=="quick")switch(base,`UC-GP`=list(n_starts=2L),LVGP=list(n_starts=1L,max_retries=1L,max_iter_ini=10L,max_iter_lat=5L),EzGP=list(tau_fractions=c(.01,.04),cv_folds=2L,maxeval=10L))else if(!is.null(cfg$controls))cfg$controls[[base]]else list()
     model<-do.call(eivGP::fit_mixedgp_competitor,c(list(method=base,X=cbind(train$X[cal,,drop=FALSE],train$U[cal,,drop=FALSE]),
-      y=train$y[cal],C=train$C[cal,,drop=FALSE],new_X=cbind(test$X[rep(1L,2L),,drop=FALSE],matrix(rep(us[[1]][1,1,],each=2L),2,2)),
-      new_C=test$C[rep(1L,2L),,drop=FALSE],m_vec=rep(4L,4),n_draw=1L,seed=seed),controls))
+      y=train$y[cal],C=train$C[cal,,drop=FALSE],new_X=cbind(test$X[rep(1L,2L),,drop=FALSE],matrix(rep(us[[1]][1,1,],each=2L),2,d)),
+      new_C=test$C[rep(1L,2L),,drop=FALSE],m_vec=if(is.null(cfg$m_vec))rep(4L,4)else cfg$m_vec,n_draw=1L,seed=seed),controls))
     atomic_rds(model,path)
   }
   N<-nrow(test$X);S<-length(us)*cfg$latent;mu<-v<-matrix(NA_real_,N,S)
   for(s in seq_along(us))for(i in seq_len(N)) {
-    p<-cc_predict(base,model,cbind(test$X[rep(i,cfg$latent),,drop=FALSE],matrix(us[[s]][,i,],cfg$latent,2)),test$C[rep(i,cfg$latent),,drop=FALSE])
+    p<-cc_predict(base,model,cbind(test$X[rep(i,cfg$latent),,drop=FALSE],matrix(us[[s]][,i,],cfg$latent,d)),test$C[rep(i,cfg$latent),,drop=FALSE],m_vec=m_vec)
     ids<-(s-1)*cfg$latent+seq_len(cfg$latent);mu[i,ids]<-p$mean;v[i,ids]<-p$var
   }
-  ids<-unlist(lapply(seq_along(us),function(s)(s-1)*cfg$latent+unique(round(seq(1,cfg$latent,length.out=min(cfg$latent,4L))))))
+  response_draws<-if(is.null(cfg$cc_response_latent))min(cfg$latent,4L)else cfg$cc_response_latent
+  if(response_draws<1L||response_draws>cfg$latent)stop("Invalid CC response integration budget")
+  ids<-unlist(lapply(seq_along(us),function(s)(s-1)*cfg$latent+unique(round(seq(1,cfg$latent,length.out=response_draws)))))
   list(y_mean=mu[,ids,drop=FALSE],y_var=v[,ids,drop=FALSE],m_point=rowMeans(mu),optimization_status=model$optimization_status)
 }
 normal_abs <- function(a,s) {s<-pmax(s,1e-12);2*s*dnorm(a/s)+a*(2*pnorm(a/s)-1)}
@@ -12421,18 +12444,18 @@ aggregate_scores <- function(jobs,root) {
   }
   write.csv(do.call(rbind,status),file.path(root,"status.csv"),row.names=FALSE)
   if(!length(rows))return(invisible(NULL))
-  points<-do.call(rbind,rows);write.csv(points,file.path(root,"point_scores.csv"),row.names=FALSE)
+  points<-do.call(rbind,rows);points$coordinate[is.na(points$coordinate)]<-0L;write.csv(points,file.path(root,"point_scores.csv"),row.names=FALSE)
   both<-rbind(points,transform(points,stratum="overall"))
-  groups<-split(both,interaction(both$rep,both$calib,both$method,both$target,both$stratum,drop=TRUE))
+  groups<-split(both,interaction(both$rep,both$calib,both$method,both$target,both$stratum,both$coordinate,drop=TRUE))
   reps<-do.call(rbind,lapply(groups,function(z){
-    out<-z[1,c("rep","calib","method","target","stratum")];out$n<-nrow(z);out$diagnostics_pass<-all(z$diagnostics_pass)
+    out<-z[1,c("rep","calib","method","target","stratum","coordinate")];out$n<-nrow(z);out$diagnostics_pass<-all(z$diagnostics_pass)
     for(k in c("sq_error","crps","nlpd","coverage","width"))out[[k]]<-if(all(is.na(z[[k]])))NA_real_ else mean(z[[k]],na.rm=TRUE)
     out$rmse<-sqrt(out$sq_error);out
   }))
   write.csv(reps,file.path(root,"replicate_scores.csv"),row.names=FALSE)
-  groups<-split(reps,interaction(reps$calib,reps$method,reps$target,reps$stratum,drop=TRUE))
+  groups<-split(reps,interaction(reps$calib,reps$method,reps$target,reps$stratum,reps$coordinate,drop=TRUE))
   sums<-do.call(rbind,lapply(groups,function(z){
-    out<-z[1,c("calib","method","target","stratum")];out$n_rep<-nrow(z);out$n_diagnostics_pass<-sum(z$diagnostics_pass,na.rm=TRUE);out$n_points<-sum(z$n)
+    out<-z[1,c("calib","method","target","stratum","coordinate")];out$n_rep<-nrow(z);out$n_diagnostics_pass<-sum(z$diagnostics_pass,na.rm=TRUE);out$n_points<-sum(z$n)
     for(k in c("rmse","crps","nlpd","coverage","width")) {
       v<-z[[k]];out[[k]]<-if(all(is.na(v)))NA_real_ else mean(v,na.rm=TRUE)
       out[[paste0(k,"_se")]]<-if(sum(is.finite(v))>1)sd(v,na.rm=TRUE)/sqrt(sum(is.finite(v)))else NA_real_
@@ -12442,11 +12465,71 @@ aggregate_scores <- function(jobs,root) {
   # Pair on replication, calibration, target and stratum; never pool test rows as independent replications.
   pairs<-list();methods<-unique(reps$method)
   if(length(methods)>1)for(a in seq_len(length(methods)-1))for(b in (a+1):length(methods)) {
-    z<-merge(reps[reps$method==methods[a],],reps[reps$method==methods[b],],by=c("rep","calib","target","stratum"))
+    z<-merge(reps[reps$method==methods[a],],reps[reps$method==methods[b],],by=c("rep","calib","target","stratum","coordinate"))
     if(nrow(z)) {z$method_a<-methods[a];z$method_b<-methods[b];for(k in c("rmse","crps","nlpd","coverage","width"))z[[paste0(k,"_difference")]]<-z[[paste0(k,".x")]]-z[[paste0(k,".y")]];pairs[[length(pairs)+1]]<-z}
   }
-  if(length(pairs))write.csv(do.call(rbind,pairs),file.path(root,"paired_differences.csv"),row.names=FALSE)
+  if(length(pairs)) {
+    paired<-do.call(rbind,pairs)
+    write.csv(paired,file.path(root,"paired_differences.csv"),row.names=FALSE)
+    summarize_pairs<-function(z,keys) {
+      gs<-split(z,do.call(interaction,c(z[keys],list(drop=TRUE))))
+      do.call(rbind,lapply(gs,function(d){
+        out<-d[1,keys,drop=FALSE];out$n_rep<-nrow(d)
+        for(k in paste0(c("rmse","crps","nlpd","coverage","width"),"_difference")) {
+          v<-d[[k]];out[[k]]<-if(any(is.finite(v)))mean(v,na.rm=TRUE)else NA_real_
+          out[[paste0(k,"_mcse")]]<-if(sum(is.finite(v))>1)sd(v,na.rm=TRUE)/sqrt(sum(is.finite(v)))else NA_real_
+        };out
+      }))
+    }
+    keys<-c("calib","method_a","method_b","target","stratum","coordinate")
+    write.csv(summarize_pairs(paired,keys),file.path(root,"paired_summary.csv"),row.names=FALSE)
+    si<-merge(paired[paired$stratum=="seen",],paired[paired$stratum=="unseen",],
+      by=c("rep","calib","method_a","method_b","target","coordinate"),suffixes=c("_seen","_unseen"))
+    if(nrow(si)) {
+      for(k in paste0(c("rmse","crps","nlpd","coverage","width"),"_difference"))si[[k]]<-si[[paste0(k,"_unseen")]]-si[[paste0(k,"_seen")]]
+      si$stratum<-"unseen_minus_seen"
+      write.csv(si,file.path(root,"paired_interactions.csv"),row.names=FALSE)
+      write.csv(summarize_pairs(si,keys),file.path(root,"interaction_summary.csv"),row.names=FALSE)
+    }
+  }
+  mechanism_report(root)
   invisible(sums)
+}
+# Stage-level wall time includes parallel work; it is not summed CPU time.
+stage_time <- function(folder,stage,expr) {
+  start<-proc.time()[["elapsed"]];ok<-FALSE
+  on.exit({
+    row<-data.frame(stage=stage,seconds=proc.time()[["elapsed"]]-start,success=ok,
+      finished_utc=format(Sys.time(),tz="UTC",usetz=TRUE))
+    path<-file.path(folder,paste0("stage-",stage,".csv"))
+    if(file.exists(path))row<-rbind(read.csv(path),row)
+    write.csv(row,path,row.names=FALSE)
+  })
+  value<-force(expr);ok<-TRUE;value
+}
+mechanism_report <- function(root) {
+  escape<-function(x)gsub(">","&gt;",gsub("<","&lt;",gsub("&","&amp;",as.character(x),fixed=TRUE),fixed=TRUE),fixed=TRUE)
+  table<-function(d)paste0("<table><tr>",paste0("<th>",escape(names(d)),"</th>",collapse=""),"</tr>",
+    paste(apply(d,1,function(r)paste0("<tr>",paste0("<td>",escape(r),"</td>",collapse=""),"</tr>")),collapse=""),"</table>")
+  status<-read.csv(file.path(root,"status.csv"));protocol<-readRDS(file.path(root,"protocol.rds"))
+  paths<-list.files(root,pattern="^stage-.*[.]csv$",recursive=TRUE,full.names=TRUE)
+  timing<-if(length(paths))do.call(rbind,lapply(paths,function(p){z<-read.csv(p);z$job<-basename(dirname(p));z}))else data.frame()
+  if(nrow(timing))write.csv(timing,file.path(root,"stage_timing.csv"),row.names=FALSE)
+  body<-c("<!doctype html><meta charset='utf-8'><title>Numerical comparison report</title>",
+    "<style>body{font:16px system-ui;max-width:1300px;margin:35px auto;padding:20px}table{border-collapse:collapse;font-size:13px;display:block;overflow:auto}th,td{border:1px solid #ddd;padding:6px}th{background:#eef}p{max-width:950px}</style>",
+    "<h1>Paired numerical comparisons</h1>",
+    paste0("<p>Profile: <strong>",escape(protocol$settings$profile),"</strong>. No fits are excluded for diagnostic warnings. This saved-results report does not fit models.</p>"),
+    "<p><strong>Caution:</strong> A pilot measures execution, mixing and cost; a small replication count and limited outer states cannot establish comparative performance or nested Monte Carlo accuracy. Replication MCSEs are not MCMC errors. Latent coordinates, when available, are summarized separately (coordinate 0 denotes non-coordinate targets). Complete-case m intervals are unavailable because the adapters do not supply the required joint covariance.</p>",
+    "<h2>Settings</h2>",paste0("<pre>",escape(paste(capture.output(str(protocol$settings)),collapse="\n")),"</pre>"),
+    "<h2>Completion and diagnostic flags</h2>",table(status))
+  for(f in c("summary.csv","paired_summary.csv","interaction_summary.csv"))if(file.exists(file.path(root,f))) {
+    d<-read.csv(file.path(root,f));if("stratum"%in%names(d)&&f=="summary.csv")d<-d[d$stratum=="overall",]
+    body<-c(body,paste0("<h2>",escape(f),"</h2>"),table(d))
+  }
+  if(nrow(timing))body<-c(body,"<h2>Stage wall times (seconds)</h2>",table(timing))
+  body<-c(body,"<p>Inspect measurement_diagnostics.csv and full/conditional diagnostic CSVs alongside flags. integration_stability.csv compares two subsets of prediction components; it is an integration sensitivity screen, not an R-hat or a proof of stationarity. Full chains, failure records and checkpoints are retained.</p>")
+  writeLines(body,file.path(root,"report.html"))
+  invisible(file.path(root,"report.html"))
 }
 run_mechanism <- function(cfg,action="plan",script_path=NULL) {
   if(!action%in%c("plan","data","run","report"))stop("action must be plan, data, run or report")
@@ -12527,7 +12610,7 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
       shared<-file.path(cfg$output,sprintf("shared-rep%03d-cal%02d",job$rep,job$calib));dir.create(shared,showWarnings=FALSE)
       mp<-file.path(shared,"measurement.rds")
       if(job$method=="CUT"||grepl("-CC$",job$method)) {
-        if(!file.exists(mp))atomic_rds(measurement_cut(dat$train$C,Uobs,cfg,base_seed),mp)
+        if(!file.exists(mp))atomic_rds(stage_time(shared,"measurement",measurement_cut(dat$train$C,Uobs,cfg,base_seed)),mp)
         meas<-readRDS(mp)
         write.csv(meas$diagnostics,file.path(shared,"measurement_diagnostics.csv"),row.names=FALSE)
       }
@@ -12541,17 +12624,17 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
           cp<-file.path(folder,sprintf("conditional-%03d.rds",b))
           sp<-sub("[.]rds$","-states.rds",cp)
           if(!file.exists(sp)) {
-            if(!file.exists(cp))atomic_rds(fit_full(dat$train,meas$states[[b]]$U,cfg,base_seed+200000L+b,TRUE),cp)
+            if(!file.exists(cp))atomic_rds(stage_time(folder,sprintf("conditional-%03d",b),fit_full(dat$train,meas$states[[b]]$U,cfg,base_seed+200000L+b,TRUE)),cp)
             fit<-F("mixedgp_read_artifact")(cp)
             passed<-record_gp_diagnostics(fit,sub("rds$","diagnostics.csv",cp),TRUE)
             atomic_rds(list(pass=passed,states=select_gp(fit,cfg$inner_draws,meas$states[[b]])),sp)
           }
-          # Publish and verify prediction states before retiring a passing fit.
+          # Preserve full chain histories as well as selected integration states.
           saved<-retire_conditional_fit(cp,sp)
           passes<-c(passes,saved$pass)
           states<-c(states,saved$states)
         }
-        pred<-gp_evaluate(states,dat$train,dat$test,cfg,base_seed+300000L)
+        pred<-stage_time(folder,"prediction",gp_evaluate(states,dat$train,dat$test,cfg,base_seed+300000L))
         # Keep every measurement draw for imputation, not just integration states.
         mis<-which(!complete.cases(Uobs));arr<-meas$trace[,,seq_len(length(mis)*2),drop=FALSE]
         pred$U<-array(NA_real_,c(dim(arr)[1]*4,nrow(Uobs),2));pred$U[,mis,]<-matrix(arr,ncol=length(mis)*2)
@@ -12571,7 +12654,7 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
           fit<-F("mixedgp_read_artifact")(fp)
         }
         passes<-record_gp_diagnostics(fit,file.path(folder,"full_diagnostics.csv"));states<-select_gp(fit,cfg$outer*cfg$inner_draws)
-        pred<-gp_evaluate(states,dat$train,dat$test,cfg,base_seed+300000L);pred$U<-fit$mcmc$samples_U
+        pred<-stage_time(folder,"prediction",gp_evaluate(states,dat$train,dat$test,cfg,base_seed+300000L));pred$U<-fit$mcmc$samples_U
       } else if(job$method%in%c("UC-GP","LVGP","EzGP")) {
         cp<-file.path(cfg$output,sprintf("categorical-rep%03d",job$rep),job$method,"predictions.rds")
         pred<-categorical_evaluate(job$method,dat$train,dat$test,cfg,cfg$seed+job$rep*1000L+600000L,cp)
@@ -12580,7 +12663,7 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
         up<-file.path(shared,"prospective.rds")
         if(!file.exists(up))atomic_rds(prospective_u(meas$states,dat$test$C,cfg$latent,base_seed+300000L),up)
         passes<-diagnostic_pass(meas$diagnostics)
-        pred<-cc_evaluate(job$method,dat$train,dat$test,cal,readRDS(up),cfg,base_seed+500000L,file.path(folder,"fit.rds"))
+        pred<-stage_time(folder,"cc-fit-predict",cc_evaluate(job$method,dat$train,dat$test,cal,readRDS(up),cfg,base_seed+500000L,file.path(folder,"fit.rds")))
         if(!is.null(pred$optimization_status)&&grepl("nonconverged",pred$optimization_status))passes<-c(passes,FALSE)
       }
       atomic_rds(list(pass=all(passes),checks=passes,profile=cfg$profile,
@@ -12592,7 +12675,7 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
         stability$difference<-stability$m_second-stability$m_first
         write.csv(stability,file.path(folder,"integration_stability.csv"),row.names=FALSE)
       }
-      scores<-score_result(pred,dat,cal,truth,job$method)
+      scores<-stage_time(folder,"scoring",score_result(pred,dat,cal,truth,job$method))
       # Imputation summaries are in scores; full draws remain in the source fit
       # or shared measurement trace, so do not duplicate them per prediction file.
       pred$U<-NULL
@@ -12608,17 +12691,146 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
   environment()
 }
 
+# Study I: published predictors with continuous (X,U) on calibrated records.
+# This is a response-free prediction adaptation, not the matched CUT ablation.
+mixedgp_study1_cc_measurement <- function(C,U_obs,cfg,seed) {
+  stopifnot(length(C)==length(U_obs),all(is.finite(U_obs[!is.na(U_obs)])))
+  cal<-which(!is.na(U_obs));miss<-which(is.na(U_obs))
+  run<-function(ch)fit_threshold_measurement_response_free(C,U_obs,cal,6L,
+    n_iter=cfg$iter,burn=cfg$warmup,seed=seed+10000L*ch)
+  chains<-if(.Platform$OS.type=="unix"&&cfg$cores>1L)
+    parallel::mclapply(1:4,run,mc.cores=min(cfg$cores,4L),mc.set.seed=FALSE)else lapply(1:4,run)
+  if(any(vapply(chains,inherits,logical(1),"try-error")))stop("Study I measurement chain failed")
+  trace<-array(NA_real_,c(cfg$iter-cfg$warmup,4L,5L+length(miss)),
+    dimnames=list(NULL,paste0("chain",1:4),c(paste0("tau",1:5),paste0("u",miss))))
+  for(ch in 1:4)trace[,ch,]<-cbind(chains[[ch]]$samples_tau,chains[[ch]]$samples_u[,miss,drop=FALSE])
+  diagnostics<-posterior::summarise_draws(posterior::as_draws_array(trace))
+  ids<-floor(((seq_len(cfg$outer/4)-.5)/(cfg$outer/4))*(cfg$iter-cfg$warmup))+1L
+  states<-unlist(lapply(ids,function(i)lapply(1:4,function(ch)
+    list(tau=chains[[ch]]$samples_tau[i,],chain=ch,iteration=cfg$warmup+i))),recursive=FALSE)
+  list(chains=chains,states=states,diagnostics=diagnostics,
+    target="Response-free deterministic threshold model; U ~ N(0,1), ordered uniform thresholds on [-8,8]. Same measurement adapter as Study I PI/CC references; not a matched FULL-CUT ablation.")
+}
+
+mixedgp_study1_cc_workflow <- function(args,repo_root,root,data_root,action) {
+  api<-eivgp_numerical_api(repo_root)
+  get<-function(k,d)if(is.null(args[[k]]))d else args[[k]]
+  profile<-get("profile","paper");pilot<-profile=="pilot"
+  a<-args[setdiff(names(args),c("component","competitors","checkpoint-seconds","checkpoint-iterations","eta"))]
+  a$output<-root;a[["data-root"]]<-data_root
+  if(is.null(a$methods))a$methods<-if(pilot)"UC-GP,LVGP,EzGP,UC-GP-CC,LVGP-CC,EzGP-CC"else"UC-GP-CC,LVGP-CC,EzGP-CC"
+  if(is.null(a$reps)&&pilot)a$reps<-"1"
+  if(is.null(a$calib)&&pilot)a$calib<-"50"
+  cfg<-api$settings(a);cfg$m_vec<-6L;cfg$controls<-mixedgp_competitor_protocol("study1")
+  if(any(!cfg$methods%in%c("UC-GP","LVGP","EzGP","UC-GP-CC","LVGP-CC","EzGP-CC")))
+    stop("Study I complete-case component supports published predictors only")
+  if(any(names(args)%in%c("full-fit-map","inner-iter","inner-warmup","inner-draws")))
+    stop("Study I complete-case component has no conditional response MCMC or FULL map")
+  eta<-as.integer(strsplit(get("eta","0,1"),",",fixed=TRUE)[[1]])
+  if(anyNA(eta)||!length(eta)||anyDuplicated(eta)||any(!eta%in%0:1))stop("eta must select 0, 1 or 0,1")
+  jobs<-expand.grid(rep=cfg$reps,calib=cfg$calib,method=cfg$methods,eta=eta,stringsAsFactors=FALSE)
+  jobs$job<-sprintf("rep%03d-cal%02d-%s",jobs$rep,jobs$calib,jobs$method)
+  if(action=="plan") {print(jobs);cat(nrow(jobs),"Study I jobs; no fits started. Paper default adds 600 CC fits; pilot pairs original/CC versions on replication 1, both regimes, calibration 50.\n");return(invisible(jobs))}
+  if(!action%in%c("data","run","report"))stop("Use action=run for complete-case fitting, or component=core for fit-only")
+  dir.create(root,recursive=TRUE,showWarnings=FALSE)
+  if(action=="run") {
+    lock<-file.path(root,"RUN.lock");if(!dir.create(lock,showWarnings=FALSE))stop("Study I complete-case workflow locked: ",lock)
+    writeLines(as.character(Sys.getpid()),file.path(lock,"pid"));on.exit(unlink(lock,recursive=TRUE),add=TRUE)
+  }
+  result<-list();failures<-0L
+  for(e in eta) {
+    cell<-sprintf("eta%d_balanced",e);out<-file.path(root,cell);dir.create(out,recursive=TRUE,showWarnings=FALSE)
+    selected<-jobs[jobs$eta==e,setdiff(names(jobs),"eta"),drop=FALSE]
+    files<-setNames(file.path(data_root,"complete-case",cell,sprintf("rep%03d.rds",cfg$reps)),cfg$reps)
+    for(r in cfg$reps) {
+      expected<-make_study1_synthetic_dataset(rep_id=r,n=100L,n_test=100L,m=6L,
+        scenario="heterogeneity_continuum",threshold_design="balanced",heterogeneity_eta=e,calib_grid=c(0L,20L,50L))
+      p<-files[as.character(r)]
+      if(!file.exists(p)&&action%in%c("data","run"))api$atomic_rds(expected,p)
+      if(!file.exists(p)||!identical(readRDS(p),expected))stop("Missing or altered frozen Study I data: ",p)
+    }
+    if(action=="data")next
+    identity<-list(settings=cfg[setdiff(names(cfg),c("reps","calib","methods","cores","output","data_root"))],
+      eta=e,package_manifest=eivgp_module_identity(),R=as.character(getRversion()),
+      versions=setNames(vapply(c("kergp","LVGP","EzGP","posterior"),function(p)as.character(packageVersion(p)),""),c("kergp","LVGP","EzGP","posterior")))
+    protocol<-file.path(out,"protocol.rds")
+    if(file.exists(protocol)&&!identical(readRDS(protocol),identity))stop("Configuration/code changed; use a new Study I output directory")
+    if(!file.exists(protocol))api$atomic_rds(identity,protocol)
+    registry<-file.path(out,"job_registry.rds");alljobs<-if(file.exists(registry))unique(rbind(readRDS(registry),selected))else selected
+    if(action=="run")api$atomic_rds(alljobs,registry)
+    for(j in if(action=="run")seq_len(nrow(selected))else integer()) {
+      job<-selected[j,];folder<-file.path(out,job$job);dir.create(folder,recursive=TRUE,showWarnings=FALSE)
+      scorefile<-file.path(folder,"scores.rds");if(file.exists(scorefile))next
+      message("Running Study I ",cell," ",job$job)
+      tryCatch({
+        artifact<-readRDS(files[as.character(job$rep)]);d<-artifact$data
+        convert<-function(d)list(X=matrix(d$x,ncol=1L),U=matrix(d$u,ncol=1L),C=matrix(d$c,ncol=1L),y=d$y)
+        dat<-list(train=convert(d$train),test=convert(d$test));cal<-artifact$calibration_sets[[as.character(job$calib)]]
+        stopifnot(length(cal)==job$calib,qr(cbind(1,dat$train$U[cal,,drop=FALSE]))$rank==2L)
+        seed<-cfg$seed+job$rep*1000L+job$calib
+        if(grepl("-CC$",job$method)) {
+          # No hidden training U or any Y enters the measurement likelihood.
+          Uobs<-rep(NA_real_,100L);Uobs[cal]<-dat$train$U[cal,1]
+          shared<-file.path(out,sprintf("shared-rep%03d-cal%02d",job$rep,job$calib));dir.create(shared,showWarnings=FALSE)
+          mp<-file.path(shared,"measurement.rds")
+          if(!file.exists(mp))api$atomic_rds(api$stage_time(shared,"measurement",mixedgp_study1_cc_measurement(d$train$c,Uobs,cfg,seed)),mp)
+          meas<-readRDS(mp);write.csv(meas$diagnostics,file.path(shared,"measurement_diagnostics.csv"),row.names=FALSE)
+          up<-file.path(shared,"prospective.rds")
+          if(!file.exists(up)) {
+            set.seed(seed+300000L)
+            us<-lapply(meas$states,function(st){z<-matrix(NA_real_,cfg$latent,100L)
+              for(i in 1:100)z[,i]<-rtruncnorm_vec(rep(0,cfg$latent),rep(1,cfg$latent),
+                rep(c(-Inf,st$tau)[d$test$c[i]],cfg$latent),rep(c(st$tau,Inf)[d$test$c[i]],cfg$latent))
+              array(z,c(cfg$latent,100L,1L))})
+            api$atomic_rds(us,up)
+          }
+          pred<-api$stage_time(folder,"cc-fit-predict",api$cc_evaluate(job$method,dat$train,dat$test,cal,readRDS(up),cfg,seed+500000L,file.path(folder,"fit.rds")))
+          passes<-api$diagnostic_pass(meas$diagnostics)
+        } else {
+          cp<-file.path(out,sprintf("original-rep%03d",job$rep),job$method,"predictions.rds")
+          pred<-api$stage_time(folder,"original-fit-predict",api$categorical_evaluate(job$method,dat$train,dat$test,cfg,250000L+1000L*job$rep,cp))
+          passes<-TRUE
+        }
+        passes<-passes&&(is.null(pred$optimization_status)||!grepl("nonconverged",pred$optimization_status))
+        truth<-list(m=m0_1d(d$test$x,d$test$c,tau=d$tau_true,scenario="heterogeneity_continuum"))
+        scores<-api$stage_time(folder,"scoring",api$score_result(pred,dat,cal,truth,job$method))
+        api$atomic_rds(pred,file.path(folder,"predictions.rds"));api$atomic_rds(scores,scorefile)
+        api$atomic_rds(list(pass=passes),file.path(folder,"diagnostics.rds"));unlink(file.path(folder,"failure.rds"))
+      },error=function(err){failures<<-failures+1L;api$atomic_rds(list(message=conditionMessage(err),time=Sys.time()),file.path(folder,"failure.rds"));message("FAILED: ",conditionMessage(err))})
+    }
+    result[[cell]]<-api$aggregate_scores(alljobs,out)
+  }
+  if(failures)stop(failures," Study I jobs failed; inspect per-regime status.csv; identical reruns retry failures")
+  invisible(result)
+}
+
 # Permanent orchestration for both paper studies. Historical readers are separate.
 run_paper_study <- function(study=c("study1","study2"), args=list(), repo_root=getwd()) {
   study<-match.arg(study)
+  # Follow-up mode adds missing comparisons; it never routes through core fitting.
+  if(identical(args$component,"follow-up")) {
+    args$component <- "publication"
+    if(is.null(args$stage)) args$stage <- "full"
+    return(mixedgp_publication_workflow(study,args,repo_root))
+  }
+  if(identical(args$component,"publication")) return(mixedgp_publication_workflow(study,args,repo_root))
   api<-eivgp_numerical_api(repo_root)
   get<-function(k,d)if(is.null(args[[k]]))d else args[[k]]
+  mixing <- get("mixing-plots", TRUE)
+  if(length(mixing)!=1L || is.na(mixing) || !tolower(as.character(mixing)) %in% c("true","false"))
+    stop("mixing-plots must be true or false")
+  mixing <- identical(tolower(as.character(mixing)),"true")
+  args[["mixing-plots"]] <- NULL
   component<-get("component","all")
-  if(!component%in%c("all","core","mechanism"))stop("component must be all, core or mechanism")
-  if(study=="study1" && component=="mechanism")stop("The mechanism component belongs to Study II")
+  if(!component%in%c("all","core","mechanism","complete-case"))stop("component must be all, core, mechanism or complete-case")
+  if(study=="study1" && component=="mechanism")stop("Use complete-case for Study I; matched CUT belongs to Study II")
+  if(study=="study2" && component=="complete-case")stop("Use mechanism with methods=UC-GP-CC,LVGP-CC,EzGP-CC for Study II")
   action<-get("action","plan");profile<-get("profile","paper")
   if(!action%in%c("plan","data","fit","run","report"))stop("Unknown action")
   if(action=="fit" && study=="study2" && component!="core")stop("Use action=run for the complete Study II workflow, or component=core for fit-only")
+  if(action=="fit" && study=="study1" && component!="core")stop("Use action=run for Study I with complete-case additions, or component=core for fit-only")
+  if(profile=="pilot" && !((study=="study2"&&component=="mechanism")||(study=="study1"&&component=="complete-case")))
+    stop("Pilot requires Study II mechanism or Study I complete-case")
   root<-get("output",Sys.getenv("EIVGP_RESULTS_ROOT",api$numerical_default_output(study)))
   data<-get("data-root",Sys.getenv("EIVGP_DATA_ROOT",api$numerical_default_data(study)))
   if(!nzchar(root)||!nzchar(data)||grepl("Dropbox|Overleaf",root,ignore.case=TRUE))stop("Supply a non-synced local output root and data root")
@@ -12636,10 +12848,10 @@ run_paper_study <- function(study=c("study1","study2"), args=list(), repo_root=g
     checkpoint_seconds," seconds or ",checkpoint_iterations," iterations, at iteration boundaries.")
   common<-c("component","action","profile","output","data-root","cores","competitors",
     "checkpoint-seconds","checkpoint-iterations")
-  targeted<-c("reps","calib","methods","outer","inner-draws","latent","iter","warmup","inner-iter","inner-warmup","seed","full-fit-map")
+  targeted<-c("reps","calib","methods","outer","inner-draws","latent","iter","warmup","inner-iter","inner-warmup","seed","full-fit-map","eta","gp-response-latent","cc-response-latent")
   if(length(setdiff(names(args),c(common,targeted))))stop("Unknown options: ",paste(setdiff(names(args),c(common,targeted)),collapse=", "))
-  if(component!="mechanism" && any(names(args)%in%targeted))stop("Replication/method/sampler selections require component=mechanism; the core grid uses its fixed profile")
-  if(component=="mechanism" && "competitors"%in%names(args))stop("Use methods for the mechanism component")
+  if(!component%in%c("mechanism","complete-case") && any(names(args)%in%targeted))stop("Replication/method/sampler selections require component=mechanism; the core grid uses its fixed profile")
+  if(component%in%c("mechanism","complete-case") && "competitors"%in%names(args))stop("Use methods for the mechanism component")
   result<-list()
   if(component%in%c("all","core")) {
     config<-study_config(study,profile,output_root=file.path(root,"core"),data_root=data,cores=as.integer(get("cores","4")))
@@ -12651,6 +12863,24 @@ run_paper_study <- function(study=c("study1","study2"), args=list(), repo_root=g
     a<-args[setdiff(names(args),c("component","competitors","checkpoint-seconds","checkpoint-iterations"))]
     a$output<-file.path(root,"mechanism");a[["data-root"]]<-data
     result$mechanism<-api$run_mechanism(api$settings(a),action)
+  }
+  if(study=="study1" && component%in%c("all","complete-case")) {
+    if(action=="fit")stop("Use action=run for the complete Study I workflow, or component=core for fit-only")
+    result$complete_case<-mixedgp_study1_cc_workflow(args,repo_root,file.path(root,"complete-case"),data,action)
+  }
+  if(mixing && action %in% c("report","run")) {
+    directories <- c(if(component %in% c("all","core"))file.path(root,"core"),
+      if(study=="study1" && component %in% c("all","complete-case"))file.path(root,"complete-case"),
+      if(study=="study2" && component %in% c("all","mechanism"))file.path(root,"mechanism"))
+    attr(result,"mixing_plots") <- unlist(lapply(directories,function(p) {
+      if(!dir.exists(p)) return(character())
+      source <- p
+      if(identical(p,file.path(root,"core")) && !is.null(result$core$run_dir)) {
+        cells <- file.path(result$core$run_dir,"cells")
+        if(dir.exists(cells)) source <- cells
+      }
+      save_mixing_plots(source, output_dir=file.path(p,"mixing-plots"))
+    }),use.names=FALSE)
   }
   invisible(result)
 }
@@ -12734,4 +12964,97 @@ mixedgp_batch_timing <- function(directory, ids, groups=rep("replication",length
     invisible(row)
   }
   update
+}
+
+# Publication completion workflow: orchestration only; inference remains in the
+# authoritative study components. Planning never fits or reads chain archives.
+mixedgp_publication_workflow <- function(study, args, repo_root) {
+  get <- function(k,d) if(is.null(args[[k]])) d else args[[k]]
+  allowed <- c("component","stage","action","profile","output","data-root","reps","cores","full-fit-root",
+    "full-fit-map","outer","latent","inner-draws","iter","warmup","inner-iter",
+    "inner-warmup","gp-response-latent","cc-response-latent","mixing-plots",
+    "checkpoint-seconds","checkpoint-iterations")
+  if(length(setdiff(names(args),allowed))) stop("Unknown publication options: ",paste(setdiff(names(args),allowed),collapse=", "))
+  if(!identical(get("profile","paper"),"paper"))stop("Publication follow-ups use profile=paper; stage selects the pilot size")
+  stage <- match.arg(get("stage","pilot"),c("pilot","integration","full"))
+  action <- match.arg(get("action","plan"),c("plan","data","run","report"))
+  parse_reps <- function(x) {
+    tokens<-strsplit(x,",",fixed=TRUE)[[1]]
+    if(!length(tokens)||any(!grepl("^[0-9]+(:[0-9]+)?$",tokens)))stop("Invalid reps")
+    z<-unlist(lapply(tokens,function(t){v<-as.integer(strsplit(t,":",fixed=TRUE)[[1]]);if(length(v)==2L)seq.int(v[1],v[2])else v}))
+    if(anyNA(z)||any(z<1L|z>50L)||anyDuplicated(z))stop("reps must be distinct indices in 1:50")
+    sort(z)
+  }
+  reps<-parse_reps(get("reps",if(stage=="full")"1:50" else "1,25"))
+  root<-path.expand(get("output",Sys.getenv("EIVGP_RESULTS_ROOT",file.path(path.expand("~/eivGP-results"),study))))
+  data<-path.expand(get("data-root",Sys.getenv("EIVGP_DATA_ROOT",file.path(path.expand("~/eivGP-results"),"data",study))))
+  if(!nzchar(root)||!nzchar(data)||any(grepl("Dropbox|Overleaf",c(root,data),ignore.case=TRUE)))stop("Supply non-synced output and data-root")
+  cores<-as.integer(get("cores","4"));if(length(cores)!=1L||is.na(cores)||cores<1L)stop("cores must be positive")
+  defaults<-if(study=="study1")list(iter="12000",warmup="4000",outer="16",latent="128",`cc-response-latent`="64")else
+    list(iter="100000",warmup="20000",outer="32",latent="128",`inner-iter`="4000",`inner-warmup`="1000",`inner-draws`="4",`gp-response-latent`="16",`cc-response-latent`="64")
+  for(k in intersect(names(defaults),names(args)))defaults[[k]]<-args[[k]]
+  for(k in names(defaults)) {
+    v<-suppressWarnings(as.numeric(defaults[[k]]))
+    if(length(v)!=1L||!is.finite(v)||v<1||v!=floor(v))stop("Invalid ",k)
+  }
+  if(as.integer(defaults$iter)<=as.integer(defaults$warmup)||as.integer(defaults$outer)%%4L!=0L)stop("Invalid iterations or outer count")
+  if(as.integer(defaults[["cc-response-latent"]])>as.integer(defaults$latent))stop("Response budget exceeds latent budget")
+  if(study=="study1"&&any(c("inner-iter","inner-warmup","inner-draws","full-fit-map","full-fit-root","gp-response-latent")%in%names(args)))stop("Study I does not use conditional response chains or a FULL map")
+  methods<-if(study=="study1")if(stage=="full")"UC-GP-CC,LVGP-CC,EzGP-CC"else"UC-GP,LVGP,EzGP,UC-GP-CC,LVGP-CC,EzGP-CC" else "FULL,CUT,UC-GP-CC,LVGP-CC,EzGP-CC"
+  base<-c(list(component=if(study=="study1")"complete-case"else"mechanism",action=action,profile="paper",reps=paste(reps,collapse=","),calib="20,50",methods=methods,cores=as.character(cores),`data-root`=data),defaults)
+  for(k in intersect(c("full-fit-map","mixing-plots","checkpoint-seconds","checkpoint-iterations"),names(args)))base[[k]]<-args[[k]]
+  variants<-list(reference=list())
+  if(stage=="integration") {
+    variants$outer_doubled<-list(outer=as.character(2L*as.integer(defaults$outer)))
+    variants$latent_doubled<-list(latent=as.character(2L*as.integer(defaults$latent)))
+    variants$response_doubled<-list(`cc-response-latent`=as.character(min(as.integer(defaults$latent),2L*as.integer(defaults[["cc-response-latent"]]))))
+    if(study=="study2") {
+      variants$response_doubled[["gp-response-latent"]]<-as.character(min(as.integer(defaults$latent),2L*as.integer(defaults[["gp-response-latent"]])))
+      variants$gp_states_doubled<-list(`inner-draws`=as.character(2L*as.integer(defaults[["inner-draws"]])))
+    }
+  }
+  # Separate roots prevent cross-machine locks and incompatible-cache reuse.
+  batch<-paste0("reps-",paste(sprintf("%02d",reps),collapse="-"))
+  plans<-lapply(names(variants),function(v){a<-modifyList(base,variants[[v]]);a$output<-file.path(root,"publication",stage,batch,v);a})
+  names(plans)<-names(variants)
+  jobs<-do.call(rbind,lapply(names(plans),function(v){a<-plans[[v]];d<-expand.grid(rep=reps,calib=c(20L,50L),method=strsplit(methods,",",fixed=TRUE)[[1]],eta=if(study=="study1")c(0L,1L)else NA_integer_,stringsAsFactors=FALSE);d$study<-study;d$stage<-stage;d$variant<-v;d$output<-a$output;d}))
+  message(nrow(jobs)," method evaluations; settings are provisional, not a convergence claim.")
+  if(action=="plan") {
+    print(jobs[,c("study","stage","variant","rep","calib","method","eta")],row.names=FALSE)
+    return(invisible(list(jobs=jobs,commands=plans)))
+  }
+  # FULL must rescore matching archived fits, never silently launch replacements.
+  if(study=="study2"&&action%in%c("run","report")) {
+    mapfile<-get("full-fit-map","")
+    fitroot<-get("full-fit-root","")
+    if(nzchar(mapfile)&&nzchar(fitroot))stop("Choose full-fit-map or full-fit-root, not both")
+    if(nzchar(fitroot)) {
+      fitroot<-path.expand(fitroot)
+      if(!dir.exists(fitroot))stop("FULL archive directory does not exist: ",fitroot)
+      candidates<-list.files(fitroot,recursive=TRUE,full.names=TRUE)
+      map<-expand.grid(rep=reps,calib=c(20L,50L))
+      map$path<-vapply(seq_len(nrow(map)),function(i) {
+        name<-sprintf("recovery_fit_primary_rep%03d_cal%03d_s2v18-q4-50fcae689bed9194.rds",map$rep[i],map$calib[i])
+        found<-candidates[basename(candidates)==name]
+        if(length(found)!=1L)stop("Need exactly one saved FULL archive named ",name,"; found ",length(found))
+        normalizePath(found,mustWork=TRUE)
+      },character(1))
+      mapdir<-file.path(root,"publication",stage,batch)
+      dir.create(mapdir,recursive=TRUE,showWarnings=FALSE)
+      mapfile<-file.path(mapdir,"full-fit-map.csv")
+      write.csv(map,mapfile,row.names=FALSE)
+      for(v in names(plans))plans[[v]][["full-fit-map"]]<-mapfile
+    }
+    if(!nzchar(mapfile)||!file.exists(mapfile))stop("Supply full-fit-map for matched saved FULL rescoring")
+    map<-read.csv(mapfile,stringsAsFactors=FALSE)
+    if(!all(c("rep","calib","path")%in%names(map)))stop("FULL map requires rep,calib,path")
+    for(rr in reps)for(cc in c(20L,50L)) {
+      z<-map[map$rep==rr&map$calib==cc,,drop=FALSE]
+      if(nrow(z)!=1L||!file.exists(z$path))stop("Missing unique FULL archive for rep ",rr," calibration ",cc)
+    }
+  }
+  out<-file.path(root,"publication",stage,batch);dir.create(out,recursive=TRUE,showWarnings=FALSE)
+  write.csv(jobs,file.path(out,"planned_jobs.csv"),row.names=FALSE)
+  results<-lapply(plans,function(a)run_paper_study(study,a,repo_root))
+  invisible(list(jobs=jobs,results=results))
 }

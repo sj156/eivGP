@@ -1,3 +1,13 @@
+# Numerical-study entrypoints
+
+- `study1.R` / `study2.R`: complete fresh reproduction.
+- `temp-study1-followup.R` / `temp-study2-followup.R`: the current missing-comparison runs, using existing FULL results.
+- `study1.Rmd` / `study2.Rmd` and their HTML reports: notebook/report interfaces.
+- `common.R`: required bootstrap; `check-*.R`: validation utilities.
+
+Exact split-machine follow-up commands and required results are in
+[publication/README.md](publication/README.md). Exploratory sampler investigations are kept outside this replication folder.
+
 # Permanent numerical study workflows
 
 For copy-and-run commands, result paths, completion checks and convergence interpretation, start with the [repository run guide](../../README.md#numerical-studies-mac-mini-or-linux).
@@ -42,14 +52,18 @@ Rscript paper/numerical/study2.R --component=mechanism --action=plan
 # Generate the original fixed-seed datasets, without fitting any model.
 Rscript paper/numerical/study2.R --component=mechanism --action=data
 
-# First paper-profile replication: assess cost, convergence and integration error.
-Rscript paper/numerical/study2.R --component=mechanism --action=run --reps=1 --cores=4
+# Small paired pilot: replications 1 and 25, calibration 20 and 50.
+# 16 new CUT/CC jobs plus four matched FULL references; separate output root.
+Rscript paper/numerical/study2.R --component=mechanism --action=run --profile=pilot \
+  --output="$HOME/eivGP-results/study2-pilot" --cores=4
 
-# Then complete the same protocol. Finished jobs are skipped automatically.
-Rscript paper/numerical/study2.R --component=mechanism --action=run --reps=1:50 --cores=4
+# Review study2-pilot/mechanism/report.html and stage_timing.csv first.
+# After pilot review, the full fresh workflow is the two scripts above.
+# Do not reuse the pilot output root for paper settings.
 
 # Regenerate summaries only.
-Rscript paper/numerical/study2.R --component=mechanism --action=report
+Rscript paper/numerical/study2.R --component=mechanism --action=report --profile=pilot \
+  --output="$HOME/eivGP-results/study2-pilot"
 ```
 
 Data default to `~/eivGP-results/data/study2/`; results default to `~/eivGP-results/study2/mechanism/`. Missing datasets are also generated automatically by `--action=run`. Data generation always uses the original n=100, n_test=100, q=4, m=4 design and calibration grid 0/20/50/80; the mechanism component fits only 20/50. Dataset seed is `1000000 + 10000*rep + 1`, with calibration seed one higher. Sampling seeds are recorded separately. A `--profile=quick` run keeps this DGP but uses deliberately inadequate MCMC and optimizer budgets, in a separate `--output=results/quick` directory. It tests software, not the scientific claims.
@@ -61,7 +75,13 @@ Rscript paper/numerical/study2.R --component=mechanism --action=run --reps=1:50 
   --methods=CUT,UC-GP-CC,LVGP-CC,EzGP-CC --output=results/additions
 ```
 
-This is the 300-complete-case-plus-100-CUT plan. Fresh reproduction should use the full default above so it does not depend on those old results. To refit or complete only one failed job:
+This is the 300-complete-case-plus-100-CUT plan, to launch only after reviewing the pilot. Add `FULL` and a compatible `--full-fit-map` to rescore 100 saved FULL references under exactly the same evaluator (500 score jobs, still 400 new comparisons). A map must include each selected replication/calibration once. Do not pair these new surface errors with historical surface-grid errors.
+
+The pilot uses the original n=100, n_test=100 datasets and original optimizer settings: four measurement chains, 6,000 iterations / 2,000 warmup; four outer draws (one interior draw per measurement chain); four conditional GP chains per outer draw, 1,500 / 500; four retained evaluation states per conditional chain; 16 prospective latent draws per point. Replications 1 and 25 are a fixed computational convenience sample, not a random performance sample. Calibration 20 and 50 contrast weak and stronger anchoring. Shared measurement draws and common test integration draws pair CUT and all three complete-case methods. All four conditional fits retain every chain draw.
+
+Review finite failures separately from unavailable tail ESS, chain stability for response-relevant quantities, stage wall times, and failure messages. Do not use the all-parameter flag as an automatic exclusion rule. Four outer draws cannot validate a nested posterior approximation: before the 400-job run, check additional outer draws and larger test-integration budgets on these same datasets, and compare their changes with the FULL–CUT/CC contrasts. Runtime projections must scale measurement, conditional fitting and prediction separately; the generic per-job forecast does not perform that extrapolation.
+
+ Fresh reproduction should use the full default above so it does not depend on those old results. To refit or complete only one failed job:
 
 ```sh
 Rscript paper/numerical/study2.R --component=mechanism --action=run --reps=7 --calib=20 \
@@ -83,7 +103,7 @@ Evaluation distinguishes:
 
 For m, FULL/CUT intervals integrate the full GP covariance. CC interfaces do not provide the required covariance, so their m interval fields are unavailable; predictive intervals are not relabeled. Physical scoring checks affine-rank calibration. A fitted response f(X,U,C) is not automatically a comparable f(X,U).
 
-`status.csv` preserves failed, pending and completed jobs and diagnostic flags. `point_scores.csv`, `replicate_scores.csv`, `summary.csv` and `paired_differences.csv` retain per-point evidence and matched replication contrasts. Parameter screens flag R-hat >1.01 or bulk/tail ESS <400; all completed scores remain visible. Replication MCSE is not within-fit error. Per-fit diagnostic CSVs and `integration_stability.csv` support review; neither a passed screen nor a split-integration check proves adequate target precision. **TBD:** target-specific checks, budget sensitivity, final tables and figures, and the unseen-minus-seen contrast with paired uncertainty. The manuscript marks these unfinished analyses rather than presenting anticipated gains as findings.
+`status.csv` preserves failed, pending and completed jobs and diagnostic flags. `point_scores.csv`, `replicate_scores.csv`, `summary.csv` and `paired_differences.csv` retain per-point evidence and matched replication contrasts. Parameter screens flag R-hat >1.01 or bulk/tail ESS <400; all completed scores remain visible. Replication MCSE is not within-fit error. Per-fit diagnostic CSVs and `integration_stability.csv` support review; neither a passed screen nor a split-integration check proves adequate target precision. `paired_summary.csv` gives replication MCSEs for method differences; `interaction_summary.csv` gives the paired unseen-minus-seen contrast. **TBD:** target-specific checks, budget sensitivity, and final tables and figures. The manuscript marks these unfinished analyses rather than presenting anticipated gains as findings.
 
 ## Resume, transfer and optional imports
 
@@ -109,18 +129,13 @@ Defaults are `~/eivGP-results/data/study1`, `~/eivGP-results/data/study2`, and s
 
 Study fit checkpoints use lossless compact storage: pooled copies of chain
 histories are reconstructed on read. The mechanism component uses the same storage.
-CUT stores selected prediction states and diagnostic CSVs for each conditional
-fit, then removes that fit only when its MCMC screening passes. Failed fits
-remain available for investigation. Selected states support deterministic
-prediction reconstruction, but cannot resume the original conditional chains;
-rerunning those chains requires a fresh output root. No existing archives are
-cleaned automatically. Full EIV fits and shared measurement traces are retained.
+CUT retains every conditional fit, including passing fits, together with selected prediction states and diagnostic CSVs. The selected states accelerate prediction but do not replace chain histories. Full EIV fits and shared measurement traces are retained. No existing archives are cleaned automatically.
 Imputation scores preserve errors, coverage and interval widths; prediction
 files omit duplicate training-U draws. Use eivGP::read_fit() for compact fits.
 
 These changes reduce duplication, not the scientific iteration budgets. A
-publication-scale disk-size bound has not been measured; failed diagnostics can
-still retain substantial histories. Measure a representative replication before
+publication-scale disk-size bound has not been measured; full chain histories
+can require substantial space. Measure a representative replication before
 allocating the full run.
 
 
@@ -192,3 +207,91 @@ when workers run in parallel.
 find "$HOME/eivGP-results" -type f \
   \( -name 'chain-*-timing.csv' -o -name 'forecast-[0-9]*.csv' \)
 ```
+
+## Notebook parity
+
+The `.Rmd` files can read historical merged exports when `component` is empty, or call the same package workflow as the two batch scripts when it is set. For a saved Study II pilot, render `study2.Rmd` with `component="mechanism"`, `profile="pilot"`, `action="report"`, `results_root` equal to the batch `--output`, and `options=list(`data-root`=..., `full-fit-map`=...)` matching the original launch. Omit the FULL map if none was used. Rendering reports never silently changes action to run. `study1.R` includes its original grid and complete-case published predictors; `study2.R` includes its core grid and the CUT/complete-case component. Both are included automatically with `--component=all` (the default). No third simulation script is required.
+
+
+## Two versions of the published competitors in both studies
+
+The original UC-GP/LVGP/EzGP fits use every `(Y,X,C)` record, ignore calibration entirely, and are reused across calibration sizes. Their `-CC` versions use only calibrated `(Y,X,U,C)` records, with `U` appended to the continuous inputs and `C` retained as categorical. Unknown test inputs are integrated over common response-free measurement draws; no test `Y` or true test `U` enters prediction. The latter integration is an adaptation, not a claim about the original published algorithms. All three retain their author-package fits and optimizer status. Missing category support and numerical failures remain explicit; no failed fit is replaced by an original-method result.
+
+Study I now has `--component=complete-case`. Its paper grid adds **600 CC fits** (two regimes, 50 replications, calibration 20/50, three methods), separate from the **400 new Study II jobs** (100 CUT and 300 CC). `--component=all` runs the core original-method grid plus these additions through each study's single script. Use `--component=core` to reproduce only the prior core grid. No paper batch is launched automatically after a pilot.
+
+```sh
+# First inspect and then run 12 paired pilot jobs: both regimes, replication 1,
+# calibration 50, three original and three complete-case predictors.
+Rscript paper/numerical/study1.R --component=complete-case --profile=pilot --action=plan
+Rscript paper/numerical/study1.R --component=complete-case --profile=pilot --action=run --cores=4 --output="$HOME/eivGP-results/study1-cc-pilot"
+# Saved results only; no refitting. Use the same profile and scientific settings.
+Rscript paper/numerical/study1.R --component=complete-case --profile=pilot --action=report --output="$HOME/eivGP-results/study1-cc-pilot"
+# After review, run only the new Study I fits (originals remain in core).
+Rscript paper/numerical/study1.R --component=complete-case --profile=paper --action=run --output="$HOME/eivGP-results/study1-cc-paper"
+```
+
+Study I accepts `--eta=0,1`, `--reps`, `--calib=20,50`, and `--methods` within this component. The pilot uses four response-free chains with 6000 iterations/2000 warmup and four balanced outer states with 16 prospective latent draws each; paper starts with 20000/5000, 64 states and 64 latent draws. Optimizer controls remain the paper controls in the pilot; `quick` is only a software smoke check. The response-free deterministic threshold sampler uses `U~N(0,1)` and ordered uniform thresholds on `[-8,8]`, as in the Study I diagnostic baselines; it is **not** the Study II probit model or a matched Study I FULL-CUT experiment. It saves complete measurement chains at the end of the stage; unlike the Study II CUT sampler it has no within-chain restart checkpoint. Completed measurement and native GP stages are cached for retry.
+
+Per-regime `status.csv`, `summary.csv`, `paired_summary.csv`, `report.html`, native fits, measurement chains, diagnostic CSVs and stage times are saved under `complete-case/eta0_balanced/` and `eta1_balanced/`. Both regimes are reported separately. A one-replication pilot has no replication MCSE and cannot establish comparative performance. Review mixing and latent-integration sensitivity before increasing the grid. The full `m` point estimate uses all latent components; response scores by default use four evenly spaced latent components per outer state (configurable with `--cc-response-latent`), a budget that must also be checked. Complete-case mean credible bands are unavailable because native adapters do not provide the integrated joint covariance.
+
+For the Study I notebook use `component="complete-case"`, `profile="pilot"`, `action="report"`, the batch output root, and any matching selections in `options`. PI-GP/CC-GP remain supplementary diagnostics; neither is required as a primary benchmark once the original and complete-case versions are reported, and neither replaces the matched FULL-CUT feedback comparison.
+
+
+## Stronger paired pilot and external output storage
+
+Keep `--profile=pilot` and select only the paired pilot replications. No pilot command switches to a full grid automatically. Large outputs and `checkpoints/` follow `--output`; frozen data follow `--data-root`. On an external drive, verify that it is mounted before launching and use a new output root for changed scientific settings. Preserve the initial pilot outputs for comparison.
+
+`--latent` controls integration for the observable mean. `--gp-response-latent` controls prospective U draws per retained GP state for FULL/CUT response scores (default 1); `--cc-response-latent` controls draws per outer measurement state for CC response scores (default 4). Both must be positive and no larger than `--latent`. All components retain equal weights. Increasing either response budget changes no fitted posterior and does not create mean credible intervals for the native competitors. The settings and package identity are recorded and must match on resume/report.
+
+```sh
+# Set PILOT_STORE to a mounted local/external results directory outside Overleaf.
+# Study I: both regimes, matched replications and calibration levels; 48 score
+# jobs, with original-method fits cached across the two calibration levels.
+Rscript paper/numerical/study1.R --component=complete-case --profile=pilot --action=run \
+  --eta=0,1 --reps=1,25 --calib=20,50 --cores=2 \
+  --iter=12000 --warmup=4000 --outer=16 --latent=128 --cc-response-latent=16 \
+  --output="$PILOT_STORE/study1" --data-root="$PILOT_STORE/data/study1"
+# Study II: only 20 score jobs, including four FULL references; no core grid.
+# Supply --full-fit-map=/absolute/map.csv to rescore compatible saved FULL fits.
+Rscript paper/numerical/study2.R --component=mechanism --profile=pilot --action=run \
+  --reps=1,25 --calib=20,50 --cores=4 --iter=100000 --warmup=20000 \
+  --outer=16 --inner-iter=4000 --inner-warmup=1000 --inner-draws=4 \
+  --latent=128 --gp-response-latent=4 --cc-response-latent=16 \
+  --checkpoint-seconds=300 --checkpoint-iterations=5000 \
+  --output="$PILOT_STORE/study2" --data-root="$PILOT_STORE/data/study2"
+```
+
+These are numerical-accuracy pilots, not performance estimates or validated final budgets. The longer Study II measurement budget targets the low ESS found in the initial pilot. Review target/measurement diagnostics, compare nested outer-state subsets, and repeat prediction with independent integration seeds before setting production budgets. Retain finite failures and unavailable diagnostics separately. The Study I deterministic measurement traces are shared in law across its two response regimes; identical diagnostics are not independent evidence.
+
+### Default mixing figures
+
+Both `study1.R` and `study2.R` (and their notebooks) save three small ggplot
+figures after `--action=report` or `--action=run`: chain agreement versus
+bulk ESS, MCSE/posterior SD, and unavailable diagnostic counts. Each selected
+component writes a separate `mixing-plots/` folder containing PDF and PNG
+versions plus a diagnostic-source manifest. Set `--mixing-plots=false` to skip
+them. Planning and data preparation never fit or plot chains. Plotting reads
+saved parameter-level CSVs; historical exports containing only gate summaries
+are explicitly reported as insufficient rather than inventing diagnostics.
+
+Reusable package APIs:
+
+```r
+eivGP::plot_mixing(diagnostics, type = "overview") # also precision / coverage
+eivGP::save_mixing_plots(results_directory)
+eivGP::plot_mcmc(fit, parameters = c("V", "r"), type = "trace")
+# also rank / acf / running_mean; supply named chain-vector lists for targets
+```
+
+These functions return ordinary ggplots (the save helper returns file paths).
+Trace display subsampling never changes diagnostic calculations or stored draws.
+Scientific-target integrations are not recomputed for plots. Keep raw-coordinate,
+scientific-target, and pilot results distinct; passing reference lines establishes
+neither convergence nor integration accuracy. Reinstall the package after updating
+this checkout; a running pilot's frozen library should remain unchanged.
+
+## Publication completion (2026-10-19)
+
+Both study entrypoints support `--component=publication --stage=pilot|integration|full`.
+See [portable publication workflow](publication/README.md). Default action is plan;
+no full simulation has been launched by this update.

@@ -7730,7 +7730,8 @@ mixedgp_v030_priors <- function(priors = list(), p, d, m_vec) {
 mixedgp_v030_control <- function(control = list(), n_mis) {
   out <- list(u_block_size = 8L, cross_every = 10L, ess_max_steps = 10000L,
               dictionary_mode = "conditional", max_dictionary_size = 125L,
-              gp_block_schur = TRUE, threshold_update = "gibbs")
+              gp_block_schur = TRUE, threshold_update = "gibbs",
+              sampler = "ESS", hmc = list(step=.05, leapfrog=c(8L,24L), target_accept=.8))
   if (!is.list(control) || (length(control) && (is.null(names(control)) ||
       any(!nzchar(names(control))) || anyDuplicated(names(control)))))
     stop("sampler_control must be a uniquely named list.")
@@ -7742,6 +7743,13 @@ mixedgp_v030_control <- function(control = list(), n_mis) {
   out$cross_every <- mixedgp_as_integer_strict(out$cross_every, "cross_every", 0L, 1L)
   out$dictionary_mode <- match.arg(out$dictionary_mode, c("conditional", "marginal"))
   out$threshold_update <- match.arg(out$threshold_update, c("gibbs", "ess"))
+  out$sampler <- match.arg(out$sampler, c("ESS", "HMC"))
+  if (!is.list(out$hmc) || !setequal(names(out$hmc), c("step","leapfrog","target_accept"))) stop("Invalid HMC controls.")
+  if (length(out$hmc$step)!=1L || !is.finite(out$hmc$step) || out$hmc$step<=0 ||
+      length(out$hmc$target_accept)!=1L || !is.finite(out$hmc$target_accept) || out$hmc$target_accept<=0 || out$hmc$target_accept>=1) stop("Invalid HMC step or target acceptance.")
+  out$hmc$leapfrog <- mixedgp_as_integer_strict(out$hmc$leapfrog,"HMC leapfrog",1L,2L)
+  if(out$hmc$leapfrog[1]>out$hmc$leapfrog[2])stop("HMC leapfrog bounds must be ordered.")
+  if(out$sampler=="HMC" && out$dictionary_mode!="conditional")stop("HMC requires conditional dictionary updates; use ESS for marginal mode.")
   out$gp_block_schur <- mixedgp_validate_flag(out$gp_block_schur, "gp_block_schur")
   out
 }
@@ -8166,7 +8174,8 @@ mixedgp_v030_sweep <- function(state, ctx, iteration) {
   mis <- ctx$missing
   blocks <- if (length(mis)) split(mis[sample.int(length(mis))],
                 ceiling(seq_along(mis) / ctx$control$u_block_size)) else list()
-  for (rows in blocks) {
+  if (isTRUE(ctx$control$sampler == "HMC")) state <- mixedgp_hmc_joint(state,ctx,iteration,ctx$burn)
+  else for (rows in blocks) {
     dec <- mixedgp_v030_decode(state, ctx)
     prep <- mixedgp_v030_prepare_block(state, ctx, rows)
     if (ctx$measurement == "threshold") {
@@ -8271,6 +8280,7 @@ mixedgp_v030_sweep <- function(state, ctx, iteration) {
     mixedgp_v030_record_ess(ctx, update, "cross")
   }
 
+  if (!isTRUE(ctx$control$sampler == "HMC")) {
   prior <- ctx$priors
   z <- c((state$logtheta_x - prior$log_theta_x_mean) / prior$log_theta_x_sd, state$e_r)
   propose <- function(v) {
@@ -8283,6 +8293,7 @@ mixedgp_v030_sweep <- function(state, ctx, iteration) {
                              ctx$control$ess_max_steps)
   state <- propose(update$value)
   mixedgp_v030_record_ess(ctx, update, "theta")
+  }
   ## In marginal mode ALL preceding blocks are J-marginal; restore J before
   ## conditional recovery/retention. Product conditional mode uses coordinate Gibbs.
   if (ctx$control$dictionary_mode == "marginal") {
@@ -8333,8 +8344,12 @@ mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
   if (n_iter <= burn) stop("n_iter must exceed burn.")
   priors <- mixedgp_v030_priors(priors, p, d, m_vec)
   control <- mixedgp_v030_control(sampler_control, length(missing_rows))
+  if(control$sampler=="HMC" && !(spec$name=="se" || spec$matern_nu %in% c(1.5,2.5)))
+    stop("HMC supports SE and Matern 3/2 or 5/2 kernels; select ESS for other smoothness values.")
   dictionary <- if (control$dictionary_mode == "marginal")
     mixedgp_v030_dictionary(priors, control$max_dictionary_size) else NULL
+  if (!is.null(.resume) && !identical(mixedgp_v030_control(.resume$control, length(missing_rows)), control))
+    stop("Continuation cannot change sampler controls, including ESS/HMC or HMC tuning.")
   start <- if (is.null(.resume)) 0L else .resume$iteration
   if (!is.null(.resume) && (!identical(.resume$version, 2L) ||
       !identical(.resume$sampler_version, "0.3.1") || length(.resume$states) != n_chains ||
@@ -8356,7 +8371,7 @@ mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
     ctx$observed <- observed; ctx$missing <- missing_rows
     ctx$measurement <- measurement; ctx$ident <- ident
     ctx$kernel <- spec$name; ctx$matern_nu <- spec$matern_nu
-    ctx$priors <- priors; ctx$control <- control; ctx$dictionary <- dictionary
+    ctx$priors <- priors; ctx$control <- control; ctx$dictionary <- dictionary; ctx$burn <- burn
     ctx$cache <- new.env(parent = emptyenv())
     ctx$counts <- new.env(parent = emptyenv())
     names <- c("u_ess_total", "u_ess_eval_total",
@@ -8715,7 +8730,7 @@ mixedgp_v030_fit_object <- function(result, data, engine, kernel, matern_nu,
   mcmc$chain_stats <- do.call(rbind, lapply(chains, function(chain) chain$stats))
   fit <- list(data = data, kernel = list(name = kernel, matern_nu = matern_nu),
               priors = result$priors, gp_prior = result$priors, control = result$control,
-              sampler_strategy = "collapsed_dictionary_ess",
+              sampler_strategy = if (result$control$sampler == "HMC") "collapsed_dictionary_hmc" else "collapsed_dictionary_ess",
               sampler_version = "0.3.1", mcmc = mcmc,
               checkpoint = list(version = 2L, sampler_version = "0.3.1",
                 iteration = result$iteration, burn = result$burn, thin = 1L,
@@ -8733,7 +8748,7 @@ mixedgp_v030_fit_object <- function(result, data, engine, kernel, matern_nu,
   }
   finite_summary <- function(x, f) if (length(x) && all(is.finite(x))) f(x) else NA_real_
   diagnostic_summary <- data.frame(
-    sampler_version = "0.3.1", sampler_strategy = "collapsed_dictionary_ess",
+    sampler_version = "0.3.1", sampler_strategy = if (result$control$sampler == "HMC") "collapsed_dictionary_hmc" else "collapsed_dictionary_ess",
     kernel = kernel, matern_nu = matern_nu, n_chains = length(chains),
     parallel_backend = result$parallel_backend, parallel_cores = result$parallel_cores,
     n_iter = result$iteration, burn = result$burn, thin = 1L,
@@ -8759,7 +8774,7 @@ mixedgp_v030_fit_object <- function(result, data, engine, kernel, matern_nu,
     fit$diagnostics$rhat_A <- get_rows("^A\\[")
     fit$diagnostics$summary$max_rhat_A <- finite_summary(fit$diagnostics$rhat_A$rhat, max)
   }
-  fit
+  mixedgp_hmc_attach_diagnostics(fit)
 }
 
 
@@ -9881,10 +9896,16 @@ mixedgp_resolve_latent_scale <- function(object,
 #'   `log_theta_x_sd`, `u_dictionary`, `u_weights`, `category_alpha`, and
 #'   `loading_sd`. `u_dictionary` is a list of positive coordinate grids or a
 #'   positive matrix with one complete latent-kernel parameter vector per row.
+#' @param sampler Main continuous update: `"ESS"` (default) for blocked
+#'   elliptical slice sampling, or `"HMC"` for joint Hamiltonian Monte Carlo.
+#'   Both retain the existing measurement and dictionary updates. HMC supports
+#'   conditional dictionary updates with SE or Matern 3/2 and 5/2 kernels.
 #' @param sampler_control Named list controlling the collapsed sampler:
 #'   `u_block_size`, `cross_every`, `ess_max_steps`, `dictionary_mode`,
-#'   `max_dictionary_size`, and
-#'   `gp_block_schur`, and `threshold_update`. Deterministic-threshold models
+#'   `max_dictionary_size`, `gp_block_schur`, `threshold_update`, and `hmc`.
+#'   The `hmc` list accepts `step` (0.05), `leapfrog` (c(8L,24L)), and
+#'   `target_accept` (0.8). Step size and a diagonal metric adapt only during
+#'   warmup; continuation preserves the frozen adaptation and RNG state. Deterministic-threshold models
 #'   default to exact coordinate cutoff Gibbs updates. Use
 #'   `threshold_update = "gibbs"` (default), or `"ess"` to retain the previous joint cutoff slice update for
 #'   comparisons. This setting does not change the ordinal-probit updates.
@@ -9900,7 +9921,7 @@ mixedgp_resolve_latent_scale <- function(object,
 #'   equal one. Defaults are 1750 transitions, 500 warm-up transitions, and
 #'   four chains. Version 0.3.1 uses a collapsed total-variance update, a
 #'   continuous signal fraction and X-kernel parameters, a finite U-kernel
-#'   dictionary, and blocked elliptical slice updates. Historical sampler
+#'   dictionary, and ESS or joint HMC updates. Historical sampler
 #'   settings such as `noise_strategy`, `sampler_strategy`, and
 #'   `control_overrides` are rejected.
 #' @return An EIV-GP fitted object.
@@ -9942,8 +9963,12 @@ fit_eivgp <- function(X,
                       n_cores = NULL,
                       priors = list(),
                       sampler_control = list(),
+                      sampler = c("ESS", "HMC"),
                       ...) {
   fit_call <- match.call()
+  sampler <- match.arg(sampler)
+  if (!is.null(sampler_control$sampler) && sampler_control$sampler != sampler) stop("Conflicting sampler options.")
+  sampler_control$sampler <- sampler
   caller_rng <- mixedgp_rng_state()
   on.exit(mixedgp_restore_rng_state(caller_rng), add = TRUE)
   parallel <- mixedgp_validate_flag(parallel, "parallel")
@@ -10136,7 +10161,9 @@ fit_eivgp <- function(X,
     latent_kernel_prior = "finite dictionary",
     variance_parameterization = "V { r R + (1-r) I }; V total variance, r signal fraction",
     sampler_version = "0.3.1",
-    sampler = "collapsed total variance, finite kernel dictionary, blocked elliptical slice",
+    sampler = if (fit$control$sampler == "HMC")
+      "collapsed total variance, finite kernel dictionary, joint HMC within Gibbs" else
+      "collapsed total variance, finite kernel dictionary, blocked elliptical slice",
     loading_structure = if (engine == "multivariate") ident else NA_character_,
     ordinal_residual_covariance = if (engine == "multivariate") "I_q" else NA_character_,
     prospective_convention = "fixed_fit",

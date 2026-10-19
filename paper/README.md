@@ -1,4 +1,21 @@
-# Paper analyses
+# Paper replication
+
+This folder contains paper-analysis entrypoints and their required reports,
+configuration and provenance. Exploratory development scripts are kept outside
+this folder. For our current completion work, use the temporary follow-up R
+scripts below; complete fresh reproduction remains in study1.R and study2.R.
+
+```sh
+git pull --ff-only origin main
+Rscript tools/setup_numerical.R
+Rscript paper/numerical/temp-study1-followup.R --action=plan --profile=paper --cores=4
+Rscript paper/numerical/temp-study2-followup.R --action=plan --profile=paper --cores=4
+```
+
+See [follow-up execution and existing-result requirements](numerical/publication/README.md).
+The follow-up scripts can be removed after the new results are incorporated.
+They call permanent package implementations also available to the complete study scripts.
+
 
 Numerical experiments now have a [fresh-checkout workflow](numerical/README.md)
 for macOS and Linux: `Rscript tools/setup_numerical.R`, then

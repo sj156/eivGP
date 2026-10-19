@@ -22,6 +22,7 @@ fit_eivgp(
   n_cores = NULL,
   priors = list(),
   sampler_control = list(),
+  sampler = c("ESS", "HMC"),
   ...
 )
 }
@@ -73,10 +74,11 @@ fitting. The default is \code{TRUE} when calibration is available.}
 \code{loading_sd}. \code{u_dictionary} is a list of positive coordinate grids or a
 positive matrix with one complete latent-kernel parameter vector per row.}
 
+\item{sampler}{Main continuous update: \code{"ESS"} (default) for blocked elliptical slice sampling, or \code{"HMC"} for joint Hamiltonian Monte Carlo. Both retain the existing measurement and dictionary updates. HMC supports conditional dictionary updates with SE or Matern 3/2 and 5/2 kernels.}
+
 \item{sampler_control}{Named list controlling the collapsed sampler:
 \code{u_block_size}, \code{cross_every}, \code{ess_max_steps}, \code{dictionary_mode},
-\code{max_dictionary_size}, and
-\code{gp_block_schur}, and \code{threshold_update}. Deterministic-threshold models
+\code{max_dictionary_size}, \code{gp_block_schur}, \code{threshold_update}, and \code{hmc}. The \code{hmc} list accepts \code{step} (0.05), \code{leapfrog} (c(8L,24L)), and \code{target_accept} (0.8). Step size and a diagonal metric adapt only during warmup; continuation preserves the frozen adaptation and RNG state. Deterministic-threshold models
 default to exact coordinate cutoff Gibbs updates. Use
 \code{threshold_update = "gibbs"} (default), or \code{"ess"} to retain the previous joint cutoff slice update for
 comparisons. This setting does not change the ordinal-probit updates.
@@ -93,7 +95,7 @@ continuous latent-input updates.}
 equal one. Defaults are 1750 transitions, 500 warm-up transitions, and
 four chains. Version 0.3.1 uses a collapsed total-variance update, a
 continuous signal fraction and X-kernel parameters, a finite U-kernel
-dictionary, and blocked elliptical slice updates. Historical sampler
+dictionary, and ESS or joint HMC updates. Historical sampler
 settings such as \code{noise_strategy}, \code{sampler_strategy}, and
 \code{control_overrides} are rejected.}
 }

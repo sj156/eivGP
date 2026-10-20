@@ -32,6 +32,7 @@ test_that("unspecified Ocean result directories keep their workflow defaults", {
   env$ocean_load_api<-function(repository_dir,envir)list2env(list(
     ocean_settings=getFromNamespace("ocean_settings","eivGP"),
     ocean_resolve_path=getFromNamespace("ocean_resolve_path","eivGP"),
+    ocean_job_dir=getFromNamespace("ocean_job_dir","eivGP"),
     ocean_logged=function(path,expr)force(expr)),envir=envir)
   env$ocean_check_report_dependencies<-function()invisible(TRUE)
   env$ocean_render_report<-function(...)"ocean.html"
@@ -42,7 +43,7 @@ test_that("unspecified Ocean result directories keep their workflow defaults", {
   expect_identical(called$cc_output_dir,"")
   expect_identical(called$diagnostics_dir,"")
   expect_identical(called$import_dirs,c(file.path(root,"relative-import"),""))
-  expect_identical(called[[3]],file.path(path.expand("~/eivGP-ocean"),"ocean500","paper"))
+  expect_identical(called[[3]],file.path(root,"results","ocean500"))
 })
 
 
@@ -111,19 +112,19 @@ test_that("paper sampling settings are fixed and CLI exposes profiles instead of
 })
 
 
-test_that("Ocean CLI and Rmd defaults share an external home-directory root", {
+test_that("Ocean CLI and Rmd defaults share a flat dataset root", {
   root<-normalizePath(testthat::test_path("../../.."),mustWork=TRUE)
   env<-new.env(parent=globalenv());sys.source(file.path(root,"paper/applications/ocean.R"),env)
   env$ocean_resolve_path<-getFromNamespace("ocean_resolve_path","eivGP")
   for(dataset in c("ocean200","ocean500","ocean1000")) {
-    expected<-file.path(path.expand("~/eivGP-ocean"),dataset,"paper")
+    expected<-file.path(root,"results",dataset)
     expect_identical(env$ocean_output_dir(root,dataset,"paper"),expected)
     lines<-readLines(file.path(root,"paper/config",paste0(dataset,".yml")))
     configured<-strsplit(lines[startsWith(lines,"output_dir:")],'"',fixed=TRUE)[[1]][2]
     expect_identical(env$ocean_output_dir(root,dataset,"paper",configured),expected)
   }
   expect_identical(env$ocean_output_dir(root,"ocean500","pilot"),
-    file.path(path.expand("~/eivGP-ocean"),"ocean500","pilot"))
+    file.path(root,"results","ocean500_pilot"))
   expect_identical(env$ocean_output_dir(root,"ocean500","paper","~/custom-ocean"),path.expand("~/custom-ocean"))
   expect_identical(env$ocean_output_dir(root,"ocean500","paper","relative-run"),file.path(root,"relative-run"))
   expect_identical(env$ocean_output_dir(root,"ocean500","paper","/external/run"),"/external/run")
@@ -137,4 +138,18 @@ test_that("Ocean bootstrap validates R and native modules in their source direct
   api<-new.env(parent=env)
   expect_silent(env$ocean_load_api(root,api))
   expect_true(is.function(api$ocean_execute))
+})
+
+
+test_that("flat ocean roots separate profiles and preserve legacy job paths", {
+  root<-normalizePath(testthat::test_path("../../.."),mustWork=TRUE)
+  env<-new.env(parent=globalenv());sys.source(file.path(root,"paper/applications/ocean.R"),env)
+  expect_equal(env$ocean_default_output("ocean500","paper",root),file.path(root,"results","ocean500"))
+  expect_equal(env$ocean_default_output("ocean500","pilot",root),file.path(root,"results","ocean500_pilot"))
+  out<-tempfile();dir.create(out);on.exit(unlink(out,recursive=TRUE),add=TRUE)
+  expect_equal(ocean_job_dir(out,"paper_fit"),file.path(out,"paper_fit"))
+  dir.create(file.path(out,"jobs","old_run"),recursive=TRUE)
+  expect_equal(ocean_job_dir(out,"old_run"),file.path(out,"jobs","old_run"))
+  expect_error(ocean_job_dir(out,"data"),"distinct")
+  expect_error(ocean_job_dir(out,"../outside"),"distinct")
 })

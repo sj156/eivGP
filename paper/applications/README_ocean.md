@@ -82,7 +82,7 @@ Rscript paper/applications/ocean.R --action=fit --profile=paper --dataset=ocean5
 Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=16
 ```
 
-Results default to `~/eivGP-ocean/<dataset>/<profile>/`; use `--output` for a custom directory.
+Results default to `<repository>/results/<dataset>/` for paper runs; pilot and quick use `results/<dataset>_pilot/` and `results/<dataset>_quick/`. Use `--output` to select any custom or existing directory. Existing results are not moved. To read an older default run, explicitly pass its `~/eivGP-ocean/<dataset>/<profile>/` path.
 
 Sampling is fixed by profile:
 
@@ -128,7 +128,7 @@ Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=o
 Passing fits are skipped; conflicting saved extension lengths are rejected.
 `--folds`, `--cells`, `--modules` and `--task-ids` select tasks. `--import-dirs`
 imports compatible verified tasks; `--data-root` selects prepared inputs.
-Per-task logs, core allocations and status are under `jobs/<run_id>/`.
+Per-task logs, core allocations and status are directly under `<run_id>/`, for example `results/ocean500/paper_fit/`. Default run IDs omit the redundant dataset name. Existing `jobs/<run_id>/` folders remain in use when selected by the same run ID. Fit/fold/cell paths remain unchanged for saved-result compatibility.
 
 ## Generate HTML from saved results
 

@@ -30,12 +30,12 @@ ocean_dataset_dir <- function(repository_dir,dataset="ocean500",data_dir="") {
   }
   file.path(repository_dir,"data/ocean_silicate",sub("ocean","n",dataset))
 }
-ocean_default_output <- function(dataset,profile) {
-  file.path(path.expand("~/eivGP-ocean"),dataset,profile)
+ocean_default_output <- function(dataset,profile,repository_dir=getwd()) {
+  file.path(repository_dir,"results",if(profile=="paper")dataset else paste(dataset,profile,sep="_"))
 }
 ocean_output_dir <- function(repository_dir,dataset,profile,output_dir="") {
   if(nzchar(output_dir))return(ocean_resolve_path(output_dir,repository_dir))
-  base<-ocean_default_output(dataset,profile)
+  base<-ocean_default_output(dataset,profile,repository_dir)
   marker<-paste0(base,".latest-run.rds")
   if(!file.exists(marker))return(base)
   latest<-readRDS(marker)
@@ -154,7 +154,7 @@ ocean_run_cli <- function(repository_dir,params=list()) {
   ocean_load_api(repository_dir,api)
   getp<-function(key,default)if(is.null(params[[key]]))default else params[[key]]
   dataset<-match.arg(getp("dataset","ocean500"),c("ocean200","ocean500","ocean1000"))
-  params$run_id<-getp("run_id",paste(dataset,getp("profile","paper"),
+  params$run_id<-getp("run_id",paste(getp("profile","paper"),
     if(getp("action","plan")=="run")"fit" else getp("action","plan"),sep="_"))
   profile<-match.arg(getp("profile","paper"),c("paper","pilot","quick"))
   environment(ocean_dataset_dir)<-api
@@ -174,7 +174,7 @@ ocean_run_cli <- function(repository_dir,params=list()) {
     ocean_check_report_dependencies()
     run_identity<-api$ocean_identity(repository_dir,data_dir,settings)
     output_dir<-ocean_choose_fit_output(output_dir,run_identity,
-      if(nzchar(getp("output_dir","")))output_dir else ocean_default_output(dataset,profile))
+      if(nzchar(getp("output_dir","")))output_dir else ocean_default_output(dataset,profile,repository_dir))
   }
   cat("Output directory:",output_dir,"\n")
   execute<-function(stage_settings,import=TRUE) {
@@ -182,7 +182,7 @@ ocean_run_cli <- function(repository_dir,params=list()) {
       on.exit({
         identity_path<-file.path(output_dir,"workflow_identity.rds")
         if(file.exists(identity_path) && identical(readRDS(identity_path),run_identity))
-          api$ocean_atomic_rds(output_dir,paste0(ocean_default_output(dataset,profile),".latest-run.rds"))
+          api$ocean_atomic_rds(output_dir,paste0(ocean_default_output(dataset,profile,repository_dir),".latest-run.rds"))
       },add=TRUE)
     ocean_analysis(repository_dir,data_dir,output_dir,stage_settings,
     import_dirs=if(import)resolve(getp("import_dirs",character())) else character(),
@@ -202,7 +202,7 @@ ocean_run_cli <- function(repository_dir,params=list()) {
   } else {
     # Fail early if HTML cannot be built, before starting an expensive fit.
     ocean_check_report_dependencies()
-    result<-api$ocean_logged(file.path(output_dir,"jobs",settings$run_id,"execution.log"),
+    result<-api$ocean_logged(file.path(api$ocean_job_dir(output_dir,settings$run_id),"execution.log"),
       ocean_cli_workflow(settings,execute,render))
     cat("Saved results:",output_dir,"\nHTML:",result$html,"\n")
   }

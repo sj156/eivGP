@@ -11529,6 +11529,16 @@ ocean_schedule <- function(indices, caps, cores, FUN, on_start, on_done) {
   invisible(NULL)
 }
 
+# Keep existing execution logs in place; new runs need no jobs/ wrapper.
+ocean_job_dir <- function(output_dir,run_id) {
+  if(length(run_id)!=1L || !grepl("^[A-Za-z0-9_-]+$",run_id) ||
+     run_id %in% c("data","full5_class4","smoke_class4","prediction","diagnostics",
+                   "continuation_plus20k","figures","receipts"))
+    stop("Choose a distinct execution run_id, such as paper_fit.")
+  legacy <- file.path(output_dir,"jobs",run_id)
+  if(dir.exists(legacy))legacy else file.path(output_dir,run_id)
+}
+
 # Unified entry; report never invokes a fit. All cached computations are validated.
 ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
   import_dirs=character()) {
@@ -11556,7 +11566,7 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
     if(file.exists(idfile)) {
       ocean_assert_identity(readRDS(idfile),identity,output_dir)
     } else {
-      if(length(setdiff(list.files(output_dir,all.files=TRUE,no..=TRUE),c(".workflow.lock","jobs"))))
+      if(length(setdiff(list.files(output_dir,all.files=TRUE,no..=TRUE),c(".workflow.lock","jobs",basename(ocean_job_dir(output_dir,settings$run_id))))))
         stop("Existing outputs lack distributed provenance. Read them with action=report, or use a fresh directory.")
       ocean_atomic_rds(identity,idfile)
     }
@@ -11573,7 +11583,7 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
     ocean_atomic_rds(settings,file.path(output_dir,"execution_settings.rds"))
     ocean_atomic_rds(settings,file.path(output_dir,paste0("execution_settings_",stage,".rds")))
     ocean_combine_results(import_dirs,output_dir,identity)
-    job <- file.path(output_dir,"jobs",settings$run_id)
+    job <- ocean_job_dir(output_dir,settings$run_id)
     status <- if(execute) selected else selected[FALSE,,drop=FALSE]
     status$state <- rep("PENDING",nrow(status)); status$detail <- rep("",nrow(status))
     status$elapsed_seconds <- rep(NA_real_,nrow(status))

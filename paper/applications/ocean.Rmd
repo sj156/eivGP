@@ -34,7 +34,7 @@ nested measurement masks are constructed on a fixed, class-balanced cohort.
 - **Action:** `report` reads saved fits; `plan` displays the proposed analysis without fitting.
 - **Dataset:** `ocean200`, `ocean500` or `ocean1000`; prepare the 1000-profile folds once using `data/ocean_silicate/prepare_folds.R`.
 - **Selection:** `folds`, `cells` and `modules` select tasks without changing seeds or numerical settings.
-- **Results:** default to the latest run under `~/eivGP-ocean/`; set `output_dir` to select a specific saved run.
+- **Results:** default to the latest run under `<repository>/results/<dataset>/` (pilot/quick roots append the profile); set `output_dir` to select a specific saved run.
 - **Distributed runs:** use separate result roots and merge compatible tasks through `import_dirs`.
 
 Runnable examples are in `README_ocean.md`.
@@ -492,7 +492,7 @@ if(!is.null(diagnostics)) print(diagnostics$plots$u_all_folds)
 
 ## 7. Reproducibility and references
 
-- **Execution:** task seeds are independent of assignment/order; receipts validate reuse and merging. Logs are under `jobs/<run_id>/`.
+- **Execution:** task seeds are independent of assignment/order; receipts validate reuse and merging. Logs are under `<run_id>/` (legacy `jobs/<run_id>/` remains supported).
 - **Prediction evidence:** `prediction_report/cc_revision/` contains current recorded-input/CC/EIV scores and EIV-only matched-input evidence. Each CC task records the precise training/test IDs, transforms, controls, seed and native status.
 - **Input distributions:** `diagnostics/u_distributions/` records common-hidden profile references and plotted density curves; posterior states are thinned deterministically for visualization only.
 - **Posterior review:** `diagnostics/refinement/` contains input-support checks, diagnostic exceptions and selected full-chain MCSE.

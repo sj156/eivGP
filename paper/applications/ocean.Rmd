@@ -30,7 +30,7 @@ nested measurement masks are constructed on a fixed, class-balanced cohort.
 
 ## 1. Computation settings
 
-- **Workflow:** `ocean.R --action=fit` fits models, analyzes saved chains using one worker, and renders this report. Explicit `continue` updates the same analysis and report.
+- **Workflow:** `ocean.R --action=fit` fits models, analyzes saved chains using the shared core budget, and renders this report. Explicit `continue` updates the same analysis and report.
 - **Action:** `report` reads saved fits; `plan` displays the proposed analysis without fitting.
 - **Dataset:** `ocean200`, `ocean500` or `ocean1000`; prepare the 1000-profile folds once using `data/ocean_silicate/prepare_folds.R`.
 - **Selection:** `folds`, `cells` and `modules` select tasks without changing seeds or numerical settings.

@@ -295,3 +295,19 @@ this checkout; a running pilot's frozen library should remain unchanged.
 Both study entrypoints support `--component=publication --stage=pilot|integration|full`.
 See [portable publication workflow](publication/README.md). Default action is plan;
 no full simulation has been launched by this update.
+
+### Shared CPU budget
+
+`--cores` supplies one budget for the entire numerical workflow, including
+replication workers, the four chains per fit, posterior prediction, diagnostic
+summaries, scoring and mixing figures. Waiting coordinators release their slots.
+Independent replication groups keep ownership of their shared measurement and
+prospective-input caches; no method races another method to write those caches.
+Set BLAS/OpenMP thread counts to one before R starts, as described in the root
+README. Windows retains serial execution.
+
+Prediction stream schema 1 uses fixed blocks of eight selected posterior states
+and seeds independent of core count. Serial and parallel results agree within
+this schema; older serial prediction realizations may differ. Existing result
+and checkpoint identities remain enforced. Use a new output root when the
+recorded identity is incompatible; do not delete provenance files to bypass it.

@@ -1,10 +1,15 @@
 # Ocean application entrypoint: implementation is provided by the installed package.
 ocean_load_api <- function(repository_dir=NULL,envir=parent.frame()) {
+  if(!is.null(repository_dir)) {
+    lib <- Sys.getenv("EIVGP_R_LIBRARY",file.path(repository_dir,".r-library"))
+    if(dir.exists(lib)).libPaths(c(normalizePath(lib),.libPaths()))
+  }
   if(!requireNamespace("eivGP",quietly=TRUE)||utils::packageVersion("eivGP")<"0.4.0.9008")
     stop("Install this checkout with Rscript tools/build_package.R and R CMD INSTALL eivGP.")
   if(!is.null(repository_dir)) {
     installed<-utils::read.csv(system.file("module-manifest.csv",package="eivGP"))
-    paths<-file.path(repository_dir,"eivGP/R",installed$module)
+    native<-grepl("[.]cpp$|^Makevars",installed$module)
+    paths<-file.path(repository_dir,"eivGP",ifelse(native,"src","R"),installed$module)
     if(!identical(unname(tools::md5sum(paths)),installed$md5))
       stop("Installed eivGP differs from this checkout; rebuild and reinstall it first.")
   }
@@ -122,7 +127,7 @@ ocean_render_report <- function(repository_dir,output_dir,settings,dataset,data_
     output_file="ocean.html",output_dir=output_dir,
     params=list(dataset=dataset,profile=settings$profile,action="report",folds=settings$folds,
       cells=settings$cells,modules=settings$modules,task_ids=settings$task_ids,
-      cores=1L,run_id=paste0(settings$run_id,"_report"),data_dir=data_dir,output_dir=output_dir,
+      cores=settings$cores,run_id=paste0(settings$run_id,"_report"),data_dir=data_dir,output_dir=output_dir,
       cc_output_dir=cc_output_dir,diagnostics_dir=diagnostics_dir,representative_fold=representative_fold),
     envir=new.env(parent=globalenv()),quiet=TRUE)
 }
@@ -132,7 +137,7 @@ ocean_render_report <- function(repository_dir,output_dir,settings,dataset,data_
 ocean_cli_workflow <- function(settings,execute,render) {
   result<-execute(settings,TRUE)
   if(settings$action%in%c("fit","continue")) {
-    analyzed<-settings;analyzed$action<-"analyze";analyzed$cores<-1L
+    analyzed<-settings;analyzed$action<-"analyze"
     analyzed$run_id<-paste0(settings$run_id,"_analyze")
     analysis<-execute(analyzed,FALSE)
     result<-list(fitting=result,analysis=analysis)
@@ -144,7 +149,7 @@ ocean_cli_workflow <- function(settings,execute,render) {
 ocean_run_cli <- function(repository_dir,params=list()) {
   if(any(c("chains","iter","burn")%in%names(params)))
     stop("Sampling settings are fixed by --profile; remove --chains, --iter and --burn.")
-  if("diagnostics_workers"%in%names(params))stop("diagnostics_workers was removed; analysis always uses one worker.")
+  if("diagnostics_workers"%in%names(params))stop("diagnostics_workers was removed; use cores for the shared workflow budget.")
   api<-new.env(parent=environment())
   ocean_load_api(repository_dir,api)
   getp<-function(key,default)if(is.null(params[[key]]))default else params[[key]]
@@ -161,7 +166,6 @@ ocean_run_cli <- function(repository_dir,params=list()) {
   params<-ocean_restore_fit_settings(params,output_dir)
   settings<-do.call(api$ocean_settings,
     params[intersect(names(params),names(formals(api$ocean_settings)))])
-  if(settings$action%in%c("analyze","report"))settings$cores<-1L
   resolve<-function(paths)vapply(paths,function(path)
     if(nzchar(path))api$ocean_resolve_path(path,repository_dir) else "",
     character(1),USE.NAMES=FALSE)
@@ -193,8 +197,8 @@ ocean_run_cli <- function(repository_dir,params=list()) {
     result<-execute(settings)
     print(result$tasks,row.names=FALSE)
     print(api$ocean_core_plan(settings$cores,sum(result$tasks$module=="eiv"),settings$chains))
-    cat("Total fit core budget:",settings$cores,"; up to",settings$chains,
-      "chain workers per EIV fit; analysis and HTML use one worker.\n")
+    cat("Total shared core budget:",settings$cores,"; up to",settings$chains,
+      "chain workers per EIV fit; prediction, diagnostics and plots share the same budget; HTML assembly is serial.\n")
   } else {
     # Fail early if HTML cannot be built, before starting an expensive fit.
     ocean_check_report_dependencies()
@@ -218,8 +222,8 @@ if(sys.nframe()==0L) {
       "  --continuation-iter=20000 (additional iterations per existing chain; pilot default: 80)\n",
       "  --task-ids=... --import-dirs=... --cc-output-dir=... --representative-fold=1\n",
       "No arguments: validate inputs and print the paper-profile ocean500 plan.\n",
-      "fit (also run) fits, analyzes serially and writes HTML; continue extends, analyzes and updates HTML.\n",
-      "cores is the shared fit budget across tasks/chains. analyze/report rebuild HTML without fitting. See README_ocean.md.\n",sep="")
+      "fit (also run) fits, analyzes with the shared core budget and writes HTML; continue extends, analyzes and updates HTML.\n",
+      "cores is the shared budget across fitting, prediction, diagnostics and plotting. analyze/report rebuild HTML without fitting. See README_ocean.md.\n",sep="")
   } else {
     script<-sub("^--file=","",grep("^--file=",commandArgs(FALSE),value=TRUE)[1])
     root<-normalizePath(file.path(dirname(normalizePath(script)),"../.."))

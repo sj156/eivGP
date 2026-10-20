@@ -4,7 +4,7 @@ test_that("replication and chain allocation respects the total budget", {
     expect_lte(a$workers*a$chains,n)
     expect_lte(a$chains,4L)
   }
-  if(.Platform$OS.type=="unix")expect_equal(mixedgp_followup_allocation(56,50)$workers,14L)
+  if(.Platform$OS.type=="unix")expect_equal(mixedgp_followup_allocation(56,50)$workers,as.integer(max(1L,min(56L,mixedgp_available_cores())%/%4L)))
   expect_equal(mixedgp_followup_allocation(56,1)$workers,1L)
 })
 

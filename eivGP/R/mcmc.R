@@ -107,6 +107,15 @@ eivgp_run_settings <- function(core_budget, pending_datasets = 1L, chains = 4L,
 }
 
 
+# Explicit requests are ceilings, never permission to oversubscribe the host.
+mixedgp_available_cores <- function() {
+  detected <- suppressWarnings(tryCatch(parallel::detectCores(logical=TRUE),
+                                       error=function(e) NA_integer_))
+  if(length(detected)!=1L || is.na(detected) || !is.finite(detected) || detected<1L)
+    return(1L)
+  as.integer(detected)
+}
+
 mixedgp_resolve_cores <- function(n_cores = NULL, reserve = 2L) {
   validate <- function(x, label) {
     mixedgp_as_integer_strict(
@@ -114,28 +123,25 @@ mixedgp_resolve_cores <- function(n_cores = NULL, reserve = 2L) {
     )
   }
 
-  if (!is.null(n_cores)) return(validate(n_cores, "n_cores"))
+  available <- mixedgp_available_cores()
+  if (!is.null(n_cores)) return(min(validate(n_cores, "n_cores"), available))
 
   env_cores <- Sys.getenv("MIXEDGP_CORES", unset = "")
   if (nzchar(env_cores)) {
-    return(mixedgp_parse_integer_text(
+    return(min(mixedgp_parse_integer_text(
       env_cores, "MIXEDGP_CORES", min_value = 1L
-    ))
+    ), available))
   }
 
   option_cores <- getOption("mixedgp.cores", NULL)
   if (!is.null(option_cores)) {
-    return(validate(option_cores, "getOption('mixedgp.cores')"))
+    return(min(validate(option_cores, "getOption('mixedgp.cores')"), available))
   }
 
-  detected <- suppressWarnings(parallel::detectCores(logical = TRUE))
-  if (length(detected) != 1L || is.na(detected) || detected < 1L) {
-    detected <- 1L
-  }
   reserve <- mixedgp_as_integer_strict(
     reserve, "reserve", min_value = 0L, length_expected = 1L
   )
-  max(1L, detected - reserve)
+  max(1L, available - reserve)
 }
 
 
@@ -274,12 +280,166 @@ mixedgp_parallel_chains_enabled <- function(
 }
 
 
+
+# One process-wide budget inherited by forked workers. Waiting coordinators own
+# no slot. Atomic directory creation arbitrates slots across nested maps.
+mixedgp_budget <- function() getOption("eivGP.core_pool", NULL)
+mixedgp_budget_cores <- function(default = 1L) {
+  pool <- mixedgp_budget()
+  if (is.null(pool)) default else pool$cores
+}
+mixedgp_budget_owned <- function() {
+  lease <- getOption("eivGP.core_lease", NULL)
+  !is.null(lease) && identical(lease$pid, Sys.getpid())
+}
+mixedgp_budget_event <- function(event, slot) {
+  path <- getOption("eivGP.core_events", NULL)
+  if (is.null(path)) return(invisible(NULL))
+  dir.create(path, recursive=TRUE, showWarnings=FALSE)
+  cat(sprintf("%.6f,%d,%s,%d\n", as.numeric(Sys.time()), Sys.getpid(), event, slot),
+      file=file.path(path,paste0(Sys.getpid(),".csv")), append=TRUE)
+}
+mixedgp_budget_acquire <- function(wait=TRUE) {
+  pool <- mixedgp_budget()
+  if (is.null(pool) || mixedgp_budget_owned()) return(invisible(NULL))
+  repeat {
+    if (!dir.exists(pool$path)) stop("Shared core pool closed while a worker was waiting.")
+    for (i in seq_len(pool$cores)) {
+      path <- file.path(pool$path, as.character(i))
+      if (dir.create(path, showWarnings=FALSE)) {
+        nonce <- basename(tempfile("lease-"))
+        writeLines(c(as.character(Sys.getpid()),nonce),file.path(path,"owner"))
+        options(eivGP.core_lease=list(pid=Sys.getpid(),path=path,slot=i,nonce=nonce))
+        mixedgp_budget_event("acquire",i)
+        return(invisible(TRUE))
+      }
+      owner <- file.path(path,"owner")
+      # A killed leaf must not permanently consume a slot. No live owner is
+      # evicted; the directory is private to this invocation of the workflow.
+      reap <- paste0(path,".reap")
+      if (file.exists(owner) && dir.create(reap,showWarnings=FALSE)) {
+        pid <- suppressWarnings(as.integer(tryCatch(readLines(owner,warn=FALSE)[1L],error=function(e)character())))
+        if (length(pid)==1L && !is.na(pid) && !isTRUE(tools::pskill(pid,0L)))
+          unlink(path,recursive=TRUE)
+        unlink(reap,recursive=TRUE)
+      }
+    }
+    if(!wait)return(FALSE)
+    Sys.sleep(.01)
+  }
+}
+mixedgp_budget_release <- function() {
+  if (mixedgp_budget_owned()) {
+    lease <- getOption("eivGP.core_lease")
+    mixedgp_budget_retire(lease)
+  }
+  options(eivGP.core_lease=NULL)
+  invisible(NULL)
+}
+mixedgp_budget_retire <- function(lease) {
+  if(!dir.exists(dirname(lease$path)))return(invisible(NULL))
+  reap <- paste0(lease$path,".reap")
+  while(!dir.create(reap,showWarnings=FALSE))Sys.sleep(.001)
+  on.exit(unlink(reap,recursive=TRUE),add=TRUE)
+  owner <- suppressWarnings(tryCatch(readLines(file.path(lease$path,"owner"),warn=FALSE),error=function(e)character()))
+  if(length(owner)==2L && identical(owner[2L],lease$nonce)) {
+    mixedgp_budget_event("release",lease$slot)
+    unlink(lease$path,recursive=TRUE)
+  }
+  invisible(NULL)
+}
+
+# Reserve a slot before forking, so nested stages do not create an unbounded
+# population of waiting subprocesses. Only idle coordinators wait for slots.
+mixedgp_budget_map <- function(n,worker,cores,preschedule,set_seed) {
+  groups <- if(preschedule)split(seq_len(n),(seq_len(n)-1L)%%cores)else as.list(seq_len(n))
+  mixedgp_budget_yield(function() {
+    running <- list();next_job <- 1L;result <- vector("list",n)
+    on.exit({
+      for(item in running) {
+        try(tools::pskill(item$job$pid),silent=TRUE)
+        try(parallel::mccollect(item$job,wait=TRUE),silent=TRUE)
+        mixedgp_budget_retire(item$lease)
+      }
+    },add=TRUE)
+    while(next_job<=length(groups)||length(running)) {
+      while(next_job<=length(groups)&&length(running)<cores) {
+        if(!mixedgp_budget_acquire(wait=FALSE))break
+        lease <- getOption("eivGP.core_lease");indices <- groups[[next_job]]
+        child <- tryCatch(parallel::mcparallel({
+          lease$pid <- Sys.getpid()
+          writeLines(c(as.character(lease$pid),lease$nonce),file.path(lease$path,"owner"))
+          options(eivGP.core_lease=lease)
+          tryCatch(lapply(indices,worker),finally=mixedgp_budget_release())
+        },mc.set.seed=set_seed,silent=FALSE),error=function(e) {
+          mixedgp_budget_release();stop(e)
+        })
+        # Ownership has been transferred to this child, not released.
+        options(eivGP.core_lease=NULL)
+        running[[as.character(child$pid)]] <- list(job=child,lease=lease,indices=indices)
+        next_job <- next_job+1L
+      }
+      done <- if(length(running))parallel::mccollect(lapply(running,`[[`,"job"),wait=FALSE)else NULL
+      if(is.null(done)) {Sys.sleep(.01);next}
+      for(pid in names(done)) {
+        item <- running[[pid]];value <- done[[pid]]
+        mixedgp_budget_retire(item$lease);running[[pid]] <- NULL
+        if(!is.list(value)||inherits(value,"try-error")||length(value)!=length(item$indices))
+          stop("A shared-budget worker failed; inspect the worker error and retained checkpoints.")
+        result[item$indices] <- value
+      }
+    }
+    result
+  })
+}
+
+mixedgp_budget_enter <- function(cores) {
+  if (!is.null(mixedgp_budget())) return(function() invisible(NULL))
+  requested <- mixedgp_as_integer_strict(cores,"cores",1L,1L)
+  cores <- mixedgp_resolve_cores(requested)
+  if (.Platform$OS.type != "unix") cores <- 1L
+  if(cores < requested) message("Shared CPU budget: requested ",requested,
+    "; using ",cores," available worker(s). Chain counts are unchanged.")
+  path <- tempfile("eivgp-core-pool-"); dir.create(path)
+  old <- options(eivGP.core_pool=list(path=path,cores=cores),eivGP.core_lease=NULL)
+  mixedgp_budget_acquire()
+  function() {
+    mixedgp_budget_release()
+    unlink(path,recursive=TRUE)
+    options(old)
+  }
+}
+mixedgp_budget_worker <- function(fun) {
+  owned <- mixedgp_budget_owned()
+  if (!owned) {
+    mixedgp_budget_acquire()
+    on.exit(mixedgp_budget_release(),add=TRUE)
+  }
+  fun()
+}
+mixedgp_budget_yield <- function(fun) {
+  owned <- mixedgp_budget_owned()
+  if (owned) {
+    mixedgp_budget_release()
+    on.exit(mixedgp_budget_acquire(),add=TRUE)
+  }
+  fun()
+}
+
+# Deterministic stages can borrow the full pool. Seeds are deliberately omitted
+# here: callers must precompute randomness, or explicitly set task-local seeds.
+mixedgp_stage_lapply <- function(X, FUN, ..., workers=mixedgp_budget_cores()) {
+  mixedgp_parallel_lapply(X,FUN,...,n_cores=workers,mc.preschedule=TRUE,
+                         .preserve_rng=TRUE)
+}
+
 mixedgp_parallel_lapply <- function(X,
                                     FUN,
                                     ...,
                                     n_cores = NULL,
                                     seeds = NULL,
-                                    mc.preschedule = FALSE) {
+                                    mc.preschedule = FALSE,
+                                    .preserve_rng = FALSE) {
   if (!is.function(FUN)) stop("FUN must be a function.")
   n_tasks <- length(X)
   if (n_tasks == 0L) return(list())
@@ -288,26 +448,36 @@ mixedgp_parallel_lapply <- function(X,
     caller_rng <- mixedgp_rng_state()
     on.exit(mixedgp_restore_rng_state(caller_rng), add = TRUE)
   }
-  backend <- mixedgp_parallel_backend(n_cores)
-  cores <- min(backend$cores, n_tasks)
+  backend <- mixedgp_parallel_backend(if(is.null(n_cores)) mixedgp_budget_cores(NULL) else n_cores)
+  cores <- min(backend$cores, n_tasks, mixedgp_budget_cores(backend$cores))
   extra_args <- list(...)
 
   worker <- function(ii) {
     if (!is.null(seeds)) set.seed(seeds[ii])
-    do.call(FUN, c(list(X[[ii]]), extra_args))
+    value <- mixedgp_budget_worker(function() do.call(FUN, c(list(X[[ii]]), extra_args)))
+    if(is.null(mixedgp_budget()))value else list(ok=TRUE,value=value)
+  }
+  unpack <- function(result) {
+    if(is.null(mixedgp_budget()))return(result)
+    if(any(!vapply(result,function(x)is.list(x) && isTRUE(x$ok),logical(1))))
+      stop("A shared-budget worker failed; inspect the worker error and retained checkpoints.")
+    lapply(result,`[[`,"value")
   }
 
   if (backend$backend == "fork" && cores > 1L) {
-    return(parallel::mclapply(
+    if(!is.null(mixedgp_budget()))return(unpack(mixedgp_budget_map(n_tasks,worker,cores,
+      isTRUE(mc.preschedule),is.null(seeds)&&!isTRUE(.preserve_rng))))
+    result <- mixedgp_budget_yield(function() parallel::mclapply(
       seq_len(n_tasks),
       worker,
       mc.cores = cores,
       mc.preschedule = isTRUE(mc.preschedule),
-      mc.set.seed = is.null(seeds),
+      mc.set.seed = is.null(seeds) && !isTRUE(.preserve_rng),
       mc.cleanup = TRUE
     ))
+    return(unpack(result))
   }
-  lapply(seq_len(n_tasks), worker)
+  unpack(lapply(seq_len(n_tasks), worker))
 }
 
 
@@ -334,6 +504,18 @@ mixedgp_parallel_mapply <- function(FUN,
   if (!is.null(seeds)) {
     caller_rng <- mixedgp_rng_state()
     on.exit(mixedgp_restore_rng_state(caller_rng), add = TRUE)
+  }
+  if(!is.null(mixedgp_budget())) {
+    result <- mixedgp_parallel_lapply(seq_len(n_tasks),function(i) {
+      args <- lapply(varying_args,function(x)x[[if(length(x)==1L)1L else i]])
+      do.call(FUN,c(args,MoreArgs))
+    },n_cores=n_cores,seeds=seeds,mc.preschedule=mc.preschedule)
+    if(isTRUE(USE.NAMES)) {
+      first <- varying_args[[1L]]
+      if(!is.null(names(first)))names(result)<-rep(names(first),length.out=n_tasks)
+      else if(is.character(first))names(result)<-rep(first,length.out=n_tasks)
+    }
+    return(if(!identical(SIMPLIFY,FALSE))simplify2array(result,higher=(SIMPLIFY=="array"))else result)
   }
   seed_arg <- if (is.null(seeds)) rep(NA_integer_, n_tasks) else seeds
   backend <- mixedgp_parallel_backend(n_cores)
@@ -2258,6 +2440,11 @@ sample_eiv_test_y <- function(x_test_raw,
                               u_test_obs = NULL,
                               u_input_scale = c("raw", "model"),
                               joint = FALSE) {
+  if (!is.null(mixedgp_budget()) && !isTRUE(getOption("eivGP.prediction_block",FALSE))) {
+    args <- lapply(as.list(match.call(expand.dots=TRUE))[-1L],eval,envir=parent.frame())
+    return(mixedgp_predict_blocks(args,FUN=sample_eiv_test_y,object_name="fit_obj"))
+  }
+
   u_input_scale <- match.arg(u_input_scale)
   samples_u <- fit_obj$mcmc$samples_u
   samples_tau <- fit_obj$mcmc$samples_tau
@@ -2383,6 +2570,11 @@ sample_eiv_f_given_xu_1d <- function(x_star_raw,
                                       include_gp_uncertainty = TRUE,
                                       u_input_scale = c("raw", "model"),
                                       joint = FALSE) {
+  if (!is.null(mixedgp_budget()) && !isTRUE(getOption("eivGP.prediction_block",FALSE))) {
+    args <- lapply(as.list(match.call(expand.dots=TRUE))[-1L],eval,envir=parent.frame())
+    return(mixedgp_predict_blocks(args,FUN=sample_eiv_f_given_xu_1d,object_name="fit_obj"))
+  }
+
   u_input_scale <- match.arg(u_input_scale)
   samples_u <- fit_obj$mcmc$samples_u
   samples_logtheta <- fit_obj$mcmc$samples_logtheta
@@ -2593,6 +2785,11 @@ sample_eiv_m_given_xc_1d <- function(x_star_raw,
                                       joint = FALSE,
                                       return_components = FALSE,
                                       seed = NULL) {
+  if (!is.null(mixedgp_budget()) && !isTRUE(getOption("eivGP.prediction_block",FALSE))) {
+    args <- lapply(as.list(match.call(expand.dots=TRUE))[-1L],eval,envir=parent.frame())
+    return(mixedgp_predict_blocks(args,FUN=sample_eiv_m_given_xc_1d,object_name="fit_obj"))
+  }
+
   if (!is.null(seed)) set.seed(as.integer(seed))
   x_train <- fit_obj$data$x
   predictor_names <- fit_obj$data$predictor_names
@@ -5158,6 +5355,11 @@ sample_eiv_test_y_ordprobit_fb <- function(X_test_raw,
                                            predictive_target = c("response", "latent"),
                                            joint = FALSE,
                                            seed = NULL) {
+  if (!is.null(mixedgp_budget()) && !isTRUE(getOption("eivGP.prediction_block",FALSE))) {
+    args <- lapply(as.list(match.call(expand.dots=TRUE))[-1L],eval,envir=parent.frame())
+    return(mixedgp_predict_blocks(args,FUN=sample_eiv_test_y_ordprobit_fb,object_name="fit_obj"))
+  }
+
   predictive_target <- match.arg(predictive_target)
   latent_sampler <- match.arg(latent_sampler)
   U_input_scale <- match.arg(U_input_scale)
@@ -5411,6 +5613,11 @@ sample_eiv_f_given_xu_fb <- function(X_test_raw,
                                      U_input_scale = c("raw", "model"),
                                      joint = FALSE,
                                      seed = NULL) {
+  if (!is.null(mixedgp_budget()) && !isTRUE(getOption("eivGP.prediction_block",FALSE))) {
+    args <- lapply(as.list(match.call(expand.dots=TRUE))[-1L],eval,envir=parent.frame())
+    return(mixedgp_predict_blocks(args,FUN=sample_eiv_f_given_xu_fb,object_name="fit_obj"))
+  }
+
   U_input_scale <- match.arg(U_input_scale)
   if (!is.null(seed)) set.seed(seed)
 
@@ -5649,6 +5856,11 @@ sample_eiv_m_given_xc_fb <- function(X_test_raw,
                                       rejection_batch_size = NULL,
                                       rejection_max_batches = 1000L,
                                       seed = NULL) {
+  if (!is.null(mixedgp_budget()) && !isTRUE(getOption("eivGP.prediction_block",FALSE))) {
+    args <- lapply(as.list(match.call(expand.dots=TRUE))[-1L],eval,envir=parent.frame())
+    return(mixedgp_predict_blocks(args,FUN=sample_eiv_m_given_xc_fb,object_name="fit_obj"))
+  }
+
   latent_sampler <- match.arg(latent_sampler)
   if (!is.null(seed)) set.seed(as.integer(seed))
   p <- fit_obj$data$p
@@ -10697,7 +10909,7 @@ mixedgp_summarize_diagnostic_series <- function(series, rhat_limit = 1.01,
     stop("Release diagnostics require the posterior package.")
   }
   if (length(series) == 0L) return(data.frame())
-  do.call(rbind, lapply(names(series), function(parameter) {
+  do.call(rbind, mixedgp_stage_lapply(names(series), function(parameter) {
     chains <- lapply(series[[parameter]], as.numeric)
     lens <- lengths(chains)
     values <- unlist(chains, use.names = FALSE)

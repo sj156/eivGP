@@ -58,7 +58,7 @@ test_that("Ocean CLI accepts an integer extension length", {
 })
 
 
-test_that("one-click fitting and continuation analyze serially before rendering", {
+test_that("one-click fitting and continuation retain the shared core budget before rendering", {
   root<-normalizePath(testthat::test_path("../../.."),mustWork=TRUE)
   env<-new.env(parent=globalenv());sys.source(file.path(root,"paper/applications/ocean.R"),env)
   for(action in c("fit","continue","analyze","report","plan")) {
@@ -74,7 +74,7 @@ test_that("one-click fitting and continuation analyze serially before rendering"
       if(action=="plan")"plan" else c(action,"render")
     expect_identical(stages,expected)
     if(action%in%c("fit","continue")) {
-      expect_identical(budgets,c(12L,1L));expect_identical(imports,c(TRUE,FALSE))
+      expect_identical(budgets,c(12L,12L));expect_identical(imports,c(TRUE,FALSE))
       expect_identical(chains,c(8L,8L))
     }
   }
@@ -127,4 +127,14 @@ test_that("Ocean CLI and Rmd defaults share an external home-directory root", {
   expect_identical(env$ocean_output_dir(root,"ocean500","paper","~/custom-ocean"),path.expand("~/custom-ocean"))
   expect_identical(env$ocean_output_dir(root,"ocean500","paper","relative-run"),file.path(root,"relative-run"))
   expect_identical(env$ocean_output_dir(root,"ocean500","paper","/external/run"),"/external/run")
+})
+
+test_that("Ocean bootstrap validates R and native modules in their source directories", {
+  root<-normalizePath(testthat::test_path("../../.."),mustWork=TRUE)
+  skip_if_not(file.exists(file.path(root,"paper/applications/ocean.R")))
+  env<-new.env(parent=globalenv());sys.source(file.path(root,"paper/applications/ocean.R"),env)
+  old<-.libPaths();on.exit(.libPaths(old),add=TRUE)
+  api<-new.env(parent=env)
+  expect_silent(env$ocean_load_api(root,api))
+  expect_true(is.function(api$ocean_execute))
 })

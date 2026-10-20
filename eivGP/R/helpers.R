@@ -1831,6 +1831,12 @@ predict.eivgp_fit <- function(object, ...) {
 #'   estimand, whether columns form coherent joint draws, and (when applicable)
 #'   the latent-input scale and anchoring status. Row order follows `draw_ids`,
 #'   with the `n_per_draw` replicates for each draw contiguous.
+#' @details Numerical and application workflows use a shared core pool. Within
+#'   that pool, prediction stream schema 1 assigns seeds to fixed blocks of eight
+#'   selected states, independent of core count. Joint prediction rows are never
+#'   split. The matrix records `prediction_stream_schema = 1L`. These Monte Carlo
+#'   realizations can differ from calls outside the pool and older serial runs;
+#'   fitted MCMC draws are unchanged. Workflow cache identities remain enforced.
 #' @export
 predict_eivgp <- function(object,
                           new_X,
@@ -1853,6 +1859,11 @@ predict_eivgp <- function(object,
                           ...) {
   if (!inherits(object, "eivgp_fit")) {
     stop("object must be returned by fit_eivgp().")
+  }
+  if (!is.null(mixedgp_budget()) && !isTRUE(getOption("eivGP.prediction_block",FALSE))) {
+    call <- match.call(expand.dots=TRUE)
+    args <- lapply(as.list(call)[-1L],eval,envir=parent.frame())
+    return(mixedgp_predict_blocks(args))
   }
   supplied <- list(
     new_U_scale = !missing(new_U_scale),
@@ -10198,6 +10209,8 @@ adni_print_core_plan <- function(plan) {
 }
 
 adni_run_jobs <- function(jobs, FUN, plan, status_path) {
+  release_budget <- mixedgp_budget_enter(plan$total_cores)
+  on.exit(release_budget(),add=TRUE)
   worker <- function(i) {
     fold <- jobs$fold[i]
     dir <- file.path(jobs$output_root[i], paste0("fold_", fold))
@@ -10223,10 +10236,8 @@ adni_run_jobs <- function(jobs, FUN, plan, status_path) {
       list(ok = FALSE, fold = fold, message = text)
     })
   }
-  if (plan$fold_workers > 1L) {
-    results <- parallel::mclapply(seq_len(nrow(jobs)), worker, mc.cores = plan$fold_workers,
-      mc.preschedule = FALSE, mc.set.seed = FALSE, mc.allow.recursive = TRUE)
-  } else results <- lapply(seq_len(nrow(jobs)), worker)
+  results <- mixedgp_parallel_lapply(seq_len(nrow(jobs)),worker,
+    n_cores=plan$fold_workers,.preserve_rng=TRUE)
   good <- vapply(results, function(x) is.list(x) && isTRUE(x$ok), logical(1))
   status <- data.frame(fold = jobs$fold, success = good,
     message = vapply(seq_along(results), function(i) {
@@ -10559,6 +10570,8 @@ study_config <- function(study = c("study1", "study2"), profile = c("quick", "de
 
 run_numerical_study <- function(config, action=c("plan","data","fit","run","report"),
                                 competitors=c("UC-GP","LVGP","EzGP"), run_dir=NULL) {
+  release_budget <- mixedgp_budget_enter(if(is.null(config$parallel$core_budget)) config$parallel$workers else config$parallel$core_budget)
+  on.exit(release_budget(),add=TRUE)
   action<-match.arg(action)
   if(action=="plan") {
     config$mode<-"dry_run";config$stages<-character()
@@ -10620,6 +10633,8 @@ env_flag <- function(name, default = FALSE) {
 PREPARE_ONLY <- isTRUE(get0("ADNI_PREPARE_ONLY", inherits = FALSE))
 CV_FOLDS <- 5L
 TOTAL_CORES <- env_int("EIVGP_CORES", env_int("EIVGP_N_CORES", 4L, 1L), 1L)
+release_budget <- mixedgp_budget_enter(TOTAL_CORES)
+on.exit(release_budget(),add=TRUE)
 MAX_FOLD_WORKERS <- env_int("ADNI_MAX_FOLD_WORKERS", 5L, 1L)
 SMOKE_TEST <- env_flag("EIVGP_SMOKE_TEST", FALSE)
 
@@ -11517,11 +11532,13 @@ ocean_schedule <- function(indices, caps, cores, FUN, on_start, on_done) {
 # Unified entry; report never invokes a fit. All cached computations are validated.
 ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
   import_dirs=character()) {
+  release_budget <- mixedgp_budget_enter(settings$cores)
+  on.exit(release_budget(),add=TRUE)
+  settings$cores <- mixedgp_budget_cores()
   RNGkind("Mersenne-Twister","Inversion","Rejection")
   import_dirs <- as.character(unlist(import_dirs)); import_dirs <- import_dirs[nzchar(import_dirs)]
   inputs <- ocean_prepare_inputs(data_dir); selected <- ocean_select_tasks(settings)
   stage<-settings$action
-  if(stage%in%c("analyze","report"))settings$cores<-1L
   if(stage=="fit")selected<-selected[selected$module!="continuation",,drop=FALSE]
   if(stage=="continue")selected<-selected[selected$module=="continuation",,drop=FALSE]
   if(stage=="analyze")selected<-selected[selected$module%in%c("eiv","continuation"),,drop=FALSE]
@@ -11567,7 +11584,7 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
       ocean_atomic_lines(c(paste("state:",state),paste("updated:",format(Sys.time(),"%Y-%m-%d %H:%M:%S %z")),
         paste("pid:",Sys.getpid()),paste("current:",current),
         sprintf("executed done: %d/%d; failed: %d; conditional skips: %d",sum(status$state %in% c("DONE","REUSED")),nrow(status)-sum(status$state=="SKIPPED_CONVERGED"),sum(status$state=="FAILED"),sum(status$state=="SKIPPED_CONVERGED")),
-        paste("Total core budget:",settings$cores,"; analysis is serial. See execution_schedule.csv and task logs.")),
+        paste("Total core budget:",settings$cores,"; shared across chains and analysis. See execution_schedule.csv and task logs.")),
         file.path(job,"PROGRESS.txt"))
     }
     ocean_atomic_csv(inputs$audit,file.path(job,"design_audit.csv"))
@@ -11649,7 +11666,12 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
       event(i,"FINISH",active);publish("RUNNING",ids[i])
     }
     caps<-ifelse(selected$module[pending]%in%c("eiv","continuation"),settings$chains,1L)
-    ocean_schedule(pending,caps,settings$cores,work,start_task,finish_task)
+    # Bound simultaneously resident fits, but allow each stage to borrow all
+    # free slots. A waiting fit coordinator releases its slot to chain workers.
+    outer <- max(1L, ceiling(settings$cores / max(1L,settings$chains)))
+    mixedgp_budget_yield(function() ocean_schedule(pending,rep(1L,length(pending)),outer,
+      function(i,allocated) mixedgp_budget_worker(function() work(i,settings$cores)),
+      start_task,finish_task))
     publish(if(any(status$state=="FAILED")) "SELECTED_COMPLETE_WITH_FAILURES" else "SELECTED_COMPLETE")
     ocean_atomic_lines(capture.output(print(status,row.names=FALSE)),file.path(job,"SUMMARY.txt"))
     if(any(status$state=="FAILED")) stop("Some selected tasks failed; inspect ",file.path(job,"task_status.csv"))
@@ -12090,7 +12112,9 @@ run_ocean_analysis <- function(data_dir,output_dir,action="plan",profile="paper"
 }
 ocean_analysis_impl <- function(repository_dir,data_dir,output_dir,settings,import_dirs=character(),
   cc_output_dir="",diagnostics_dir="",representative_fold=1L) {
-  if(settings$action%in%c("analyze","report"))settings$cores<-1L
+  release_budget <- mixedgp_budget_enter(settings$cores)
+  on.exit(release_budget(),add=TRUE)
+  settings$cores <- mixedgp_budget_cores()
   a<-ocean_execute(repository_dir,data_dir,output_dir,settings,import_dirs)
   if(settings$action%in%c("plan","fit","continue"))return(a)
   if("prediction" %in% settings$modules && !is.null(a$prediction)) {
@@ -12242,7 +12266,7 @@ measurement_cut <- function(C,U_obs,cfg,seed) {
     checkpoint(cfg$iter,force=TRUE)
     list(states=states,trace=trace)
   }
-  z<-if(.Platform$OS.type=="unix"&&cfg$cores>1)parallel::mclapply(1:4,run,mc.cores=min(4,cfg$cores),mc.set.seed=FALSE)else lapply(1:4,run)
+  z<-mixedgp_parallel_lapply(1:4,run,n_cores=min(4L,cfg$cores),.preserve_rng=TRUE)
   if(any(vapply(z,inherits,logical(1),"try-error")))stop("Measurement chain failed")
   mis<-which(!complete.cases(U_obs))
   labels<-c(unlist(lapply(1:2,function(k)sprintf("U[%d,%d]",mis,k))),
@@ -12326,24 +12350,29 @@ gp_evaluate <- function(states,train,test,cfg,seed) {
   out<-lapply(c("y_mean","y_var","m_mean","m_var","f_mean","f_var"),function(x)matrix(NA_real_,N,S))
   names(out)<-c("y_mean","y_var","m_mean","m_var","f_mean","f_var")
   out$y_mean<-out$y_var<-matrix(NA_real_,N,S*response_draws)
-  for(s in seq_len(S)) {
+  parts <- mixedgp_stage_lapply(seq_len(S),function(s) {
+    ans <- list()
     st<-states[[s]]
     predict<-function(x,u,cov=FALSE,noisy=FALSE)F("gp_predict_draw_general")(xy$X,st$U,xy$y,x,u,
       st$logtheta,st$sigma2,noisy=noisy,return_cov=cov)
-    f<-predict(Xt,test$U);out$f_mean[,s]<-xy$y_center+xy$y_scale*f$mean;out$f_var[,s]<-xy$y_scale^2*f$var
+    f<-predict(Xt,test$U);ans$f_mean<-xy$y_center+xy$y_scale*f$mean;ans$f_var<-xy$y_scale^2*f$var
     # Equal weight per posterior state and prospective input draw. This budget
     # is distinct from integration of m and does not alter fitted states.
+    ans$y_mean <- ans$y_var <- matrix(NA_real_,N,response_draws)
+    ans$m_mean <- ans$m_var <- numeric(N)
     for(rr in seq_len(response_draws)) {
       yp<-predict(Xt,matrix(us[[s]][rr,,],N,2),noisy=TRUE)
       col<-(s-1L)*response_draws+rr
-      out$y_mean[,col]<-xy$y_center+xy$y_scale*yp$mean;out$y_var[,col]<-xy$y_scale^2*yp$var
+      ans$y_mean[,rr]<-xy$y_center+xy$y_scale*yp$mean;ans$y_var[,rr]<-xy$y_scale^2*yp$var
     }
     for(i in seq_len(N)) {
       mp<-predict(Xt[rep(i,cfg$latent),,drop=FALSE],matrix(us[[s]][,i,],cfg$latent,2),cov=TRUE)
-      out$m_mean[i,s]<-xy$y_center+xy$y_scale*mean(mp$mean)
-      out$m_var[i,s]<-xy$y_scale^2*max(0,mean(mp$cov))
+      ans$m_mean[i]<-xy$y_center+xy$y_scale*mean(mp$mean)
+      ans$m_var[i]<-xy$y_scale^2*max(0,mean(mp$cov))
     }
-  }
+    ans
+  })
+  for(name in names(out)) out[[name]] <- do.call(cbind,lapply(parts,`[[`,name))
   out
 }
 categorical_evaluate <- function(method,train,test,cfg,seed,path) {
@@ -12380,10 +12409,15 @@ cc_evaluate <- function(method,train,test,cal,us,cfg,seed,path) {
     atomic_rds(model,path)
   }
   N<-nrow(test$X);S<-length(us)*cfg$latent;mu<-v<-matrix(NA_real_,N,S)
-  for(s in seq_along(us))for(i in seq_len(N)) {
-    p<-cc_predict(base,model,cbind(test$X[rep(i,cfg$latent),,drop=FALSE],matrix(us[[s]][,i,],cfg$latent,d)),test$C[rep(i,cfg$latent),,drop=FALSE],m_vec=m_vec)
-    ids<-(s-1)*cfg$latent+seq_len(cfg$latent);mu[i,ids]<-p$mean;v[i,ids]<-p$var
-  }
+  parts<-mixedgp_stage_lapply(seq_along(us),function(s) {
+    a<-b<-matrix(NA_real_,N,cfg$latent)
+    for(i in seq_len(N)) {
+      p<-cc_predict(base,model,cbind(test$X[rep(i,cfg$latent),,drop=FALSE],matrix(us[[s]][,i,],cfg$latent,d)),test$C[rep(i,cfg$latent),,drop=FALSE],m_vec=m_vec)
+      a[i,]<-p$mean;b[i,]<-p$var
+    }
+    list(mean=a,var=b)
+  })
+  mu<-do.call(cbind,lapply(parts,`[[`,"mean"));v<-do.call(cbind,lapply(parts,`[[`,"var"))
   response_draws<-if(is.null(cfg$cc_response_latent))min(cfg$latent,4L)else cfg$cc_response_latent
   if(response_draws<1L||response_draws>cfg$latent)stop("Invalid CC response integration budget")
   ids<-unlist(lapply(seq_along(us),function(s)(s-1)*cfg$latent+unique(round(seq(1,cfg$latent,length.out=response_draws)))))
@@ -12411,11 +12445,11 @@ score_result <- function(pred,dat,cal,truth,method) {
     z$seen_in_complete_cases<-if(nrow(z)==length(cc_support))cc_support else NA
     rows[[length(rows)+1L]]<<-z
   }
-  add("y",t(vapply(seq_along(test$y),function(i)mixture_score(test$y[i],pred$y_mean[i,],pred$y_var[i,]),numeric(5))))
+  add("y",do.call(rbind,mixedgp_stage_lapply(seq_along(test$y),function(i)mixture_score(test$y[i],pred$y_mean[i,],pred$y_var[i,]))))
   mp<-if(!is.null(pred$m_point))pred$m_point else rowMeans(pred$m_mean)
   add("m",data.frame(sq_error=(mp-truth$m)^2,crps=NA_real_,nlpd=NA_real_,coverage=NA_real_,width=NA_real_))
   if(!is.null(pred$f_mean)) {
-    add("f",t(vapply(seq_along(truth$f),function(i)mixture_score(truth$f[i],pred$f_mean[i,],pred$f_var[i,]),numeric(5))))
+    add("f",do.call(rbind,mixedgp_stage_lapply(seq_along(truth$f),function(i)mixture_score(truth$f[i],pred$f_mean[i,],pred$f_var[i,]))))
     # m intervals use GP covariance under integration, with finite-L approximation.
     rows[[2]]$coverage<-vapply(seq_along(truth$m),function(i)mixture_score(truth$m[i],pred$m_mean[i,],pred$m_var[i,])["coverage"],numeric(1))
     rows[[2]]$width<-vapply(seq_along(truth$m),function(i)mixture_score(truth$m[i],pred$m_mean[i,],pred$m_var[i,])["width"],numeric(1))
@@ -12532,6 +12566,9 @@ mechanism_report <- function(root) {
   invisible(file.path(root,"report.html"))
 }
 run_mechanism <- function(cfg,action="plan",script_path=NULL) {
+  release_budget <- mixedgp_budget_enter(cfg$cores)
+  on.exit(release_budget(),add=TRUE)
+  cfg$cores <- mixedgp_budget_cores()
   if(!action%in%c("plan","data","run","report"))stop("action must be plan, data, run or report")
   numerical_package_check()
   jobs<-expand.grid(rep=cfg$reps,calib=cfg$calib,method=cfg$methods,stringsAsFactors=FALSE)
@@ -12592,7 +12629,7 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
   allocation <- mixedgp_followup_allocation(cfg$cores,length(cfg$reps))
   timing <- mixedgp_batch_timing(file.path(cfg$output,"timing"),jobs$job,groups=jobs$method,workers=allocation$workers)
   run_rep <- function(indices) {
-  cfg$cores <- allocation$chains
+  cfg$cores <- mixedgp_budget_cores(allocation$chains)
   failed<-0L
   for(j in indices) {
     job<-jobs[j,];folder<-file.path(cfg$output,job$job);scorefile<-file.path(folder,"scores.rds")
@@ -12704,8 +12741,7 @@ mixedgp_study1_cc_measurement <- function(C,U_obs,cfg,seed) {
   cal<-which(!is.na(U_obs));miss<-which(is.na(U_obs))
   run<-function(ch)fit_threshold_measurement_response_free(C,U_obs,cal,6L,
     n_iter=cfg$iter,burn=cfg$warmup,seed=seed+10000L*ch)
-  chains<-if(.Platform$OS.type=="unix"&&cfg$cores>1L)
-    parallel::mclapply(1:4,run,mc.cores=min(cfg$cores,4L),mc.set.seed=FALSE)else lapply(1:4,run)
+  chains<-mixedgp_parallel_lapply(1:4,run,n_cores=min(cfg$cores,4L),.preserve_rng=TRUE)
   if(any(vapply(chains,inherits,logical(1),"try-error")))stop("Study I measurement chain failed")
   trace<-array(NA_real_,c(cfg$iter-cfg$warmup,4L,5L+length(miss)),
     dimnames=list(NULL,paste0("chain",1:4),c(paste0("tau",1:5),paste0("u",miss))))
@@ -12719,6 +12755,8 @@ mixedgp_study1_cc_measurement <- function(C,U_obs,cfg,seed) {
 }
 
 mixedgp_study1_cc_workflow <- function(args,repo_root,root,data_root,action) {
+  release_budget <- mixedgp_budget_enter(as.integer(if(is.null(args$cores))4L else args$cores))
+  on.exit(release_budget(),add=TRUE)
   api<-eivgp_numerical_api(repo_root)
   get<-function(k,d)if(is.null(args[[k]]))d else args[[k]]
   profile<-get("profile","paper");pilot<-profile=="pilot"
@@ -12766,7 +12804,7 @@ mixedgp_study1_cc_workflow <- function(args,repo_root,root,data_root,action) {
     if(action=="run")api$atomic_rds(alljobs,registry)
     allocation <- mixedgp_followup_allocation(cfg$cores,length(cfg$reps))
     run_rep <- function(indices) {
-    cfg$cores <- allocation$chains
+    cfg$cores <- mixedgp_budget_cores(allocation$chains)
     failures <- 0L
     for(j in indices) {
       job<-selected[j,];folder<-file.path(out,job$job);dir.create(folder,recursive=TRUE,showWarnings=FALSE)
@@ -12820,6 +12858,8 @@ mixedgp_study1_cc_workflow <- function(args,repo_root,root,data_root,action) {
 
 # Permanent orchestration for both paper studies. Historical readers are separate.
 run_paper_study <- function(study=c("study1","study2"), args=list(), repo_root=getwd()) {
+  release_budget <- mixedgp_budget_enter(as.integer(if(is.null(args$cores)) 4L else args$cores))
+  on.exit(release_budget(),add=TRUE)
   study<-match.arg(study)
   # Follow-up mode adds missing comparisons; it never routes through core fitting.
   if(identical(args$component,"follow-up")) {
@@ -13078,6 +13118,7 @@ mixedgp_publication_workflow <- function(study, args, repo_root) {
 mixedgp_followup_allocation <- function(cores, replications) {
   stopifnot(length(cores)==1L,is.finite(cores),cores>=1L,cores==floor(cores),
     length(replications)==1L,replications>=1L)
+  cores <- mixedgp_resolve_cores(cores)
   workers <- if(.Platform$OS.type=="unix") min(replications,max(1L,cores%/%4L)) else 1L
   list(workers=as.integer(workers),chains=as.integer(min(4L,cores%/%workers)),cores=cores)
 }
@@ -13089,9 +13130,10 @@ mixedgp_followup_apply <- function(groups, fun, allocation) {
     # Explicit per-job seeds/checkpoint RNG determine the scientific random streams.
     fun(x)
   }
-  ans <- if(allocation$workers>1L) parallel::mclapply(groups,run,
-    mc.cores=allocation$workers,mc.preschedule=FALSE,mc.set.seed=FALSE,
-    mc.allow.recursive=TRUE) else lapply(groups,run)
+  release_budget <- mixedgp_budget_enter(allocation$cores)
+  on.exit(release_budget(),add=TRUE)
+  ans <- mixedgp_parallel_lapply(groups,run,n_cores=allocation$workers,
+    mc.preschedule=FALSE,.preserve_rng=TRUE)
   if(any(vapply(ans,function(x)inherits(x,"try-error")||is.null(x),logical(1))))
     stop("A replication worker failed or was interrupted; retained checkpoints can be resumed.")
   unlist(ans,use.names=FALSE)
@@ -13130,4 +13172,46 @@ mixedgp_followup_checkpoint_modules <- function() {
       modules["helpers.R"] <- row$old
   }
   modules
+}
+
+
+# Prediction stream schema 1: fixed blocks of eight selected posterior states,
+# independent of worker count. Joint prediction rows stay together within a
+# state; never partition a multivariate Gaussian draw across prediction rows.
+mixedgp_predict_blocks <- function(args,FUN=predict_eivgp,object_name="object") {
+  object <- args[[object_name]]
+  ids <- args$draw_ids
+  if(is.null(ids)) ids <- seq_len(nrow(object$mcmc$samples_tau))
+  ids <- mixedgp_as_integer_strict(ids,"draw_ids",1L)
+  if(any(ids>nrow(object$mcmc$samples_tau)))stop("draw_ids must index saved posterior draws.")
+  old_rng <- mixedgp_rng_state()
+  if(!is.null(args$seed)) {
+    seed <- mixedgp_as_integer_strict(args$seed,"seed",0L,1L)
+    on.exit(mixedgp_restore_rng_state(old_rng),add=TRUE)
+  } else seed <- sample.int(.Machine$integer.max,1L)
+  groups <- split(seq_along(ids),ceiling(seq_along(ids)/8L))
+  # Task seeds are tied to block position, not PID or assigned CPU.
+  seeds <- as.integer((as.double(seed)+104729*(seq_along(groups)-1)) %% .Machine$integer.max)
+  parts <- mixedgp_parallel_lapply(seq_along(groups),function(i) {
+    old <- options(eivGP.prediction_block=TRUE)
+    on.exit(options(old),add=TRUE)
+    a <- args;a$draw_ids <- ids[groups[[i]]]
+    if("seed" %in% names(formals(FUN)))a$seed <- seeds[i]
+    do.call(FUN,a)
+  },n_cores=mixedgp_budget_cores(),seeds=seeds,mc.preschedule=TRUE)
+  ans <- do.call(rbind,parts)
+  attrs <- setdiff(names(attributes(parts[[1L]])),c("dim","dimnames"))
+  for(name in attrs) {
+    values <- lapply(parts,attr,which=name,exact=TRUE)
+    if(name %in% c("conditional_means","conditional_vars")) value <- do.call(rbind,values)
+    else if(name %in% c("rejection_acceptance","rejection_candidate_draws")) value <- unlist(values,use.names=FALSE)
+    else {
+      if(!all(vapply(values,identical,logical(1),values[[1L]])))
+        stop("Prediction block metadata disagree: ",name)
+      value <- values[[1L]]
+    }
+    attr(ans,name) <- value
+  }
+  attr(ans,"prediction_stream_schema") <- 1L
+  ans
 }

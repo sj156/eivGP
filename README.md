@@ -291,7 +291,7 @@ separate application installation and dataset guide, see
 ```sh
 Rscript paper/applications/ocean.R --action=plan --profile=paper --dataset=ocean500 --cores=16
 
-# Fit, save checkpoints, analyze using one worker, and generate HTML.
+# Fit, save checkpoints, analyze with the shared core budget, and generate HTML.
 Rscript paper/applications/ocean.R --action=fit --profile=paper --dataset=ocean500 --cores=16
 
 # Explicitly extend flagged fits, then update analysis and HTML.
@@ -303,11 +303,31 @@ iterations per chain including 5,000 burn-in; `pilot` uses four chains and 80/30
 `quick` uses one chain and 80/30. `--chains`, `--iter` and `--burn` are not CLI
 options. Use `pilot` or `quick` for workflow checks.
 
-`--cores` is the total fitting budget shared across fold/calibration fits and
-their chains. Each EIV fit receives at most its profile's chain count; each
-comparator receives one core. With four chains and enough tasks, 12, 16 or 56
-cores can run 3, 4 or 14 EIV fits concurrently. Analysis and HTML use one worker
-after all fits finish. Allocation logs are saved under `jobs/<run_id>/`.
+`--cores` is one shared budget across MCMC, prediction, diagnostics, scoring,
+and figure export. Four chains per paper fit are unchanged. Waiting coordinators
+release their slots; active chain and analysis workers acquire slots from the
+same pool. After MCMC, prediction and post-processing can borrow the full budget,
+including when only one fit remains. The number of simultaneously resident fits
+is bounded separately to limit memory use. HTML assembly remains serial.
+Windows currently executes serially. Allocation logs under `jobs/<run_id>/`
+count outer job coordinators, not instantaneous CPU utilization.
+
+Set numerical-library threads to one **before starting R**, so each active worker
+uses at most one numerical-library thread:
+
+```sh
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1
+```
+
+Numerical study entrypoints and the ADNI driver use the same pool. Random
+prediction tasks use fixed blocks of eight selected posterior states and task
+seeds independent of core count (prediction stream schema 1). Results therefore
+reproduce across core counts, including joint predictions and Gaussian mixture
+components. MCMC streams and chain counts are unchanged. Prediction Monte Carlo
+realizations can differ from the older serial stream; source/cache identities
+must match. Do not relabel old results or remove identity files to resume an
+incompatible run. Existing saved fits and outputs are not migrated automatically.
+
 
 Continuation keeps the original chains and adds 20,000 iterations per chain by
 default in paper mode. `--continuation-iter=10000` requests another extension
@@ -389,3 +409,11 @@ engines, prediction, diagnostics, continuation, and lossless compact storage.
 
 
 Both numerical entry points now include the two published-competitor protocols: original `(X,C)` fits on all records and complete-case `(X,U,C)` fits with `U` continuous. `study1.R --component=complete-case --profile=pilot --action=run` starts a 12-job paired pilot; `study2.R --component=mechanism --profile=pilot --action=run` starts the CUT/CC pilot. Full Study I additions (600 CC fits) are separate from the existing 400 new Study II jobs. See [the numerical workflow](paper/numerical/README.md#two-versions-of-the-published-competitors-in-both-studies) for data access, diagnostics, reporting and the two-script paper reproduction commands. Pilots never launch the full grids automatically.
+
+CPU requests are upper bounds: the effective shared budget is the smaller of
+`--cores` and the detected logical CPU count. For example, `--cores=56` uses
+16 workers on a 16-CPU host, while `--cores=8` uses eight. Failed CPU detection
+falls back to one worker; Windows remains serial. Four-chain fits retain all
+four chains even when fewer workers are available. Keep BLAS/OpenMP threads
+limited to one per worker. Detection describes host CPU capacity, not current
+idle CPUs or a guaranteed scheduler/container allocation.

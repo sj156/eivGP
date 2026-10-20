@@ -95,12 +95,26 @@ Sampling is fixed by profile:
 Initial iterations include burn-in. The CLI does not accept `--chains`, `--iter`
 or `--burn`. Use `pilot` or `quick` for workflow checks, not formal results.
 
-`cores` is a total fitting budget shared across fold/calibration tasks and their
-chains. EIV fits receive up to their profile's chain count; comparators receive
-one core. All active reservations stay within the budget. With four chains and
-enough tasks, 12/16/56 cores support 3/4/14 simultaneous EIV fits. Windows uses
-serial execution. After fitting, analysis and HTML use one worker. `run` aliases
-`fit`; low-level fitting and analysis remain separate stages.
+`cores` is a shared workflow budget for chains, prediction blocks, diagnostics,
+scoring and independent figure files. Four paper chains remain fixed. Waiting
+coordinators release slots, and completed chains return their slots immediately;
+subsequent stages can borrow all available slots. Simultaneously resident fits
+are bounded separately for memory. Analysis and report calculations retain the
+requested budget; HTML assembly is serial. Windows currently uses serial
+execution. `run` aliases `fit`; fitting and analysis remain separate stages.
+
+Set `OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+VECLIB_MAXIMUM_THREADS=1` before starting R. The pool bounds active R workers;
+these startup settings bound numerical-library threads inside them. Scheduling
+logs count outer job coordinators and should not be read as measured CPU usage.
+
+Prediction uses fixed blocks and seeds independent of worker count (stream
+schema 1); all prediction rows belonging to a joint draw stay together. The
+new prediction stream can differ from older serial Monte Carlo realizations.
+Source and cache identity checks remain strict; this update does not rewrite
+existing results or migrate incompatible caches. A saved-fit `report` can use a
+fresh `--diagnostics-dir` for new functional calculations without refitting.
+
 
 `continue` explicitly extends initially screen-flagged fits, then updates analysis
 and HTML. It preserves chain count and initial settings; burn-in is not repeated.

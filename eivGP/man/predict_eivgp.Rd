@@ -87,3 +87,11 @@ with the \code{n_per_draw} replicates for each draw contiguous.
 \description{
 Draw from an EIV-GP predictive distribution
 }
+\details{
+Numerical and application workflows use a shared core pool. Within that pool,
+prediction stream schema 1 assigns seeds to fixed blocks of eight selected
+states, independent of core count. Joint prediction rows are never split. The
+matrix records \code{prediction_stream_schema = 1L}. These Monte Carlo realizations
+can differ from calls outside the pool and older serial runs; fitted MCMC draws
+are unchanged. Workflow cache identities remain enforced.
+}

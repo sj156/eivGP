@@ -2057,8 +2057,7 @@ ocean_export_prediction_report <- function(report,dest) {
   ocean_atomic_csv(report$summary,file.path(dest,"summary_raw.csv"))
   ocean_atomic_csv(report$fold_metrics_SD_Y,file.path(dest,"fold_metrics_SD_Y.csv"))
   ocean_atomic_csv(report$availability,file.path(dest,"eiv_availability.csv"))
-  for(name in names(report$plots)) for(ext in c("png","pdf")) ggplot2::ggsave(
-    file.path(dest,paste0(name,".",ext)),report$plots[[name]],width=10,height=6,dpi=180,bg="white")
+  mixedgp_save_plot_jobs(report$plots,dest,function(name)c(10,6))
   invisible(report)
 }
 # One row per fold combines fit availability, continuation and final screening.
@@ -2663,6 +2662,7 @@ ocean_diag_functionals <- function(i, sources, output_dir, inputs, grids, settin
   identity <- list(version = "ocean-diagnostics-1", package = as.character(utils::packageVersion("eivGP")),
     source = s, hashes = unname(tools::md5sum(c(fit_path, prediction_path))),
     train = tr[, c("cohort_id", "G2salinity", "log_pressure", "C", "Y", "U", "calib_o20", "calib_o50")],
+    prediction_stream_schema = if(is.null(mixedgp_budget())) 0L else 1L,
     m_grid = mg, f_grid = grids$f, settings = settings,
     code = list(body(ocean_diag_functionals), body(ocean_diag_balanced_ids), body(ocean_diag_point_summary)))
   cache_path <- file.path(cache_dir, sprintf("fold%02d_%s.rds", s$fold, s$cell))
@@ -2931,7 +2931,8 @@ ocean_build_diagnostics <- function(output_dir, data_dir = file.path(output_dir,
     dir.create(file.path(report_dir, subdir), recursive = TRUE, showWarnings = FALSE)
   run_one <- function(i) ocean_diag_functionals(i, sources, output_dir, inputs, grids, settings,
     cache_dir = file.path(report_dir, "cache"), overwrite = overwrite)
-  parts <- lapply(seq_len(nrow(sources)), run_one)
+  parts <- mixedgp_stage_lapply(seq_len(nrow(sources)), run_one,
+    workers=max(1L,ceiling(mixedgp_budget_cores()/4L)))
   m <- do.call(rbind, lapply(parts, `[[`, "m"))
   f <- do.call(rbind, lapply(parts, `[[`, "f"))
   checks <- do.call(rbind, lapply(parts, `[[`, "integration_check"))
@@ -2978,9 +2979,7 @@ ocean_build_diagnostics <- function(output_dir, data_dir = file.path(output_dir,
   write_csv(do.call(rbind, diag), "internal", "mcmc_existing_summary.csv")
   dimensions <- list(u_main = c(13.2, 5.2), m_main = c(10, 7), fm_main = c(11, 4.9),
     u_all_folds = c(13.2, 14.5), m_all_folds = c(13, 13), fm_all_folds = c(11, 14))
-  for (name in names(plots)) for (extension in c("png", "pdf"))
-    ggplot2::ggsave(file.path(report_dir, "figures", paste0(name, ".", extension)), plots[[name]],
-      width = dimensions[[name]][1], height = dimensions[[name]][2], dpi = 180, bg = "white")
+  mixedgp_save_plot_jobs(plots,file.path(report_dir,"figures"),function(name)dimensions[[name]])
   provenance <- list(settings = settings, representative_fold = representative_fold,
     package = as.character(utils::packageVersion("eivGP")), upstream_commit = if(file.exists(file.path(output_dir,"workflow_identity.rds"))) readRDS(file.path(output_dir,"workflow_identity.rds"))$upstream_commit else NA_character_,
     input_hashes = tools::md5sum(file.path(data_dir, c("cohort_manifest.csv",
@@ -3184,9 +3183,9 @@ ocean_surface_report <- function(output_dir,data_dir,diagnostics_dir=file.path(o
   ocean_atomic_csv(points_m,file.path(dest,"nearby_m_observations.csv"))
   ocean_atomic_csv(selected_m,file.path(dest,"m_selection_audit.csv"))
   ocean_atomic_csv(points_f,file.path(dest,"nearby_f_observations.csv"))
-  for(n in names(plots)) for(ext in c("png","pdf")) ggplot2::ggsave(file.path(dest,paste0(n,".",ext)),plots[[n]],
-    width=if(grepl("fm_",n)) 11 else if(grepl("m_comparison",n)) 11 else 10,
-    height=if(grepl("all_folds",n)) 13 else if(grepl("fm_",n)) 4.9 else 7,dpi=180,bg="white")
+  mixedgp_save_plot_jobs(plots,dest,function(n)c(
+    if(grepl("fm_",n)||grepl("m_comparison",n))11 else 10,
+    if(grepl("all_folds",n))13 else if(grepl("fm_",n))4.9 else 7))
   list(plots=plots,baseline=baseline,baseline_same_x=baseline_same,points_m=points_m,points_f=points_f)
 }
 
@@ -3656,13 +3655,27 @@ save_mixing_plots <- function(path, output_dir=file.path(path,"mixing-plots"),
   z <- do.call(rbind,tables)
   if(is.null(z)||!nrow(z)) {warning("Diagnostic files are empty; no plots written.",call.=FALSE);return(invisible(character()))}
   dir.create(output_dir,recursive=TRUE,showWarnings=FALSE)
-  paths <- character()
-  for(type in c("overview","precision","coverage")) for(ext in unique(formats)) {
-    dest <- file.path(output_dir,paste0("mixing_",type,".",ext))
-    ggplot2::ggsave(dest,plot_mixing(z,type),width=11,height=7,dpi=160,bg="white")
-    paths <- c(paths,dest)
-  }
+  jobs <- expand.grid(ext=unique(formats),type=c("overview","precision","coverage"),stringsAsFactors=FALSE)
+  paths <- unlist(mixedgp_stage_lapply(seq_len(nrow(jobs)),function(i) {
+    dest <- file.path(output_dir,paste0("mixing_",jobs$type[i],".",jobs$ext[i]))
+    ggplot2::ggsave(dest,plot_mixing(z,jobs$type[i]),width=11,height=7,dpi=160,bg="white")
+    dest
+  }),use.names=FALSE)
   utils::write.csv(data.frame(path=normalizePath(files),md5=unname(tools::md5sum(files))),
     file.path(output_dir,"diagnostic_sources.csv"),row.names=FALSE)
   invisible(paths)
+}
+
+# Each figure/format owns its graphics device and destination.
+mixedgp_save_plot_jobs <- function(plots,dest,dimensions) {
+  jobs <- expand.grid(ext=c("png","pdf"),name=names(plots),stringsAsFactors=FALSE)
+  if(!nrow(jobs))return(invisible(character()))
+  dir.create(dest,recursive=TRUE,showWarnings=FALSE)
+  paths <- mixedgp_stage_lapply(seq_len(nrow(jobs)),function(i) {
+    name <- jobs$name[i];size <- dimensions(name)
+    path <- file.path(dest,paste0(name,".",jobs$ext[i]))
+    ggplot2::ggsave(path,plots[[name]],width=size[1],height=size[2],dpi=180,bg="white")
+    path
+  })
+  invisible(unlist(paths,use.names=FALSE))
 }

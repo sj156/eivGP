@@ -3484,7 +3484,8 @@ fit_threshold_measurement_response_free <- function(c_ord,
                                                     burn = 750L,
                                                     thin = 1L,
                                                     seed = 1L,
-                                                    tau_bounds = c(-8, 8)) {
+                                                    tau_bounds = c(-8, 8),
+                                                    .checkpoint_path = NULL) {
   c_ord <- as.integer(c_ord)
   u_obs <- as.numeric(u_obs)
   calib_idx <- sort(unique(as.integer(calib_idx)))
@@ -3513,7 +3514,41 @@ fit_threshold_measurement_response_free <- function(c_ord,
   samples_tau <- matrix(NA_real_, nrow = length(keep_iter), ncol = m - 1L)
   set.seed(seed)
   keep_pos <- 0L
-  for (iter in seq_len(n_iter)) {
+  start <- 0L; elapsed_before <- 0; clock_start <- proc.time()[["elapsed"]]
+  enabled <- is.finite(getOption("eivGP.checkpoint_seconds",Inf)) ||
+    is.finite(getOption("eivGP.checkpoint_iterations",Inf))
+  if(enabled && !is.null(.checkpoint_path) && file.exists(.checkpoint_path)) {
+    cp<-readRDS(.checkpoint_path)
+    if(!identical(cp$schema,1L) || cp$iteration<0L || cp$iteration>n_iter ||
+       cp$saved!=sum(keep_iter<=cp$iteration))stop("Invalid Study I measurement checkpoint")
+    restored<-mixedgp_checkpoint_restore_draws(cp$draws,list(samples_u=samples_u,samples_tau=samples_tau))
+    samples_u<-restored$samples_u;samples_tau<-restored$samples_tau
+    start<-cp$iteration;keep_pos<-cp$saved;u<-cp$u;tau<-cp$tau
+    elapsed_before<-cp$elapsed_seconds;mixedgp_restore_rng_state(cp$rng)
+  }
+  last_save<-last_progress<-proc.time()[["elapsed"]];last_iteration<-start
+  checkpoint<-function(iter,force=FALSE) {
+    if(is.null(.checkpoint_path))return(invisible(NULL))
+    now<-proc.time()[["elapsed"]]
+    saving<-mixedgp_checkpoint_due(now,last_save,iter-last_iteration,force)
+    if(saving) {
+      mixedgp_checkpoint_write(list(schema=1L,iteration=iter,saved=keep_pos,u=u,tau=tau,
+        draws=mixedgp_checkpoint_prefix(list(samples_u=samples_u,samples_tau=samples_tau),keep_pos),
+        rng=mixedgp_rng_state(),elapsed_seconds=elapsed_before+now-clock_start),.checkpoint_path)
+      last_save<<-proc.time()[["elapsed"]];last_iteration<<-iter
+    }
+    if(force || saving || now-last_progress>=60) {
+      elapsed<-elapsed_before+proc.time()[["elapsed"]]-clock_start
+      remaining<-if(iter>0)elapsed/iter*(n_iter-iter)else NA_real_
+      mixedgp_timing_record(sub("[.]rds$","-timing.csv",.checkpoint_path),data.frame(
+        updated_at=format(Sys.time(),tz="UTC",usetz=TRUE),iteration=iter,target_iteration=n_iter,
+        checkpoint_iteration=last_iteration,phase=if(iter==n_iter)"complete"else if(iter<=burn)"warmup"else"sampling",
+        elapsed_seconds=elapsed,remaining_seconds=remaining,
+        estimated_finish_utc=if(is.finite(remaining))format(Sys.time()+remaining,tz="UTC",usetz=TRUE)else NA_character_))
+      last_progress<<-proc.time()[["elapsed"]]
+    }
+  }
+  if(start<n_iter)for (iter in seq.int(start+1L,n_iter)) {
     if (length(miss_idx) > 0L) {
       lower <- c(-Inf, tau)[c_ord[miss_idx]]
       upper <- c(tau, Inf)[c_ord[miss_idx]]
@@ -3536,7 +3571,9 @@ fit_threshold_measurement_response_free <- function(c_ord,
       samples_u[keep_pos, ] <- u
       samples_tau[keep_pos, ] <- tau
     }
+    checkpoint(iter)
   }
+  checkpoint(n_iter,TRUE)
   colnames(samples_u) <- paste0("u", seq_len(n))
   colnames(samples_tau) <- paste0("tau", seq_len(m - 1L))
   list(
@@ -3546,7 +3583,8 @@ fit_threshold_measurement_response_free <- function(c_ord,
       c_ord = c_ord, u_obs = u_obs, calib_idx = calib_idx,
       miss_idx = miss_idx, m = m, tau_bounds = tau_bounds
     ),
-    control = list(n_iter = n_iter, burn = burn, thin = thin, seed = seed)
+    control = list(n_iter = n_iter, burn = burn, thin = thin, seed = seed),
+    checkpoint = list(iteration=n_iter,u=u,tau=tau,rng=mixedgp_rng_state())
   )
 }
 
@@ -12789,8 +12827,12 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
 mixedgp_study1_cc_measurement <- function(C,U_obs,cfg,seed) {
   stopifnot(length(C)==length(U_obs),all(is.finite(U_obs[!is.na(U_obs)])))
   cal<-which(!is.na(U_obs));miss<-which(is.na(U_obs))
+  disk<-mixedgp_sampler_disk(list(component="study1-measurement",C=C,U_obs=U_obs,
+    iter=cfg$iter,warmup=cfg$warmup,outer=cfg$outer,seed=seed))
+  if(!is.null(disk))on.exit(unlink(file.path(disk,"LOCK"),recursive=TRUE),add=TRUE)
   run<-function(ch)fit_threshold_measurement_response_free(C,U_obs,cal,6L,
-    n_iter=cfg$iter,burn=cfg$warmup,seed=seed+10000L*ch)
+    n_iter=cfg$iter,burn=cfg$warmup,seed=seed+10000L*ch,
+    .checkpoint_path=if(is.null(disk))NULL else file.path(disk,sprintf("chain-%02d.rds",ch)))
   chains<-mixedgp_parallel_lapply(1:4,run,n_cores=min(cfg$cores,4L),.preserve_rng=TRUE)
   if(any(vapply(chains,inherits,logical(1),"try-error")))stop("Study I measurement chain failed")
   trace<-array(NA_real_,c(cfg$iter-cfg$warmup,4L,5L+length(miss)),
@@ -12800,8 +12842,11 @@ mixedgp_study1_cc_measurement <- function(C,U_obs,cfg,seed) {
   ids<-floor(((seq_len(cfg$outer/4)-.5)/(cfg$outer/4))*(cfg$iter-cfg$warmup))+1L
   states<-unlist(lapply(ids,function(i)lapply(1:4,function(ch)
     list(tau=chains[[ch]]$samples_tau[i,],chain=ch,iteration=cfg$warmup+i))),recursive=FALSE)
-  list(chains=chains,states=states,diagnostics=diagnostics,
+  result<-list(chains=chains,states=states,diagnostics=diagnostics,
     target="Response-free deterministic threshold model; U ~ N(0,1), ordered uniform thresholds on [-8,8]. Same measurement adapter as Study I PI/CC references; not a matched FULL-CUT ablation.")
+  if(!is.null(disk)&&length(list.files(disk,"^chain-[0-9]+[.]rds$")))
+    attr(result,"eivgp_study1_restart_storage")<-mixedgp_checkpoint_reference(disk)
+  result
 }
 
 mixedgp_study1_cc_workflow <- function(args,repo_root,root,data_root,action) {
@@ -12908,6 +12953,8 @@ mixedgp_study1_cc_workflow <- function(args,repo_root,root,data_root,action) {
 
 # Permanent orchestration for both paper studies. Historical readers are separate.
 run_paper_study <- function(study=c("study1","study2"), args=list(), repo_root=getwd()) {
+  old_clock<-options(eivGP.checkpoint_script_start=getOption("eivGP.checkpoint_script_start",proc.time()[["elapsed"]]))
+  on.exit(options(old_clock),add=TRUE)
   release_budget <- mixedgp_budget_enter(as.integer(if(is.null(args$cores)) 4L else args$cores))
   on.exit(release_budget(),add=TRUE)
   study<-match.arg(study)
@@ -12951,8 +12998,7 @@ run_paper_study <- function(study=c("study1","study2"), args=list(), repo_root=g
     stop("checkpoint-after-seconds must be finite and nonnegative")
   old_checkpoint <- options(eivGP.checkpoint_root=file.path(root,"checkpoints"),
     eivGP.checkpoint_seconds=checkpoint_seconds,eivGP.checkpoint_iterations=checkpoint_iterations,
-    eivGP.checkpoint_after_seconds=checkpoint_after,
-    eivGP.checkpoint_script_start=proc.time()[["elapsed"]])
+    eivGP.checkpoint_after_seconds=checkpoint_after)
   on.exit(options(old_checkpoint),add=TRUE)
   if(action %in% c("fit","run")) {
     if(is.infinite(checkpoint_seconds)&&is.infinite(checkpoint_iterations))
@@ -13449,6 +13495,8 @@ mixedgp_checkpoint_reference <- function(directory) {
 # Retirement is allowed only when an exact read-back of a published full fit
 # succeeds. Selected prediction states, scores and incomplete fits never qualify.
 mixedgp_retire_saved_checkpoints <- function(object, path) {
+  if(!is.null(attr(object,"eivgp_study1_restart_storage",exact=TRUE)))
+    return(mixedgp_retire_study1_measurement(object,path))
   refs<-function(x) {
     if(!is.list(x)||is.data.frame(x))return(list())
     ref<-attr(x,"eivgp_restart_storage",exact=TRUE)
@@ -13691,4 +13739,49 @@ mixedgp_checkpoint_due <- function(now, last_save, iterations_since, force=FALSE
   time_due<-if(delay>0 && is.finite(seconds))
     floor((now-start)/seconds)>floor((last_save-start)/seconds) else now-last_save>=seconds
   isTRUE(force)||time_due||iterations_since>=iterations
+}
+
+# Retire Study I measurement restart copies only after a full artifact read-back.
+mixedgp_retire_study1_measurement <- function(object,path) {
+  tryCatch({
+    ref<-attr(object,"eivgp_study1_restart_storage",exact=TRUE)
+    root<-getOption("eivGP.checkpoint_root",NULL)
+    if(is.null(root)||!dir.exists(ref$directory))return(invisible(NULL))
+    directory<-normalizePath(ref$directory);final<-normalizePath(path,mustWork=TRUE)
+    if(!startsWith(directory,paste0(normalizePath(root),.Platform$file.sep)) ||
+       startsWith(final,paste0(directory,.Platform$file.sep)))return(invisible(NULL))
+    lock<-file.path(directory,"LOCK")
+    if(!dir.create(lock,showWarnings=FALSE))return(invisible(NULL))
+    on.exit(unlink(lock,recursive=TRUE),add=TRUE)
+    final_hash<-unname(tools::md5sum(final))
+    if(!identical(readRDS(final),mixedgp_pack_artifact(object)))stop("Full measurement fit read-back mismatch")
+    identity<-file.path(directory,"identity.rds")
+    if(!identical(unname(tools::md5sum(identity)),ref$identity_md5))stop("Measurement checkpoint identity changed")
+    model<-readRDS(identity)$model
+    if(!identical(model$component,"study1-measurement"))stop("Unexpected measurement identity")
+    files<-file.path(directory,sprintf("chain-%02d.rds",seq_along(object$chains)))
+    found<-list.files(directory,"^chain-[0-9]+[.]rds$",full.names=TRUE)
+    if(!setequal(files,found))return(invisible(NULL))
+    hashes<-unname(tools::md5sum(files));sizes<-file.info(files)$size
+    for(i in seq_along(files)) {
+      raw<-readRDS(files[i]);fit<-object$chains[[i]];state<-fit$checkpoint
+      same_draws<-function(a,b)identical(dim(a),dim(b))&&identical(as.vector(a),as.vector(b))
+      if(!identical(raw$schema,1L)||raw$iteration!=model$iter||raw$saved!=model$iter-model$warmup||
+         !identical(fit$data$c_ord,as.integer(model$C))||!identical(fit$data$u_obs,as.numeric(model$U_obs))||
+         fit$control$seed!=model$seed+10000L*i||fit$control$n_iter!=model$iter||fit$control$burn!=model$warmup||
+         !identical(raw$u,state$u)||!identical(raw$tau,state$tau)||!identical(raw$rng,state$rng)||
+         !same_draws(raw$draws$samples_u,fit$samples_u)||!same_draws(raw$draws$samples_tau,fit$samples_tau))
+        stop("Measurement checkpoint differs from full fit")
+    }
+    receipt<-list(schema=1L,artifact=final,artifact_md5=final_hash,
+      files=data.frame(path=files,md5=hashes,bytes=sizes),status="verified_before_deletion",
+      verified_utc=format(Sys.time(),tz="UTC",usetz=TRUE))
+    mixedgp_checkpoint_write(receipt,file.path(directory,"retired.rds"))
+    if(!identical(unname(tools::md5sum(final)),final_hash)||
+       !identical(unname(tools::md5sum(identity)),ref$identity_md5)||
+       !identical(unname(tools::md5sum(files)),hashes))stop("Measurement files changed before retirement")
+    if(unlink(files)!=0L || any(file.exists(files)))stop("Some measurement checkpoints could not be removed")
+    receipt$status<-"removed";mixedgp_checkpoint_write(receipt,file.path(directory,"retired.rds"))
+  },error=function(e)warning("Measurement checkpoint cleanup: ",conditionMessage(e),call.=FALSE))
+  invisible(NULL)
 }

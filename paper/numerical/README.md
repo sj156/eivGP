@@ -154,7 +154,7 @@ hours of actual script runtime**. The first eligible save is at the first iterat
 boundary after hour six, followed by script-clock boundaries at hours nine,
 twelve, and so on. Completed chains also save once this six-hour gate is open.
 The gate uses elapsed runtime, not a prediction of total duration, and resets on
-each command invocation. Before it opens, interrupted fits restart unless a
+each command invocation. Publication variants share that one script clock. Before it opens, interrupted fits restart unless a
 compatible checkpoint from an earlier invocation exists. Existing compatible
 checkpoints can still be loaded. Each completed CUT conditional fit is cached
 separately. Timing logs and forecasts still update about every minute.
@@ -170,6 +170,15 @@ Checkpoint saves occur at iteration boundaries, so a slow iteration can delay a
 save. Third-party optimizers and prediction calculations retain their existing
 completed-stage caching. Existing checkpoint files are never deleted merely
 because the schedule changes.
+
+Study I follow-ups use this same schedule for their response-free threshold
+measurement chains. Each checkpoint contains every generated draw, thresholds,
+latent inputs, and RNG state. Completed measurement fits and predictor fits are
+saved immediately. After the complete measurement artifact passes exact read-back
+and draw/state verification, redundant chain checkpoints are retired; identities
+and timing logs remain. The UC-GP, LVGP, and EzGP optimizers do not expose resumable
+internal states: an interrupted optimizer call restarts, while completed fits
+are reused. Their internal iterations are not covered by the checkpoint schedule.
 
 The following checkpoint details apply only when partial-fit recovery is enabled.
 `<output>/checkpoints/<fit-identity>/chain-XX.rds` stores all generated draws, current

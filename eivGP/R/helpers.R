@@ -12468,8 +12468,8 @@ categorical_evaluate <- function(method,train,test,cfg,seed,path) {
   controls<-if(cfg$profile=="quick")switch(method,`UC-GP`=list(n_starts=2L),
     LVGP=list(n_starts=1L,max_retries=1L,max_iter_ini=10L,max_iter_lat=5L),
     EzGP=list(tau_fractions=c(.01,.04),cv_folds=2L,maxeval=10L))else if(!is.null(cfg$controls))cfg$controls[[method]]else list()
-  model<-do.call(eivGP::fit_mixedgp_competitor,c(list(method=method,X=train$X,y=train$y,C=train$C,
-    new_X=test$X,new_C=test$C,m_vec=if(is.null(cfg$m_vec))rep(4L,4)else cfg$m_vec,n_draw=1L,seed=seed),controls))
+  model<-stage_time(dirname(path),"optimizer",do.call(eivGP::fit_mixedgp_competitor,c(list(method=method,X=train$X,y=train$y,C=train$C,
+    new_X=test$X,new_C=test$C,m_vec=if(is.null(cfg$m_vec))rep(4L,4)else cfg$m_vec,n_draw=1L,seed=seed),controls)))
   atomic_rds(model,sub("predictions.rds$","fit.rds",path))
   out<-list(y_mean=matrix(model$predictive_mean,ncol=1),y_var=matrix(model$predictive_variance,ncol=1),
     m_point=as.numeric(model$predictive_mean),optimization_status=model$optimization_status)
@@ -12491,9 +12491,9 @@ cc_evaluate <- function(method,train,test,cal,us,cfg,seed,path) {
   d<-ncol(train$U);m_vec<-if(is.null(cfg$m_vec))rep(4L,4)else cfg$m_vec
   if(file.exists(path))model<-readRDS(path)else {
     controls<-if(cfg$profile=="quick")switch(base,`UC-GP`=list(n_starts=2L),LVGP=list(n_starts=1L,max_retries=1L,max_iter_ini=10L,max_iter_lat=5L),EzGP=list(tau_fractions=c(.01,.04),cv_folds=2L,maxeval=10L))else if(!is.null(cfg$controls))cfg$controls[[base]]else list()
-    model<-do.call(eivGP::fit_mixedgp_competitor,c(list(method=base,X=cbind(train$X[cal,,drop=FALSE],train$U[cal,,drop=FALSE]),
+    model<-stage_time(dirname(path),"optimizer",do.call(eivGP::fit_mixedgp_competitor,c(list(method=base,X=cbind(train$X[cal,,drop=FALSE],train$U[cal,,drop=FALSE]),
       y=train$y[cal],C=train$C[cal,,drop=FALSE],new_X=cbind(test$X[rep(1L,2L),,drop=FALSE],matrix(rep(us[[1]][1,1,],each=2L),2,d)),
-      new_C=test$C[rep(1L,2L),,drop=FALSE],m_vec=if(is.null(cfg$m_vec))rep(4L,4)else cfg$m_vec,n_draw=1L,seed=seed),controls))
+      new_C=test$C[rep(1L,2L),,drop=FALSE],m_vec=if(is.null(cfg$m_vec))rep(4L,4)else cfg$m_vec,n_draw=1L,seed=seed),controls)))
     atomic_rds(model,path)
   }
   N<-nrow(test$X);S<-length(us)*cfg$latent;mu<-v<-matrix(NA_real_,N,S)
@@ -12565,6 +12565,8 @@ aggregate_scores <- function(jobs,root) {
     if(state=="complete") {z<-readRDS(p);z$rep<-jobs$rep[j];z$calib<-jobs$calib[j];z$diagnostics_pass<-passed;rows[[length(rows)+1]]<-z}
   }
   write.csv(do.call(rbind,status),file.path(root,"status.csv"),row.names=FALSE)
+  if(file.exists(file.path(root,"job_registry.rds")))
+    F("report_numerical_convergence")(setNames(root,basename(root)),paste0(root,"-convergence-report"))
   if(!length(rows))return(invisible(NULL))
   points<-do.call(rbind,rows);points$coordinate[is.na(points$coordinate)]<-0L;write.csv(points,file.path(root,"point_scores.csv"),row.names=FALSE)
   both<-rbind(points,transform(points,stratum="overall"))
@@ -12619,6 +12621,7 @@ aggregate_scores <- function(jobs,root) {
 }
 # Stage-level wall time includes parallel work; it is not summed CPU time.
 stage_time <- function(folder,stage,expr) {
+  dir.create(folder,recursive=TRUE,showWarnings=FALSE)
   start<-proc.time()[["elapsed"]];ok<-FALSE
   on.exit({
     row<-data.frame(stage=stage,seconds=proc.time()[["elapsed"]]-start,success=ok,
@@ -12627,7 +12630,7 @@ stage_time <- function(folder,stage,expr) {
     if(file.exists(path))row<-rbind(read.csv(path),row)
     write.csv(row,path,row.names=FALSE)
   })
-  value<-force(expr);ok<-TRUE;value
+  value<-tryCatch(force(expr),error=function(e){if(is.null(e$stage))e$stage<-stage;stop(e)});ok<-TRUE;value
 }
 mechanism_report <- function(root) {
   escape<-function(x)gsub(">","&gt;",gsub("<","&lt;",gsub("&","&amp;",as.character(x),fixed=TRUE),fixed=TRUE),fixed=TRUE)
@@ -12795,6 +12798,8 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
         if(!is.null(pred$optimization_status)&&grepl("nonconverged",pred$optimization_status))passes<-c(passes,FALSE)
       }
       atomic_rds(list(pass=all(passes),checks=passes,profile=cfg$profile,
+        optimizer_status=pred$optimization_status,
+        measurement_pass=if(job$method=="CUT"||grepl("-CC$",job$method))diagnostic_pass(meas$diagnostics)else NA,
         note="MCMC screening only; also inspect target stability and nested integration error before publication"),file.path(folder,"diagnostics.rds"))
       if(!is.null(pred$m_mean)) {
         cols<-seq_len(ncol(pred$m_mean));half<-length(cols)%/%2
@@ -12810,7 +12815,7 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
       atomic_rds(pred,file.path(folder,"predictions.rds"))
       atomic_rds(scores,scorefile);unlink(file.path(folder,"failure.rds"))
       timing(j,"complete",proc.time()[["elapsed"]]-job_started)
-    },error=function(e){timing(j,"failed",proc.time()[["elapsed"]]-job_started);failed<<-failed+1L;atomic_rds(list(message=conditionMessage(e),time=Sys.time()),file.path(folder,"failure.rds"));message("FAILED: ",conditionMessage(e))},finally=unlink(lock,recursive=TRUE))
+    },error=function(e){timing(j,"failed",proc.time()[["elapsed"]]-job_started);failed<<-failed+1L;atomic_rds(list(message=conditionMessage(e),stage=if(is.null(e$stage))"unknown"else e$stage,time=Sys.time()),file.path(folder,"failure.rds"));message("FAILED: ",conditionMessage(e))},finally=unlink(lock,recursive=TRUE))
   }
   failed
   }
@@ -12938,8 +12943,9 @@ mixedgp_study1_cc_workflow <- function(args,repo_root,root,data_root,action) {
         truth<-list(m=m0_1d(d$test$x,d$test$c,tau=d$tau_true,scenario="heterogeneity_continuum"))
         scores<-api$stage_time(folder,"scoring",api$score_result(pred,dat,cal,truth,job$method))
         api$atomic_rds(pred,file.path(folder,"predictions.rds"));api$atomic_rds(scores,scorefile)
-        api$atomic_rds(list(pass=passes),file.path(folder,"diagnostics.rds"));unlink(file.path(folder,"failure.rds"))
-      },error=function(err){failures<<-failures+1L;api$atomic_rds(list(message=conditionMessage(err),time=Sys.time()),file.path(folder,"failure.rds"));message("FAILED: ",conditionMessage(err))})
+        api$atomic_rds(list(pass=passes,optimizer_status=pred$optimization_status,
+          measurement_pass=if(grepl("-CC$",job$method))api$diagnostic_pass(meas$diagnostics)else NA),file.path(folder,"diagnostics.rds"));unlink(file.path(folder,"failure.rds"))
+      },error=function(err){failures<<-failures+1L;api$atomic_rds(list(message=conditionMessage(err),stage=if(is.null(err$stage))"unknown"else err$stage,time=Sys.time()),file.path(folder,"failure.rds"));message("FAILED: ",conditionMessage(err))})
     }
     failures
     }
@@ -12973,7 +12979,7 @@ run_paper_study <- function(study=c("study1","study2"), args=list(), repo_root=g
   mixing <- identical(tolower(as.character(mixing)),"true")
   args[["mixing-plots"]] <- NULL
   component<-get("component","all")
-  if(!component%in%c("all","core","mechanism","complete-case"))stop("component must be all, core, mechanism or complete-case")
+  if(!component%in%c("all","core","core-competitors","mechanism","complete-case"))stop("component must be all, core, core-competitors, mechanism or complete-case")
   if(study=="study1" && component=="mechanism")stop("Use complete-case for Study I; matched CUT belongs to Study II")
   if(study=="study2" && component=="complete-case")stop("Use mechanism with methods=UC-GP-CC,LVGP-CC,EzGP-CC for Study II")
   action<-get("action","plan");profile<-get("profile","paper")
@@ -13014,6 +13020,21 @@ run_paper_study <- function(study=c("study1","study2"), args=list(), repo_root=g
   if(!component%in%c("mechanism","complete-case") && any(names(args)%in%targeted))stop("Replication/method/sampler selections require component=mechanism; the core grid uses its fixed profile")
   if(component%in%c("mechanism","complete-case") && "competitors"%in%names(args))stop("Use methods for the mechanism component")
   result<-list()
+  # Independent original competitors use only frozen data, never joint EIV fits.
+  if(component=="core-competitors") {
+    if(study!="study2")stop("core-competitors is a Study II workflow")
+    if(action=="fit")stop("Use action=run for original competitors")
+    config<-study_config(study,profile,output_root=file.path(root,"core"),data_root=data,cores=as.integer(get("cores","4")))
+    methods<-strsplit(get("competitors","UC-GP,LVGP,EzGP"),",",fixed=TRUE)[[1]]
+    if(!length(methods)||anyDuplicated(methods)||any(!methods%in%c("UC-GP","LVGP","EzGP")))stop("Invalid original competitors")
+    if(action=="plan")return(run_numerical_study(config,"plan",competitors=character()))
+    if(action%in%c("data","run")) {
+      prepared<-run_numerical_study(config,"data",competitors=character())
+      if(action=="data")return(prepared)
+    }
+    return(mixedgp_run_competitor_workflow(config,file.path(root,"original-competitors"),
+      workers=as.integer(get("cores","4")),methods=methods,action=if(action=="report")"export"else"run"))
+  }
   if(component%in%c("all","core")) {
     config<-study_config(study,profile,output_root=file.path(root,"core"),data_root=data,cores=as.integer(get("cores","4")))
     competitors<-strsplit(get("competitors",if(profile=="quick")"none"else"UC-GP,LVGP,EzGP"),",",fixed=TRUE)[[1]]
@@ -13027,7 +13048,10 @@ run_paper_study <- function(study=c("study1","study2"), args=list(), repo_root=g
   }
   if(study=="study1" && component%in%c("all","complete-case")) {
     if(action=="fit")stop("Use action=run for the complete Study I workflow, or component=core for fit-only")
-    result$complete_case<-mixedgp_study1_cc_workflow(args,repo_root,file.path(root,"complete-case"),data,action)
+    cc_args<-args
+    if(profile=="paper")cc_args<-modifyList(list(iter="12000",warmup="4000",outer="16",
+      latent="128",`cc-response-latent`="64"),args)
+    result$complete_case<-mixedgp_study1_cc_workflow(cc_args,repo_root,file.path(root,"complete-case"),data,action)
   }
   if(mixing && action %in% c("report","run")) {
     directories <- c(if(component %in% c("all","core"))file.path(root,"core"),
@@ -13131,7 +13155,7 @@ mixedgp_batch_timing <- function(directory, ids, groups=rep("replication",length
 # authoritative study components. Planning never fits or reads chain archives.
 mixedgp_publication_workflow <- function(study, args, repo_root) {
   get <- function(k,d) if(is.null(args[[k]])) d else args[[k]]
-  allowed <- c("component","stage","action","profile","output","data-root","reps","cores","full-fit-root",
+  allowed <- c("component","stage","action","profile","output","data-root","reps","calib","methods","cores","full-fit-root",
     "full-fit-map","outer","latent","inner-draws","iter","warmup","inner-iter",
     "inner-warmup","gp-response-latent","cc-response-latent","mixing-plots",
     "checkpoint-seconds","checkpoint-iterations","checkpoint-after-seconds")
@@ -13162,7 +13186,14 @@ mixedgp_publication_workflow <- function(study, args, repo_root) {
   if(as.integer(defaults[["cc-response-latent"]])>as.integer(defaults$latent))stop("Response budget exceeds latent budget")
   if(study=="study1"&&any(c("inner-iter","inner-warmup","inner-draws","full-fit-map","full-fit-root","gp-response-latent")%in%names(args)))stop("Study I does not use conditional response chains or a FULL map")
   methods<-if(study=="study1")if(stage=="full")"UC-GP-CC,LVGP-CC,EzGP-CC"else"UC-GP,LVGP,EzGP,UC-GP-CC,LVGP-CC,EzGP-CC" else "FULL,CUT,UC-GP-CC,LVGP-CC,EzGP-CC"
-  base<-c(list(component=if(study=="study1")"complete-case"else"mechanism",action=action,profile="paper",reps=paste(reps,collapse=","),calib="20,50",methods=methods,cores=as.character(cores),`data-root`=data),defaults)
+  available <- strsplit(methods,",",fixed=TRUE)[[1]]
+  selected <- strsplit(get("methods",methods),",",fixed=TRUE)[[1]]
+  if(!length(selected)||any(!nzchar(selected))||anyDuplicated(selected)||any(!selected%in%available))
+    stop("methods must be a distinct subset of: ",paste(available,collapse=", "))
+  methods <- paste(selected,collapse=",")
+  calib <- parse_reps(get("calib","20,50"))
+  if(any(!calib%in%c(20L,50L)))stop("Publication calib must be 20, 50, or 20,50")
+  base<-c(list(component=if(study=="study1")"complete-case"else"mechanism",action=action,profile="paper",reps=paste(reps,collapse=","),calib=paste(calib,collapse=","),methods=methods,cores=as.character(cores),`data-root`=data),defaults)
   for(k in intersect(c("full-fit-map","mixing-plots","checkpoint-seconds","checkpoint-iterations","checkpoint-after-seconds"),names(args)))base[[k]]<-args[[k]]
   variants<-list(reference=list())
   if(stage=="integration") {
@@ -13178,14 +13209,14 @@ mixedgp_publication_workflow <- function(study, args, repo_root) {
   batch<-paste0("reps-",paste(sprintf("%02d",reps),collapse="-"))
   plans<-lapply(names(variants),function(v){a<-modifyList(base,variants[[v]]);a$output<-file.path(root,"publication",stage,batch,v);a})
   names(plans)<-names(variants)
-  jobs<-do.call(rbind,lapply(names(plans),function(v){a<-plans[[v]];d<-expand.grid(rep=reps,calib=c(20L,50L),method=strsplit(methods,",",fixed=TRUE)[[1]],eta=if(study=="study1")c(0L,1L)else NA_integer_,stringsAsFactors=FALSE);d$study<-study;d$stage<-stage;d$variant<-v;d$output<-a$output;d}))
+  jobs<-do.call(rbind,lapply(names(plans),function(v){a<-plans[[v]];d<-expand.grid(rep=reps,calib=calib,method=strsplit(methods,",",fixed=TRUE)[[1]],eta=if(study=="study1")c(0L,1L)else NA_integer_,stringsAsFactors=FALSE);d$study<-study;d$stage<-stage;d$variant<-v;d$output<-a$output;d}))
   message(nrow(jobs)," method evaluations; settings are provisional, not a convergence claim.")
   if(action=="plan") {
     print(jobs[,c("study","stage","variant","rep","calib","method","eta")],row.names=FALSE)
     return(invisible(list(jobs=jobs,commands=plans)))
   }
   # FULL must rescore matching archived fits, never silently launch replacements.
-  if(study=="study2"&&action%in%c("run","report")) {
+  if(study=="study2"&&"FULL"%in%selected&&action%in%c("run","report")) {
     mapfile<-get("full-fit-map","")
     fitroot<-get("full-fit-root","")
     if(nzchar(mapfile)&&nzchar(fitroot))stop("Choose full-fit-map or full-fit-root, not both")
@@ -13193,7 +13224,7 @@ mixedgp_publication_workflow <- function(study, args, repo_root) {
       fitroot<-path.expand(fitroot)
       if(!dir.exists(fitroot))stop("FULL archive directory does not exist: ",fitroot)
       candidates<-list.files(fitroot,recursive=TRUE,full.names=TRUE)
-      map<-expand.grid(rep=reps,calib=c(20L,50L))
+      map<-expand.grid(rep=reps,calib=calib)
       map$path<-vapply(seq_len(nrow(map)),function(i) {
         name<-sprintf("recovery_fit_primary_rep%03d_cal%03d_s2v18-q4-50fcae689bed9194.rds",map$rep[i],map$calib[i])
         found<-candidates[basename(candidates)==name]
@@ -13209,7 +13240,7 @@ mixedgp_publication_workflow <- function(study, args, repo_root) {
     if(!nzchar(mapfile)||!file.exists(mapfile))stop("Supply full-fit-map for matched saved FULL rescoring")
     map<-read.csv(mapfile,stringsAsFactors=FALSE)
     if(!all(c("rep","calib","path")%in%names(map)))stop("FULL map requires rep,calib,path")
-    for(rr in reps)for(cc in c(20L,50L)) {
+    for(rr in reps)for(cc in calib) {
       z<-map[map$rep==rr&map$calib==cc,,drop=FALSE]
       if(nrow(z)!=1L||!file.exists(z$path))stop("Missing unique FULL archive for rep ",rr," calibration ",cc)
     }

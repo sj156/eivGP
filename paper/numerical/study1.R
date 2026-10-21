@@ -1,6 +1,4 @@
-# Manuscript completion from existing studies: --component=follow-up (defaults to all 50 replications; never refits core).
-# Direct follow-up: --action=run --profile=paper --cores=4 --component=publication --stage=pilot
-# Publication completion: --component=publication --stage=pilot|integration|full
+# Complete Study I paper reproduction: original study and calibrated competitors.
 # Default action is plan; use --action=data, run, or report explicitly.
 # Original (X,C) predictors and complete-case (X,U,C) additions share this entry point.
 # Study-specific choices; all implementation and reporting come from eivGP.

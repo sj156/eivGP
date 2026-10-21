@@ -111,173 +111,22 @@ entrypoints for computation and `.Rmd` notebooks for reader-facing HTML reports.
 
 ### Synthetic experiments: Studies I and II
 
-#### Setup: Mac mini or Linux
-
-Run commands from the repository root. For numerical reproduction, use the locked
-setup below instead of the general package-install instructions above. Install
-Git and R first (the lockfile records R 4.6.0); source packages may require
-C/C++/Fortran compilers and CMake. See the [platform prerequisites](paper/numerical/README.md#macos-or-linux-setup).
-No private data or archived fits are required.
+Install the locked dependencies and this checkout with `Rscript tools/setup_numerical.R`.
+[Study II paper replication](paper/numerical/study2-README.md) separates EIV-GP
+and competitors for different machines, with saved-result reporting kept separate.
+Each command covers its complete paper workload, including the formerly separate
+follow-up comparisons. Optional method selections support partial resumption.
 
 ```sh
-# First checkout:
-git clone https://github.com/sj156/eivGP.git
-cd eivGP
-# On an existing clean checkout, use this instead of cloning:
-# git pull --ff-only
-
-Rscript tools/setup_numerical.R
-Rscript tools/setup_numerical.R --check
-Rscript paper/numerical/check-portability.R
-Rscript paper/numerical/check-numerical.R
+Rscript paper/numerical/study2-eivGP.R --action=plan
+Rscript paper/numerical/study2-competitors.R --action=plan
 ```
 
-The setup restores `renv.lock`, installs the package into `.r-library/`, and
-checks its source identity. Freeze the checkout and dependencies during a run;
-do not pull changes midway through an experiment you intend to resume.
-
-#### Plan and run the complete studies
-
-```sh
-# Inspect the workload without fitting.
-Rscript paper/numerical/study1.R --action=plan --profile=paper --cores=4
-Rscript paper/numerical/study2.R --action=plan --profile=paper --cores=4
-
-# Generate missing data, fit models, and aggregate results.
-Rscript paper/numerical/study1.R --action=run --profile=paper --cores=4
-Rscript paper/numerical/study2.R --action=run --profile=paper --cores=4
-```
-
-Study I runs the univariate grid. Study II runs the original multivariate grid
-and the targeted CUT/complete-case comparisons. `--component=core` restricts
-execution to an original grid; `--component=mechanism` selects the targeted
-Study II comparisons. Four cores is a starting choice, not a runtime estimate.
-Quick profiles test software only and must use a separate output root.
-
-#### Run only missing or new experiments
-
-To resume an interrupted run, reissue its original command with the **same
-output root, profile and scientific settings**. Compatible saved work is reused;
-missing work is computed. Mechanism jobs with saved scores are skipped. Original
-grids reuse their available caches/checkpoints; interrupted work without a
-checkpoint may have to be recomputed.
-
-```sh
-# Paired cost/mixing pilot: two replications, two calibration levels.
-# Four FULL references plus 16 new CUT/complete-case jobs.
-Rscript paper/numerical/study2.R --component=mechanism --action=run \
-  --profile=pilot --cores=4 --output="$HOME/eivGP-results/study2-pilot"
-
-# Inspect mechanism/report.html and stage_timing.csv before scaling up.
-# Paper runs need a separate root because their sampling budgets differ.
-# After review, a fresh complete Study II run uses the default two components.
-
-# Only CUT and complete-case methods, if compatible baseline jobs already exist.
-Rscript paper/numerical/study2.R --component=mechanism --action=run \
-  --profile=paper --reps=1:50 --cores=4 \
-  --methods=CUT,UC-GP-CC,LVGP-CC,EzGP-CC
-
-# Retry one missing/failed job; this does not refit an already scored job.
-Rscript paper/numerical/study2.R --component=mechanism --action=run \
-  --profile=paper --reps=7 --calib=20 --methods=LVGP-CC --cores=4
-```
-
-The last two commands alone do not produce a complete comparison without the
-other methods. Mechanism summaries include all jobs registered in that output
-root, not just the latest selection. Historical/pre-refactor outputs are not
-made compatible by moving or renaming them. See [optional fit imports and resume
-rules](paper/numerical/README.md#resume-transfer-and-optional-imports).
-
-#### Where results are saved
-
-With no environment/path overrides, numerical outputs are saved under `~/eivGP-results/`, outside the checkout:
-
-| Path | Contents |
-| --- | --- |
-| `~/eivGP-results/data/study1/`, `~/eivGP-results/data/study2/` | Fixed-seed synthetic datasets shared across methods |
-| `~/eivGP-results/study1/core/<run-id>-<fingerprint>/` | Univariate run, caches, diagnostics and aggregate outputs |
-| `~/eivGP-results/study2/core/<run-id>-<fingerprint>/` | Original multivariate run and aggregate outputs |
-| `~/eivGP-results/study2/mechanism/` | Targeted comparison jobs, diagnostics and score tables |
-| `.r-library/` | Local R installation and dependency environment |
-
-Core runs put status files in `config/`, aggregate CSVs in `combined/`, and
-combined competitor outputs in `reporting/comparison/`. Mechanism outputs include
-`point_scores.csv`, `replicate_scores.csv`, `summary.csv`, and
-`paired_differences.csv`, paired summaries and unseen-minus-seen interactions.
-`report.html` includes completion, diagnostics, paired scores and stage wall times. Per-job directories retain diagnostic files and
-predictions; shared directories retain measurement diagnostics.
-
-Use `--output=/absolute/local/path/study2` to change the study's parent result
-root; `core/` and `mechanism/` are appended automatically. Use
-`--data-root=/absolute/local/path/data/study2` for that study's input directory.
-Repeat these overrides on every run/report command. `EIVGP_RESULTS_ROOT` and
-`EIVGP_DATA_ROOT` also override defaults; explicit flags take precedence. Keep
-outputs outside Dropbox/Overleaf. Do not run two processes against the same
-output root. The two studies have separate default roots.
-
-#### Checkpoints and runtime forecasts
-
-Sampling saves explicitly every 300 seconds or 1,000 iterations, whichever is
-reached first, plus at completion. Time checks occur at iteration boundaries.
-Timing and chain forecasts refresh at least every 60 seconds of sampling, also
-at iteration boundaries; batch forecasts update as tasks start and finish.
-Use `--checkpoint-seconds=120 --checkpoint-iterations=500` to change the save
-interval. These operational settings do not change the statistical model.
-See [restart and timing details](paper/numerical/README.md#checkpoints-and-runtime-forecasts)
-for file locations, forecast scope, and recovery after a power outage.
-
-#### Check completion and convergence
-
-**Completion means outputs were computed; it does not mean convergence passed.**
-Inspect both the status and diagnostic files:
-
-```sh
-# Locate core run status and gate summaries (use the printed run directory).
-find "$HOME/eivGP-results/study1/core" "$HOME/eivGP-results/study2/core" -type f \
-  \( -name cell_status.csv -o -name diagnostic_gates.csv -o -name statuses.csv \)
-
-# Count mechanism jobs by completion and diagnostic status; show problems.
-Rscript -e 's <- read.csv(path.expand("~/eivGP-results/study2/mechanism/status.csv")); print(with(s, table(status, diagnostics_pass, useNA="ifany"))); print(s[s$status != "complete" | is.na(s$diagnostics_pass) | !s$diagnostics_pass, ])'
-```
-
-Run these after the relevant workflow has created its outputs. For core runs,
-check `config/cell_status.csv` for `failed`, `gate_failed`, or
-`completed_with_gate_warnings`, and inspect `config/diagnostic_gates.csv` for
-failed gates. Check competitor `statuses.csv` files too. An early failure may
-leave later cells absent from the status table; compare with the planned grid.
-
-For mechanism runs, `status.csv` lists registered jobs as `complete`, `failed`,
-or `pending`; `diagnostics_pass` reports screening separately. A partial selection
-can be entirely complete while the full paper design remains unfinished.
-Inspect `full_diagnostics.csv`, `conditional-*.diagnostics.csv`, shared
-`measurement_diagnostics.csv`, and `integration_stability.csv` for flagged jobs.
-MCMC screens require R-hat <= 1.01 and bulk/tail ESS >= 400. Optimizer failures
-are also flagged. Scores from flagged fits remain visible and must not be
-silently treated as validated results.
-
-A completed but diagnostically flagged job is not automatically refitted.
-Investigate it first; changed sampling budgets/code require a **new output
-root**, and all conditional-fit histories are retained for investigation. Passing screens
-still require target-specific mixing and nested-integration precision review.
-An abrupt kill can leave a `RUN.lock` or job `.lock`; inspect its PID and confirm
-the process has stopped before removing that exact lock. Never remove a live lock.
-
-#### Rebuild reports without fitting
-
-```sh
-Rscript paper/numerical/study1.R --action=report --profile=paper
-Rscript paper/numerical/study2.R --action=report --profile=paper
-# If only targeted Study II work has been run:
-Rscript paper/numerical/study2.R --component=mechanism --action=report --profile=paper
-```
-
-Report commands require existing results and the same settings/path overrides;
-they do not fill missing fits. For custom mechanism sampler budgets, repeat those
-flags when reporting. The [numerical guide](paper/numerical/README.md) describes
-statistical targets, provenance, and compact output retention. Publication-scale
-storage has not been measured; all conditional fits retain chain histories.
-The [manuscript section](paper/numerical/manuscript/section.tex) retains TBDs for
-pending scientific validation and final displays.
+Study I retains `paper/numerical/study1.R` for the complete paper workflow including
+its calibrated complete-case comparisons. See the
+[numerical guide](paper/numerical/README.md). All execution requires an explicit
+run action. Data, fits, and checkpoints belong in external non-synced result
+folders; manuscript sources and figures are exported separately.
 
 ### Ocean application: 500-profile cohort
 
@@ -411,7 +260,7 @@ It retains the 0.3.1 sampler and scientific defaults. Package tests cover both
 engines, prediction, diagnostics, continuation, and lossless compact storage.
 
 
-Both numerical entry points now include the two published-competitor protocols: original `(X,C)` fits on all records and complete-case `(X,U,C)` fits with `U` continuous. `study1.R --component=complete-case --profile=pilot --action=run` starts a 12-job paired pilot; `study2.R --component=mechanism --profile=pilot --action=run` starts the CUT/CC pilot. Full Study I additions (600 CC fits) are separate from the existing 400 new Study II jobs. See [the numerical workflow](paper/numerical/README.md#two-versions-of-the-published-competitors-in-both-studies) for data access, diagnostics, reporting and the two-script paper reproduction commands. Pilots never launch the full grids automatically.
+For current numerical commands, see [Study II paper replication](paper/numerical/study2-README.md) and [the Study I guide](paper/numerical/README.md).
 
 CPU requests are upper bounds: the effective shared budget is the smaller of
 `--cores` and the detected logical CPU count. For example, `--cores=56` uses

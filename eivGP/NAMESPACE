@@ -58,3 +58,5 @@ useDynLib(eivGP, .registration=TRUE)
 importFrom(Rcpp,evalCpp)
 
 export(prune_study_checkpoints)
+
+export(report_numerical_convergence)

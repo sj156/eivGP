@@ -1,0 +1,63 @@
+---
+title: "Numerical experiments: failures and matched diagnostic-screened accuracy"
+output: html_document
+params:
+  manifest: null
+  output: null
+---
+
+```{r setup, include=FALSE}
+lib<-Sys.getenv("EIVGP_R_LIBRARY");if(nzchar(lib)).libPaths(c(lib,.libPaths()))
+source("convergence-report.R")
+report<-convergence_report(params$manifest,params$output)
+```
+
+This report is a snapshot of the selected source archives, not the final merged
+manuscript dataset. It reads saved artifacts only. Optimizer nonconvergence, native
+fit/prediction-stage errors, measurement diagnostic failures, and response MCMC
+diagnostic failures are distinct. Missing evidence is unknown, not a pass.
+A diagnostic pass is a screening result, not proof of convergence.
+
+## Artifact readability
+
+Unreadable artifacts remain unknown and are listed below; they are not silently
+accepted or diagnosed as optimizer failures. This can also occur during a live
+write, so repeat the snapshot after jobs finish.
+
+```{r readability, echo=FALSE}
+if(nrow(report$read_errors))knitr::kable(report$read_errors)else cat("All inspected saved artifacts were readable.")
+```
+
+## Failure rates
+
+Rates use the explicitly reported assessed-stage denominators. Hard-failure rates
+use resolved jobs; pending jobs are not failures. Shared measurement diagnostics
+are counted as exposures for each method, not independent measurement fits.
+
+```{r rates, echo=FALSE, results="asis"}
+rates<-report$failure_rates
+knitr::kable(rates[,c("design","calib","method","n_planned","n_pending","n_complete","n_hard_failure","n_artifact_error","n_converged")])
+for(stage in c("optimizer","measurement","response")) {
+  cat("\n\n### ",stage," checks\n\n",sep="")
+  cols<-c("design","calib","method",paste0(stage,c("_n_assessed","_n_failed","_n_error","_n_nonconverged","_n_unknown","_failure_rate")))
+  print(knitr::kable(rates[,cols],digits=3))
+}
+```
+
+## Accuracy on matched runs passing all applicable checks
+
+Each pair uses the same replication, calibration, design, target and stratum.
+Each metric uses finite scores from both methods. Positive differences mean
+method A minus method B; smaller is better for RMSE, CRPS and NLPD. Coverage and
+interval width require joint interpretation. MCSE measures replication variation.
+Different pairs can have different matched sets. This sensitivity analysis may
+select easier datasets; interpret it alongside failures and unfiltered scores.
+
+```{r accuracy, echo=FALSE}
+if(nrow(report$matched_converged_summary))knitr::kable(subset(report$matched_converged_summary,stratum=="overall"),digits=4) else cat("No matched runs have documented passes for every applicable check.")
+```
+
+The output directory contains job-level statuses, unfiltered replicate scores,
+matched pairs, and the paired summary. Original-grid exports without a numerical
+job registry are a separate evaluation protocol and must not be pooled into this
+calibrated-comparison report.

@@ -1,36 +1,14 @@
 # Paper replication
 
-This folder contains paper-analysis entrypoints and their required reports,
-configuration and provenance. Exploratory development scripts are kept outside
-this folder. For our current completion work, use the temporary follow-up R
-scripts below; complete fresh reproduction remains in study1.R and study2.R.
-
-```sh
-git pull --ff-only origin main
-Rscript tools/setup_numerical.R
-Rscript paper/numerical/temp-study1-followup.R --action=plan --profile=paper --cores=4
-Rscript paper/numerical/temp-study2-followup.R --action=plan --profile=paper --cores=4
-```
-
-See [follow-up execution and existing-result requirements](numerical/publication/README.md).
-The follow-up scripts can be removed after the new results are incorporated.
-They call permanent package implementations also available to the complete study scripts.
-
-
-Numerical experiments now have a [fresh-checkout workflow](numerical/README.md)
-for macOS and Linux: `Rscript tools/setup_numerical.R`, then
-`Rscript paper/numerical/study2.R --component=mechanism --action=plan`. It generates synthetic
-data and needs no historical exports. The package supplies model fitting;
-the numerical runners define the study-specific comparisons and scoring.
-
-Each analysis has a batch `.R` entrypoint and a reader-facing `.Rmd`/HTML
-report. The numerical notebooks retain their historical-export interfaces;
-current fresh numerical runs use the command-line workflow above.
+This folder contains the analyses needed for the paper. For Study II, use the
+[separate EIV-GP and competitor workflows](numerical/study2-README.md); their
+outputs can be produced on different machines and reporting reads saved results.
+Study I and application workflows are unchanged.
 
 | Analysis | Batch | Notebook | Read report |
 |---|---|---|---|
 | Study I | [R](numerical/study1.R) | [Rmd](numerical/study1.Rmd) | [HTML](numerical/study1.html) |
-| Study II | [R](numerical/study2.R) | [Rmd](numerical/study2.Rmd) | [HTML](numerical/study2.html) |
+| Study II | [EIV-GP](numerical/study2-eivGP.R), [competitors](numerical/study2-competitors.R), [report](numerical/study2.R) | [Rmd](numerical/study2.Rmd) | [HTML](numerical/study2.html) |
 | Ocean | [R](applications/ocean.R) | [Rmd](applications/ocean.Rmd) | [HTML](applications/ocean.html) |
 | ADNI | [R](applications/adni.R) | [Rmd](applications/adni.Rmd) | [HTML](applications/adni.html) |
 
@@ -41,7 +19,7 @@ From the repository root, after installing the package:
 ```sh
 export EIVGP_RESULTS_ROOT="/path/to/ordinal_mixed_input_GP"
 Rscript paper/numerical/study1.R report
-Rscript paper/numerical/study2.R report
+Rscript paper/numerical/study2.R
 Rscript tools/render_reports.R
 ```
 
@@ -63,19 +41,10 @@ different sources of uncertainty.
 
 ## Run numerical experiments from source
 
-Use [numerical/README.md](numerical/README.md) for the dependency lock,
-fixed-seed data generation, targeted FULL/CUT/competitor comparisons, resuming
-incomplete jobs, and pending manuscript displays. The two original grids use:
-
-```sh
-Rscript paper/numerical/study1.R --action=plan --profile=paper --cores=4
-Rscript paper/numerical/study2.R --action=plan --profile=paper --cores=4
-```
-
-Replace `plan` by `data` to generate synthetic inputs, or by `run` to generate,
-fit and aggregate. All default paths are checkout-relative under `results/`.
-The legacy positional report API remains available only for explicitly
-supplied historical exports; it is not needed for fresh reproduction.
+See [the numerical guide](numerical/README.md) for Study I and
+[Study II reproduction](numerical/study2-README.md) for independent machine
+execution, remaining follow-up jobs, output locations and reporting. Default
+launches plan the workload; execution requires `--action=run`.
 
 ## Application workflows
 
@@ -102,4 +71,4 @@ Rscript paper/applications/adni.R /external/adni-data /external/new-adni-run pla
 
 Use separate output roots for changed package/input identities. Fits retain chain histories and terminal states for diagnostics and continuation. Existing archives are not automatically migrated or deleted.
 
-Targeted numerical additions (complete-case competitors and matched response-free CUT), explicit command-line reruns, checkpoints and scoring are documented in [numerical/README.md](numerical/README.md). The existing study entrypoints also accept the new `--name=value` CLI; their report functions remain backward compatible.
+Study II workflow selection and reporting are documented in [its reproduction guide](numerical/study2-README.md).

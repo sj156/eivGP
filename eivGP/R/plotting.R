@@ -4093,3 +4093,130 @@ ocean_export_manuscript_tables <- function(dest,inputs) {
   }
   invisible(NULL)
 }
+
+# Read-only audit of registered calibrated numerical jobs. Output is always separate.
+# Named roots sharing a design label may be paired only after the caller verifies
+# identical datasets, test targets, calibration masks and scoring protocols.
+report_numerical_convergence <- function(roots, output) {
+  if(is.null(names(roots)) || any(!nzchar(names(roots)))) stop("Name each root with its verified study/design identifier")
+  roots<-vapply(roots,normalizePath,character(1),mustWork=TRUE)
+  canonical<-function(p){p<-path.expand(p);if(file.exists(p))normalizePath(p,mustWork=TRUE)else file.path(canonical(dirname(p)),basename(p))}
+  output<-canonical(output)
+  if(any(output==roots | startsWith(output,paste0(roots,.Platform$file.sep))))
+    stop("Report output must be outside all experiment roots")
+  read_errors<-list()
+  read<-function(p)if(file.exists(p))tryCatch(readRDS(p),error=function(e){
+    read_errors[[length(read_errors)+1L]]<<-data.frame(path=p,message=conditionMessage(e));NULL
+  })else NULL
+  diag_state<-function(p) {
+    if(!file.exists(p))return("unknown")
+    z<-tryCatch(read.csv(p),error=function(e){read_errors[[length(read_errors)+1L]]<<-data.frame(path=p,message=conditionMessage(e));NULL})
+    if(is.null(z))return("unknown")
+    if(!all(c("rhat","ess_bulk","ess_tail")%in%names(z)))return("unknown")
+    if(nrow(z)>0 && all(is.finite(z$rhat)&z$rhat<=1.01&is.finite(z$ess_bulk)&z$ess_bulk>=400&is.finite(z$ess_tail)&z$ess_tail>=400))"passed"else"failed"
+  }
+  rows<-scores<-list()
+  for(i in seq_along(roots)) {
+    root<-roots[i];jobs<-read(file.path(root,"job_registry.rds"))
+    if(is.null(jobs))stop("Missing job_registry.rds: ",root)
+    for(j in seq_len(nrow(jobs))) {
+      job<-jobs[j,];folder<-file.path(root,job$job)
+      # Atomic score publication is the completion marker; partial runs remain pending.
+      z<-read(file.path(folder,"scores.rds"));err<-read(file.path(folder,"failure.rds"))
+      if(!is.null(z))err<-NULL
+      pred<-read(file.path(folder,"predictions.rds"));dg<-read(file.path(folder,"diagnostics.rds"))
+      cc<-grepl("-CC$",job$method);native<-job$method%in%c("UC-GP","LVGP","EzGP")||cc
+      stage<-if(is.null(err$stage))"unknown"else as.character(err$stage)
+      opt<-if(!native)"not_applicable"else"unknown"
+      os<-pred$optimization_status
+      if(is.null(os))os<-dg$optimizer_status
+      if(native&&!is.null(os)&&length(os)==1&&!is.na(os)) {
+        if(os%in%c("converged","default_converged","rescued_converged"))opt<-"passed"
+        else if(grepl("nonconverged",os,fixed=TRUE))opt<-"nonconverged"
+      }
+      if(native&&stage=="optimizer")opt<-"error"
+      measurement<-if(cc||job$method=="CUT")diag_state(file.path(root,sprintf("shared-rep%03d-cal%02d",job$rep,job$calib),"measurement_diagnostics.csv"))else"not_applicable"
+      if(stage=="measurement")measurement<-"error"
+      response<-"not_applicable"
+      if(job$method=="FULL")response<-diag_state(file.path(folder,"full_diagnostics.csv"))
+      if(job$method=="CUT") {
+        # Combined gate covers every selected conditional response fit. A positive
+        # gate plus independently verified measurement screen establishes both.
+        response<-if(isTRUE(dg$pass)&&measurement=="passed")"passed"else"unknown"
+        checks<-dg$checks
+        if(length(checks)>1)response<-if(all(!is.na(checks[-1])&checks[-1]))"passed"else"failed"
+      }
+      state<-if(!is.null(z))"complete"else if(!is.null(err))"failed"else if(any(file.exists(file.path(folder,c("scores.rds","failure.rds")))))"artifact_error"else"pending"
+      passed<-state=="complete"&&all(c(opt,measurement,response)%in%c("passed","not_applicable"))
+      row<-data.frame(design=names(roots)[i],rep=job$rep,calib=job$calib,method=job$method,
+        status=state,optimizer=opt,measurement=measurement,response=response,
+        converged=passed,error_stage=if(is.null(err))""else stage,
+        message=if(is.null(err))""else err$message,source=folder,stringsAsFactors=FALSE)
+      rows[[length(rows)+1]]<-row
+      if(!is.null(z)) {
+        z$coordinate[is.na(z$coordinate)]<-0L
+        z<-rbind(z,transform(z,stratum="overall"))
+        gs<-split(z,interaction(z$target,z$stratum,z$coordinate,drop=TRUE))
+        for(d in gs) {
+          r<-row[,c("design","rep","calib","method","converged")]
+          r$target<-d$target[1];r$stratum<-d$stratum[1];r$coordinate<-d$coordinate[1]
+          for(k in c("sq_error","crps","nlpd","coverage","width"))r[[k]]<-if(all(is.finite(d[[k]])))mean(d[[k]])else NA_real_
+          r$rmse<-sqrt(r$sq_error);scores[[length(scores)+1]]<-r
+        }
+      }
+    }
+  }
+  status<-do.call(rbind,rows)
+  if(is.null(status))stop("No registered jobs")
+  if(anyDuplicated(status[c("design","rep","calib","method")]))stop("Duplicate method/replication keys across sources")
+  rates<-do.call(rbind,lapply(split(status,interaction(status$design,status$calib,status$method,drop=TRUE)),function(d){
+    o<-d[1,c("design","calib","method")];o$n_planned<-nrow(d);o$n_resolved<-sum(d$status%in%c("complete","failed"))
+    o$n_pending<-sum(d$status=="pending");o$n_hard_failure<-sum(d$status=="failed");o$n_complete<-sum(d$status=="complete")
+    o$n_artifact_error<-sum(d$status=="artifact_error")
+    o$n_converged<-sum(d$converged)
+    o$hard_failure_rate<-if(o$n_resolved)o$n_hard_failure/o$n_resolved else NA_real_
+    for(k in c("optimizer","measurement","response")) {
+      known<-d[[k]]%in%c("passed","failed","nonconverged","error")
+      fail<-d[[k]]%in%c("failed","nonconverged","error")
+      o[[paste0(k,"_n_nonconverged")]]<-sum(d[[k]]=="nonconverged")
+      o[[paste0(k,"_n_error")]]<-sum(d[[k]]=="error")
+      o[[paste0(k,"_n_assessed")]]<-sum(known);o[[paste0(k,"_n_failed")]]<-sum(fail)
+      o[[paste0(k,"_n_unknown")]]<-sum(d[[k]]=="unknown")
+      o[[paste0(k,"_failure_rate")]]<-if(any(known))sum(fail)/sum(known)else NA_real_
+    };o
+  }))
+  reps<-if(length(scores))do.call(rbind,scores)else data.frame()
+  pairs<-list();summaries<-list();metrics<-c("rmse","crps","nlpd","coverage","width")
+  if(nrow(reps))for(des in unique(reps$design)) {
+    rr<-reps[reps$design==des & reps$converged,,drop=FALSE];methods<-sort(unique(rr$method))
+    if(length(methods)>1)for(a in seq_len(length(methods)-1))for(b in (a+1):length(methods)) {
+      p<-merge(rr[rr$method==methods[a],],rr[rr$method==methods[b],],by=c("design","rep","calib","target","stratum","coordinate"))
+      for(k in metrics) {
+        d<-p[is.finite(p[[paste0(k,".x")]])&is.finite(p[[paste0(k,".y")]]),,drop=FALSE]
+        if(!nrow(d))next
+        d$metric<-k;d$value_a<-d[[paste0(k,".x")]];d$value_b<-d[[paste0(k,".y")]];d$difference<-d$value_a-d$value_b
+        d<-d[,c("design","rep","calib","target","stratum","coordinate","method.x","method.y","metric","value_a","value_b","difference")]
+        names(d)[7:8]<-c("method_a","method_b");pairs[[length(pairs)+1]]<-d
+        for(g in split(d,interaction(d$calib,d$target,d$stratum,d$coordinate,drop=TRUE))) {
+          s<-g[1,c("design","calib","target","stratum","coordinate","method_a","method_b","metric")]
+          s$n_matched<-nrow(g);s$mean_a<-mean(g$value_a);s$mean_b<-mean(g$value_b);s$difference<-mean(g$difference)
+          s$mcse<-if(nrow(g)>1)sd(g$difference)/sqrt(nrow(g))else NA_real_
+          summaries[[length(summaries)+1]]<-s
+        }
+      }
+    }
+  }
+  dir.create(output,recursive=TRUE,showWarnings=FALSE)
+  tables<-list(read_errors=if(length(read_errors))do.call(rbind,read_errors)else data.frame(path=character(),message=character()),status=status,failure_rates=rates,replicate_scores=reps,
+    matched_converged_pairs=if(length(pairs))do.call(rbind,pairs)else data.frame(),
+    matched_converged_summary=if(length(summaries))do.call(rbind,summaries)else data.frame())
+  for(n in names(tables))write.csv(tables[[n]],file.path(output,paste0(n,".csv")),row.names=FALSE)
+  writeLines(c("Diagnostic screening is not proof of convergence.",
+    "Failure rates use assessed-stage denominators; unknown, not-applicable and pending remain separate.",
+    "Hard-failure rate uses resolved jobs. Rates for shared measurement fits are method-job exposure rates, not independent fits.",
+    "Matched results are pairwise, metric-specific complete cases passing every applicable diagnostic; they can be selection-biased.",
+    "MCSE describes replication variability, not within-fit error. Unfiltered replicate scores are retained.",
+    "Equal design labels assert verified matching data, masks, targets and protocols across roots.",
+    "This snapshot reads saved artifacts only; source folders were not modified."),file.path(output,"README.txt"))
+  invisible(tables)
+}

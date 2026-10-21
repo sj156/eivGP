@@ -424,3 +424,12 @@ competitor task folders are siblings under the dataset root, with `data/`,
 retain their layout. See [Ocean storage and migration](paper/applications/README_ocean.md)
 for the directory specification and the dry-run migration command. No automatic
 migration runs during fitting, prediction, report generation or resume.
+
+### Ocean: one CPU allocation, complete paper exports
+
+After installation, `Rscript paper/applications/ocean.R --cores=16` runs the
+500-profile paper workflow through fitting, predictions, diagnostics, paper tables
+and figures, and HTML. Use `--action=plan` to preview or `--action=analyze` to
+postprocess compatible saved fits. See [Ocean reproduction](paper/applications/README_ocean.md).
+`reports/paper/artifact_manifest.csv` maps the manuscript labels to generated files;
+method failures remain explicit and no historical 200-profile values are relabeled.

@@ -84,6 +84,10 @@ cat(sprintf("Initial EIV numerical settings: **%d chains**, **%d iterations per 
   settings$chains,settings$iter,settings$burn))
 ```
 
+```{r stage-plan, echo=FALSE}
+knitr::kable(ocean_stage_plan(settings))
+```
+
 ## 2. Data and observation design
 
 ### Notation
@@ -174,15 +178,7 @@ knitr::kable(as.data.frame(table(cohort$oxygen_class)),
 ```{r exploratory-plots, eval=settings$action!="plan", fig.width=10, fig.height=3.8}
 library(ggplot2)
 library(patchwork)
-p1 <- ggplot(cohort,aes(U,Y,color=oxygen_class))+geom_point(alpha=.65)+
-  labs(x="Measured oxygen (micromol/kg)",y="Silicate (micromol/kg)",color="Oxygen class")+
-  theme_minimal()+theme(legend.position="none")
-p2 <- ggplot(cohort,aes(oxygen_class,Y,fill=oxygen_class))+geom_boxplot(outlier.alpha=.4)+
-  labs(x="Oxygen class (micromol/kg)",y="Silicate (micromol/kg)")+
-  theme_minimal()+theme(legend.position="none")
-p3 <- ggplot(cohort,aes(G2salinity,Y,color=log_pressure))+geom_point(alpha=.65)+
-  labs(x="Salinity",y="Silicate (micromol/kg)",color="Log pressure")+theme_minimal()
-p1+p2+p3
+ocean_cohort_plot(inputs$cohort)
 ```
 
 <details>
@@ -198,14 +194,22 @@ cat(ocean_table_html(design_review$overlap,"Cruise overlap in held-out predictio
 ## 3. Model fitting and numerical assessment
 
 The following chunk reads saved fits, predictions and imputations. Model fitting
-and explicit continuation are separate `ocean.R` actions; each automatically runs single-worker analysis and renders the report.
+and explicit continuation are separate `ocean.R` actions; each automatically runs analysis with the shared core budget and renders the report.
 
 ```{r saved-results, class.source="fold-show", results="hide"}
+snapshot<-get0(".ocean_precomputed_analysis",inherits=TRUE)
+if(!is.null(snapshot)) {
+  stopifnot(identical(snapshot$output_dir,normalizePath(output_dir)),
+    identical(snapshot$data_dir,normalizePath(data_dir)),identical(snapshot$profile,settings$profile),
+    identical(snapshot$folds,settings$folds),identical(snapshot$cells,settings$cells))
+  analysis<-snapshot$analysis
+} else {
 analysis <- ocean_analysis(
   repository_dir, data_dir, output_dir, settings,
   cc_output_dir=cc_output_dir, diagnostics_dir=diagnostics_dir,
   representative_fold=params$representative_fold
 )
+}
 ```
 
 - **EIV-GP:** a joint response/input model with deterministic ordinal thresholds. The working input population is standard Gaussian and independent of \(x\).
@@ -223,6 +227,14 @@ surfaces <- analysis$surfaces
 diagnostic_run <- analysis$diagnostic_run
 ```
 
+```{r paper-export-status, echo=FALSE, results="asis"}
+if(!is.null(analysis$paper_assets)) {
+  cat("**Paper export status:** ",analysis$paper_assets$status,"\n\n",sep="")
+  print(knitr::kable(analysis$paper_assets$manifest[,c("label","file","status")]))
+  cat("\n\nSee reports/paper/method_status.csv for unavailable comparisons. Completion is separate from convergence.\n")
+}
+```
+
 ```{r surfaces-build, eval=settings$action!="plan" && settings$profile!="quick" && "surface_comparison" %in% settings$modules, include=FALSE}
 if(!exists("diagnostics")) diagnostics <- NULL
 if(!exists("surfaces")) surfaces <- NULL
@@ -232,7 +244,7 @@ if(is.null(surfaces) && all(file.exists(file.path(diagnostics_dir,"tables",c("m_
 ```
 
 ```{r saved-review-build, eval=settings$action!="plan" && settings$profile!="quick" && "diagnostics" %in% settings$modules, include=FALSE}
-saved_review <- ocean_refinement_review(output_dir,inputs,diagnostics)
+saved_review <- if(!is.null(analysis$paper_assets$review)) analysis$paper_assets$review else ocean_refinement_review(output_dir,inputs,diagnostics)
 ```
 
 <details>

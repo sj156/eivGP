@@ -99,6 +99,7 @@ ocean_cli_params <- function(args=character()) {
       if(length(z)==2L)seq.int(z[1],z[2]) else z
     })))
   }
+  if(length(args) && is.null(p$action))p$action <- "fit"
   p
 }
 
@@ -123,14 +124,18 @@ ocean_check_report_dependencies <- function() {
 }
 
 ocean_render_report <- function(repository_dir,output_dir,settings,dataset,data_dir,
-  cc_output_dir="",diagnostics_dir="",representative_fold=1L) {
+  cc_output_dir="",diagnostics_dir="",representative_fold=1L,analysis=NULL) {
+  render_env<-new.env(parent=globalenv())
+  if(!is.null(analysis))render_env$.ocean_precomputed_analysis<-list(
+    output_dir=normalizePath(output_dir),data_dir=normalizePath(data_dir),
+    profile=settings$profile,folds=settings$folds,cells=settings$cells,analysis=analysis)
   rmarkdown::render(file.path(repository_dir,"paper/applications/ocean.Rmd"),
     output_file="ocean.html",output_dir=output_dir,
     params=list(dataset=dataset,profile=settings$profile,action="report",folds=settings$folds,
       cells=settings$cells,modules=settings$modules,task_ids=settings$task_ids,
       cores=settings$cores,run_id=paste0(settings$run_id,"_report"),data_dir=data_dir,output_dir=output_dir,
       cc_output_dir=cc_output_dir,diagnostics_dir=diagnostics_dir,representative_fold=representative_fold),
-    envir=new.env(parent=globalenv()),quiet=TRUE)
+    envir=render_env,quiet=TRUE)
 }
 
 # Orchestration is separate from the package's fit/analyze implementations.
@@ -143,7 +148,10 @@ ocean_cli_workflow <- function(settings,execute,render) {
     analysis<-execute(analyzed,FALSE)
     result<-list(fitting=result,analysis=analysis)
   }
-  if(settings$action!="plan")result$html<-render()
+  if(settings$action!="plan") {
+    completed<-if(settings$action %in% c("fit","continue"))result$analysis else result
+    result$html<-if("analysis" %in% names(formals(render)))render(analysis=completed) else render()
+  }
   result
 }
 
@@ -191,17 +199,31 @@ ocean_run_cli <- function(repository_dir,params=list()) {
     diagnostics_dir=resolve(getp("diagnostics_dir","")),
     representative_fold=getp("representative_fold",1L))
   }
-  render<-function()ocean_render_report(repository_dir,output_dir,settings,dataset,data_dir,
+  render<-function(analysis=NULL)ocean_render_report(repository_dir,output_dir,settings,dataset,data_dir,
     resolve(getp("cc_output_dir","")),resolve(getp("diagnostics_dir","")),
-    getp("representative_fold",1L))
+    getp("representative_fold",1L),analysis=analysis)
   if(settings$action=="plan") {
     result<-execute(settings)
     print(result$tasks,row.names=FALSE)
+    print(result$stages,row.names=FALSE)
     print(api$ocean_core_plan(settings$cores,sum(result$tasks$module=="eiv"),settings$chains))
     cat("Total shared core budget:",settings$cores,"; up to",settings$chains,
       "chain workers per EIV fit; prediction, diagnostics and plots share the same budget; HTML assembly is serial.\n")
   } else {
     if(settings$action=="fit")api$ocean_storage_init(output_dir)
+    # Own the result root through all stages, including reporting and HTML.
+    if(dir.exists(output_dir)) {
+      application_lock <- file.path(output_dir,".application.lock")
+      if(!dir.create(application_lock,showWarnings=FALSE))
+        stop("Ocean application already running: ",application_lock,". Inspect its PID before removing a stale lock.")
+      writeLines(as.character(Sys.getpid()),file.path(application_lock,"pid"))
+      on.exit(unlink(application_lock,recursive=TRUE),add=TRUE)
+    }
+    event_dir <- file.path(api$ocean_job_dir(output_dir,settings$run_id),"core-events")
+    old_options <- options(eivGP.core_events=event_dir)
+    on.exit(options(old_options),add=TRUE)
+    release_budget <- getFromNamespace("mixedgp_budget_enter","eivGP")(settings$cores)
+    on.exit(release_budget(),add=TRUE)
     # Fail early if HTML cannot be built, before starting an expensive fit.
     ocean_check_report_dependencies()
     result<-api$ocean_logged(file.path(api$ocean_job_dir(output_dir,settings$run_id),"execution.log"),
@@ -216,14 +238,14 @@ if(sys.nframe()==0L) {
   if(identical(args,"--help")) {
     cat("Rscript paper/applications/ocean.R --action=plan|fit|analyze|continue|report --profile=paper|pilot|quick\n",
       "  --dataset=ocean200|ocean500|ocean1000 --cores=16 --output=/path/to/results\n",
-      "  Default output: ~/eivGP-ocean/<dataset>/<profile>/; override with --output=...\n",
+      "  Default output: results/<dataset>/ (paper), results/<dataset>_<profile>/ otherwise.\n",
       "  Optional: --data-root=... --folds=1:5 --cells=O0,O20,O50 --modules=...\n",
       "  --run-id=... --diagnostics-dir=...\n",
       "  Sampling is fixed by profile: paper 4 chains/50000 iterations/5000 burn-in; pilot 4/80/30; quick 1/80/30.\n",
       "  Incompatible initial-fit results are preserved; a new folder is selected and printed.\n",
       "  --continuation-iter=20000 (additional iterations per existing chain; pilot default: 80)\n",
       "  --task-ids=... --import-dirs=... --cc-output-dir=... --representative-fold=1\n",
-      "No arguments: validate inputs and print the paper-profile ocean500 plan.\n",
+      "No arguments: print the plan. --cores=N alone: fit, analyze, export paper assets and render ocean500.\n",
       "fit (also run) fits, analyzes with the shared core budget and writes HTML; continue extends, analyzes and updates HTML.\n",
       "cores is the shared budget across fitting, prediction, diagnostics and plotting. analyze/report rebuild HTML without fitting. See README_ocean.md.\n",sep="")
   } else {

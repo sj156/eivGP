@@ -11483,6 +11483,22 @@ ocean_run_task <- function(task,repository_dir,output_dir,settings,inputs,identi
 
 # Preview the first wave of EIV fits; idle resources require pending work.
 # This changes execution concurrency only, never the requested chain count.
+# The single CLI budget bounds active workers; outer limits bound resident fit objects.
+ocean_stage_workers <- function(cores,stage,n_tasks,chains=4L) {
+  per_fit <- if(stage %in% c("fit","continue")) chains else 2L
+  as.integer(max(1L,min(n_tasks,ceiling(cores/per_fit))))
+}
+ocean_stage_plan <- function(settings) {
+  data.frame(stage=c("fit","predict","functionals","paper_assets","html"),
+    depends_on=c("frozen inputs","saved fits","predictions","scores and diagnostics","paper assets"),
+    unit=c("independent chains and native comparator tasks","fixed seeded posterior-draw blocks",
+      "fold/calibration and posterior-draw blocks","independent tables and figure files","one document"),
+    core_budget=rep(settings$cores,5L),
+    concurrency=c("shared pool; resident fits bounded","shared pool; resident fits bounded",
+      "shared pool; resident fits bounded","shared pool","serial assembly"),
+    stringsAsFactors=FALSE)
+}
+
 ocean_core_plan <- function(cores,n_fits,chains=4L) {
   cores<-mixedgp_as_integer_strict(cores,"cores",1L,1L)
   n_fits<-mixedgp_as_integer_strict(n_fits,"n_fits",0L,1L)
@@ -11557,7 +11573,7 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
   if(stage=="continue")selected<-selected[selected$module=="continuation",,drop=FALSE]
   if(stage=="analyze")selected<-selected[selected$module%in%c("eiv","continuation"),,drop=FALSE]
   execute<-stage%in%c("fit","analyze","continue")
-  if(settings$action=="plan") return(list(tasks=selected,inputs=inputs,settings=settings))
+  if(settings$action=="plan") return(list(tasks=selected,inputs=inputs,settings=settings,stages=ocean_stage_plan(settings)))
   if(execute || length(import_dirs)) {
     suppressPackageStartupMessages(library(eivGP))
     identity <- ocean_identity(repository_dir,data_dir,settings)
@@ -11570,7 +11586,7 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
     if(file.exists(idfile)) {
       ocean_assert_identity(readRDS(idfile),identity,output_dir)
     } else {
-      if(length(setdiff(list.files(output_dir,all.files=TRUE,no..=TRUE),c(".workflow.lock","jobs","_meta","logs",basename(ocean_job_dir(output_dir,settings$run_id))))))
+      if(length(setdiff(list.files(output_dir,all.files=TRUE,no..=TRUE),c(".workflow.lock",".application.lock","jobs","_meta","logs",basename(ocean_job_dir(output_dir,settings$run_id))))))
         stop("Existing outputs lack distributed provenance. Read them with action=report, or use a fresh directory.")
       ocean_atomic_rds(identity,idfile)
     }
@@ -11682,13 +11698,18 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
     caps<-ifelse(selected$module[pending]%in%c("eiv","continuation"),settings$chains,1L)
     # Bound simultaneously resident fits, but allow each stage to borrow all
     # free slots. A waiting fit coordinator releases its slot to chain workers.
-    outer <- max(1L, ceiling(settings$cores / max(1L,settings$chains)))
+    outer <- ocean_stage_workers(settings$cores,stage,length(pending),settings$chains)
     mixedgp_budget_yield(function() ocean_schedule(pending,rep(1L,length(pending)),outer,
       function(i,allocated) mixedgp_budget_worker(function() work(i,settings$cores)),
       start_task,finish_task))
     publish(if(any(status$state=="FAILED")) "SELECTED_COMPLETE_WITH_FAILURES" else "SELECTED_COMPLETE")
     ocean_atomic_lines(capture.output(print(status,row.names=FALSE)),ocean_path(job,"SUMMARY.txt"))
-    if(any(status$state=="FAILED")) stop("Some selected tasks failed; inspect ",ocean_path(job,"task_status.csv"))
+    failed <- status$state=="FAILED"
+    # Native comparator failures are reported, never allowed to discard valid EIV results.
+    if(any(failed & !status$module %in% c("original_baselines","complete_case_baselines")))
+      stop("Some EIV tasks failed; inspect ",ocean_path(job,"task_status.csv"))
+    if(any(failed))warning("Comparator tasks failed; continuing analysis of available results. See ",
+      ocean_path(job,"task_status.csv"),call.=FALSE)
   }
   decisions<-ocean_continuation_decisions(output_dir,settings$profile,write=dir.exists(output_dir),
     continuation_iter=settings$continuation_iter)
@@ -12151,6 +12172,8 @@ ocean_analysis_impl <- function(repository_dir,data_dir,output_dir,settings,impo
       a$diagnostic_run<-d;a$diagnostics<-d$diagnostics;a$surfaces<-d$surfaces
     }
   }
+  a$paper_assets <- ocean_export_application(output_dir,a,settings,
+    data_dir=data_dir,diagnostics_dir=if(nzchar(diagnostics_dir))diagnostics_dir else ocean_path(output_dir,"diagnostics"))
   a
 }
 
@@ -13304,7 +13327,8 @@ ocean_migrate_storage <- function(source,destination,dry_run=TRUE) {
   if(file.exists(destination)||dir.exists(destination))stop("Destination already exists: ",destination)
   if(startsWith(paste0(destination,"/"),paste0(source,"/")))stop("Destination must be outside source.")
   lock <- file.path(source,".workflow.lock")
-  if(dir.exists(lock))stop("Source is locked. Wait for its job to finish; do not migrate an active run.")
+  if(dir.exists(lock) || dir.exists(file.path(source,".application.lock")))
+    stop("Source is locked. Wait for its job to finish; do not migrate an active run.")
   if(ocean_storage_flat(source))stop("Source already uses the flat layout.")
   files <- character(); pending <- ""
   while(length(pending)) {

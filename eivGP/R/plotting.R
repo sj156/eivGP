@@ -2502,13 +2502,14 @@ ocean_diag_five_metrics <- function(d) {
     Width95 = mean(d$q975 - d$q025))
 }
 
-ocean_diag_fold_summary <- function(d, groups, metrics) {
+ocean_diag_fold_summary <- function(d, groups, metrics, require_all=TRUE) {
   # Fold SD is descriptive variability across overlapping CV training sets.
   # It is neither posterior SD nor an independent-replicate Monte Carlo SE.
   key <- do.call(paste, c(d[groups], sep = "/"))
   do.call(rbind, lapply(split(seq_len(nrow(d)), key), function(i) {
     z <- d[i, , drop = FALSE]
-    ocean_diag_require(nrow(z) == 5L && setequal(z$fold, 1:5), "Expected one score per fold.")
+    ocean_diag_require(!anyDuplicated(z$fold) && all(z$fold %in% 1:5) &&
+      (!require_all || (nrow(z)==5L && setequal(z$fold,1:5))), "Expected one score per fold.")
     do.call(rbind, lapply(metrics, function(metric) {
       ocean_diag_require(all(is.finite(z[[metric]])), paste("Non-finite score:", metric))
       data.frame(z[1, groups, drop = FALSE], metric = metric, mean = mean(z[[metric]]),
@@ -2737,11 +2738,14 @@ ocean_diag_prediction <- function(output_dir, inputs, sources) {
   rows <- masks <- list()
   for (fold in 1:5) {
     path <- ocean_path(output_dir, "full5_class4", sprintf("fold%02d", fold))
-    z <- ocean_diag_csv(ocean_path(path, "baseline_metrics.csv"), c("fold", "cell", "method", "n_test", metrics))
-    ocean_diag_require(nrow(z) == 3L && setequal(z$method, c("UC-GP", "LVGP", "EzGP")) &&
-      all(z$fold == fold & z$n_test == nrow(inputs$test[[fold]])), "Unexpected baseline scores.")
-    z$task <- "class_only"; z$test_exact_fraction <- 0
-    rows[[length(rows) + 1L]] <- z[, c("fold", "cell", "method", "task", "test_exact_fraction", "n_test", metrics)]
+    expected <- ocean_available_baselines(output_dir,fold)
+    if(length(expected)) {
+      z <- ocean_diag_csv(ocean_path(path, "baseline_metrics.csv"), c("fold", "cell", "method", "n_test", metrics))
+      ocean_diag_require(!anyDuplicated(z$method) && setequal(z$method,expected) &&
+        all(z$fold == fold & z$n_test == nrow(inputs$test[[fold]])), "Unexpected baseline scores.")
+      z$task <- "class_only"; z$test_exact_fraction <- 0
+      rows[[length(rows) + 1L]] <- z[, c("fold", "cell", "method", "task", "test_exact_fraction", "n_test", metrics)]
+    }
     mask <- ocean_diag_csv(ocean_path(path, "test_U_masks.csv"),
       c("cohort_id", "C", "observed_U_O20", "observed_U_O50"))
     te <- inputs$test[[fold]]
@@ -2779,8 +2783,8 @@ ocean_diag_prediction <- function(output_dir, inputs, sources) {
     normalized[[metric]] <- normalized[[metric]] / s_y
   normalized$NLPD <- normalized$NLPD - log(s_y) # Density transformation, not division.
   list(fold_metrics_raw = raw, fold_metrics_SD_Y = normalized,
-    summary_raw = ocean_diag_fold_summary(raw, c("task", "method", "cell"), metrics),
-    summary_SD_Y = ocean_diag_fold_summary(normalized, c("task", "method", "cell"), metrics),
+    summary_raw = ocean_diag_fold_summary(raw, c("task", "method", "cell"), metrics,require_all=FALSE),
+    summary_SD_Y = ocean_diag_fold_summary(normalized, c("task", "method", "cell"), metrics,require_all=FALSE),
     test_masks = do.call(rbind, masks), SD_Y = s_y)
 }
 
@@ -2937,7 +2941,7 @@ ocean_build_diagnostics <- function(output_dir, data_dir = ocean_path(output_dir
   run_one <- function(i) ocean_diag_functionals(i, sources, output_dir, inputs, grids, settings,
     cache_dir = ocean_path(report_dir, "cache"), overwrite = overwrite)
   parts <- mixedgp_stage_lapply(seq_len(nrow(sources)), run_one,
-    workers=max(1L,ceiling(mixedgp_budget_cores()/4L)))
+    workers=ocean_stage_workers(mixedgp_budget_cores(),"functionals",nrow(sources)))
   m <- do.call(rbind, lapply(parts, `[[`, "m"))
   f <- do.call(rbind, lapply(parts, `[[`, "f"))
   checks <- do.call(rbind, lapply(parts, `[[`, "integration_check"))
@@ -3030,16 +3034,26 @@ ocean_native_mean <- function(method,fit,grid) {
 
 # The original three baselines predict a category response directly. Evaluate
 # their native means on the fixed X grids; no R/W slice is relabeled as m.
+ocean_available_baselines <- function(output_dir,fold) {
+  path <- ocean_path(output_dir,"full5_class4",sprintf("fold%02d",fold),"baseline_status.csv")
+  if(!file.exists(path))return(character())
+  status <- read.csv(path,stringsAsFactors=FALSE)
+  stopifnot(all(c("method","status") %in% names(status)),!anyDuplicated(status$method),
+    all(status$method %in% c("UC-GP","LVGP","EzGP")))
+  status$method[status$status=="success"]
+}
+
 ocean_baseline_mean_grid <- function(output_dir,grid,folds=1:5) {
   out <- list()
   for(fold in folds) {
     saved <- readRDS(ocean_path(output_dir,"full5_class4",sprintf("fold%02d",fold),"baseline_package_outputs.rds"))
-    for(method in c("UC-GP","LVGP","EzGP")) {
+    for(method in ocean_available_baselines(output_dir,fold)) {
       mean <- ocean_native_mean(method,saved$fits[[method]],grid)
       stopifnot(length(mean)==nrow(grid),all(is.finite(mean)))
       out[[length(out)+1L]] <- data.frame(grid,posterior_mean=mean,fold,model=paste0(method," (x,c)"))
     }
   }
+  if(!length(out))return(data.frame(grid[FALSE,,drop=FALSE],posterior_mean=numeric(),fold=integer(),model=character()))
   ocean_bind(out)
 }
 
@@ -3679,8 +3693,154 @@ mixedgp_save_plot_jobs <- function(plots,dest,dimensions) {
   paths <- mixedgp_stage_lapply(seq_len(nrow(jobs)),function(i) {
     name <- jobs$name[i];size <- dimensions(name)
     path <- file.path(dest,paste0(name,".",jobs$ext[i]))
-    ggplot2::ggsave(path,plots[[name]],width=size[1],height=size[2],dpi=180,bg="white")
+    # Quartz is unsafe in forked macOS workers. Use Cairo for PNG and base PDF.
+    device <- if(jobs$ext[i]=="png")function(filename,width,height,bg,...) {
+      grDevices::png(filename,width=width,height=height,units="in",res=180,bg=bg,
+        type=if(capabilities("cairo"))"cairo" else getOption("bitmapType"))
+    } else grDevices::pdf
+    ggplot2::ggsave(path,plots[[name]],device=device,width=size[1],height=size[2],dpi=180,bg="white")
     path
-  })
+  },workers=if(Sys.info()[["sysname"]]=="Darwin" && !capabilities("cairo"))1L else mixedgp_budget_cores())
   invisible(unlist(paths,use.names=FALSE))
+}
+
+# Stable manuscript labels; every artifact is tied to the selected cohort.
+ocean_paper_registry <- function() {
+  data.frame(kind=c(rep("figure",8),rep("table",6)),
+    label=c("fig:ocean-si-data","fig:ocean-si-fm","fig:ocean-si-imputation-main","fig:ocean-si-imputation-folds","fig:ocean-si-m-slices","fig:ocean-si-m-folds","fig:ocean-si-fm-folds","fig:ocean-si-mcmc-trace","tab:ocean-si-imputation","tab:ocean-si-prediction","tab:ocean-si-resolution","tab:ocean-si-prediction-full","tab:ocean-si-imputation-class","tab:ocean-si-mcmc"),
+    file=c("fig_ocean_cohort_y_u_x.pdf","fig_ocean_f_m_slice.pdf","fig_ocean_u_imputation_all_training_fold1.pdf","fig_ocean_u_imputation_all_training_all_folds.pdf","fig_ocean_m_pressure_fold1.pdf","fig_ocean_m_pressure_all_folds.pdf","fig_ocean_f_m_slice_all_folds.pdf","fig_ocean_mcmc_diagnostic_selected_trace.pdf","tab_ocean_imputation.tex","tab_ocean_prediction.tex","tab_ocean_resolution.tex","tab_ocean_prediction_full.tex","tab_ocean_imputation_class.tex","tab_ocean_mcmc.tex"),stringsAsFactors=FALSE)
+}
+ocean_cohort_plot <- function(cohort) {
+  stopifnot(all(c("U","Y","G2salinity","log_pressure","C") %in% names(cohort)))
+  cohort$oxygen_class<-factor(cohort$C,levels=1:4,labels=c("<50","50-100","100-150","150-180"))
+  make<-function(x,label)ggplot2::ggplot(cohort,ggplot2::aes(x=.data[[x]],y=Y,color=oxygen_class))+
+    ggplot2::geom_point(alpha=.65,size=1.1)+ggplot2::labs(x=label,y="Silicate (micromol/kg)",color="Oxygen class")+ggplot2::theme_minimal(base_size=11)
+  p1<-make("U","Oxygen (micromol/kg)")+ggplot2::geom_vline(xintercept=c(50,100,150),linetype=3,color="grey55")
+  patchwork::wrap_plots(p1,make("G2salinity","Salinity"),make("log_pressure","Log pressure"),guides="collect")+
+    patchwork::plot_annotation(title=paste(nrow(cohort),"selected ocean profiles")) & ggplot2::theme(legend.position="bottom")
+}
+ocean_paper_prediction_table <- function(summary,sd_y,full=FALSE) {
+  if(!nrow(summary))return(data.frame())
+  z<-summary
+  out<-data.frame(Method=z$method,Calibration=ifelse(z$cell=="baseline","0%",paste0(sub("O","",z$cell),"%")),
+    Test=ifelse(z$prediction_mode=="mixed",paste0(sub("O","",z$cell),"% exact"),"Class only"),Folds=z$n_folds,check.names=FALSE)
+  specs<-list(RMSE=c("RMSE",1),`CRPS/sY`=c("CRPS",sd_y),`Coverage (%)`=c("Coverage95",.01),`Width/sY`=c("Width95",sd_y))
+  if(full)specs<-c(specs,list(`RMSE/sY`=c("RMSE",sd_y),`MAE/sY`=c("MAE",sd_y),NLPD_Z=c("NLPD",1),`Interval score/sY`=c("IntervalScore95",sd_y)))
+  for(n in names(specs)) {
+    metric<-specs[[n]][1];scale<-as.numeric(specs[[n]][2]);mu<-z[[paste0(metric,"_mean")]]/scale;se<-z[[paste0(metric,"_sd")]]/scale
+    if(n=="NLPD_Z")mu<-mu-log(sd_y)
+    out[[n]]<-ocean_mean_sd(mu,se,if(n%in%c("RMSE","Coverage (%)"))2L else 3L)
+  }
+  groups<-paste(ifelse(z$cell=="baseline","O0",z$cell),z$prediction_mode)
+  values<-data.frame(RMSE=round(z$RMSE_mean,2),`CRPS/sY`=round(z$CRPS_mean/sd_y,3),check.names=FALSE)
+  attr(out,"best")<-ocean_best_mask(values,groups,z$n_folds==5L)
+  out
+}
+ocean_application_status <- function(output_dir,profile="paper") {
+  catalogue<-ocean_task_catalogue(profile);catalogue<-catalogue[catalogue$module!="continuation",]
+  rows<-lapply(seq_len(nrow(catalogue)),function(i) {
+    t<-catalogue[i,];root<-if(profile=="quick")"smoke_class4" else "full5_class4"
+    if(t$module=="eiv") {
+      p<-ocean_path(output_dir,root,sprintf("fold%02d",t$fold),t$cell)
+      return(data.frame(task=t$task_id,fold=t$fold,cell=t$cell,method="EIV-GP",status=if(file.exists(ocean_path(p,"predictive_metrics.csv")))"scored" else if(file.exists(ocean_path(p,"fit.rds")))"fit_only" else "missing"))
+    }
+    p<-if(t$module=="original_baselines")ocean_path(output_dir,root,sprintf("fold%02d",t$fold),"baseline_status.csv") else ocean_path(output_dir,"complete_case_baselines/fits",t$task_id,"package_status.csv")
+    methods<-if(t$module=="original_baselines")c("UC-GP","LVGP","EzGP") else t$method
+    z<-if(file.exists(p))read.csv(p,stringsAsFactors=FALSE) else data.frame(method=character(),status=character());j<-match(methods,z$method)
+    data.frame(task=t$task_id,fold=t$fold,cell=t$cell,method=methods,status=ifelse(is.na(j),"missing",z$status[j]))
+  });ocean_bind(rows)
+}
+ocean_export_application <- function(output_dir,analysis,settings,data_dir,
+  diagnostics_dir=ocean_path(output_dir,"diagnostics"),dest=ocean_path(output_dir,"reports","paper")) {
+  inputs<-analysis$inputs;diagnostics<-analysis$diagnostics;prediction<-analysis$prediction
+  dir.create(dest,recursive=TRUE,showWarnings=FALSE);registry<-ocean_paper_registry()
+  files<-list.files(output_dir,recursive=TRUE,full.names=TRUE)
+  files<-files[grepl("(predictive_metrics|baseline_metrics|baseline_status|package_status|convergence_parameters|U_posterior_intervals|m_points|f_points|summary)[.]csv$|fit(_plus20k)?[.]rds$|prediction_distributions[.]rds$",files)]
+  files<-files[!startsWith(files,paste0(dest,.Platform$file.sep))]
+  settings_id<-settings[setdiff(names(settings),c("action","cores","run_id"))]
+  signature<-list(schema=1L,settings=settings_id,files=file.info(files)[,c("size","mtime")],
+    input_hashes=tools::md5sum(list.files(data_dir,"[.]csv$",full.names=TRUE)),code=eivgp_module_identity())
+  cache<-file.path(dest,"export.rds")
+  if(file.exists(cache)) {
+    old<-readRDS(cache);m<-old$result$manifest;paths<-file.path(dest,m$file[m$available])
+    if(identical(old$signature,signature) && all(file.exists(paths)) &&
+       identical(unname(tools::md5sum(paths)),m$md5[m$available]))return(old$result)
+  }
+  # Remove only stale generated aliases; preserve all fits, raw scores and caches.
+  unlink(file.path(dest,registry$file))
+  ggplot2::ggsave(file.path(dest,registry$file[1]),ocean_cohort_plot(inputs$cohort),width=11,height=3.8)
+  notes<-paste0("Cohort N=",inputs$design$N,"; profile=",settings$profile,". Entries are fold means (sample SD), not independent-replication uncertainty. sY=",format(inputs$response_sd,digits=8),". Missing/failed methods appear in method_status.csv; no values are imputed. Bold marks the smallest displayed RMSE/CRPS among available methods with five folds and identical calibration/test information; it does not imply significance.")
+  table<-function(d,name,caption)if(!is.null(d)&&nrow(d)) {
+    ocean_export_paper_table(d,name,caption,dest,notes)
+    j<-match(paste0(name,".tex"),registry$file)
+    if(!is.na(j)) {
+      path<-file.path(dest,paste0(name,".tex"));tex<-readLines(path,warn=FALSE)
+      tex<-gsub(paste0("\\label{tab:",name,"}"),paste0("\\label{",registry$label[j],"}"),tex,fixed=TRUE)
+      ocean_atomic_lines(tex,path)
+    }
+  }
+  if(!is.null(prediction)&&nrow(prediction$summary)) {
+    z<-prediction$summary
+    table(ocean_paper_prediction_table(z[z$cell %in% c("baseline","O0") & z$prediction_mode=="class_only",],inputs$response_sd),"tab_ocean_prediction","Prediction without exact training or test oxygen")
+    table(ocean_paper_prediction_table(z[z$variant=="EIV" & z$cell %in% c("O20","O50"),],inputs$response_sd),"tab_ocean_resolution","Value of exact test oxygen within a fitted EIV-GP")
+    full_table<-ocean_paper_prediction_table(z,inputs$response_sd,TRUE)
+    table(full_table,"tab_ocean_prediction_full","Complete predictive summaries")
+    ocean_export_prediction_panels(full_table,dest,notes)
+    evidence<-ocean_prediction_evidence(output_dir,inputs,prediction,settings$profile)
+    for(type in c("pooled","subgroups","information","paired"))table(ocean_evidence_table(evidence,type),paste0("tab_ocean_",type),paste("Predictive evidence:",type))
+  }
+  if(!is.null(analysis$cc_review)) {
+    ocean_atomic_csv(analysis$cc_review$raw,file.path(dest,"complete_case_fold_metrics.csv"))
+    cc<-analysis$cc_review$summary
+    ocean_atomic_csv(cc,file.path(dest,"complete_case_summary.csv"))
+    if(nrow(cc)) {
+      display<-data.frame(Method=cc$method,Training=cc$Training,Test=cc$Test,Folds=cc$n_folds,check.names=FALSE)
+      for(m in c("RMSE","CRPS","Coverage95","Width95")) {
+        scale<-if(m %in% c("CRPS","Width95"))inputs$response_sd else if(m=="Coverage95").01 else 1
+        label<-switch(m,RMSE="RMSE",CRPS="CRPS/sY",Coverage95="Coverage (%)",Width95="Width/sY")
+        display[[label]]<-ocean_mean_sd(cc[[paste0(m,"_mean")]]/scale,cc[[paste0(m,"_sd")]]/scale,3L)
+      }
+      table(display,"tab_ocean_complete_case","Complete-case comparisons: matched test subsets and fold counts")
+    }
+  }
+  review<-NULL
+  if(!is.null(diagnostics)) {
+    u<-ocean_paper_u_tables(diagnostics$u$summary)
+    table(u$main,"tab_ocean_imputation","Oxygen imputation on common masked training profiles")
+    table(u$class,"tab_ocean_imputation_class","Class-specific oxygen imputation")
+    review<-ocean_refinement_review(output_dir,inputs,diagnostics,dest=file.path(diagnostics_dir,"refinement"))
+    mcmc<-review$mcmc
+    mcmc$iterations_per_chain<-settings$iter+vapply(seq_len(nrow(mcmc)),function(i)if(mcmc$stage[i]=="Initial")0L else ocean_continuation_iterations(output_dir,settings$profile,mcmc$fold[i],mcmc$cell[i]),integer(1))
+    table(mcmc,"tab_ocean_mcmc","MCMC diagnostics for selected saved fits")
+    mapping<-c(fig_ocean_f_m_slice="fm_main",fig_ocean_u_imputation_all_training_fold1="u_main",fig_ocean_u_imputation_all_training_all_folds="u_all_folds",fig_ocean_m_pressure_fold1="m_main",fig_ocean_m_pressure_all_folds="m_all_folds",fig_ocean_f_m_slice_all_folds="fm_all_folds")
+    jobs<-lapply(mapping,function(n)diagnostics$plots[[n]])
+    mixedgp_save_plot_jobs(jobs,dest,function(n)c(if(grepl("imputation",n))13.2 else 11,if(grepl("all_folds",n))14 else if(grepl("f_m_slice",n))4.9 else 7))
+    ggplot2::ggsave(file.path(dest,"fig_ocean_mcmc_diagnostic_selected_trace.pdf"),review$trace,width=11,height=7.5)
+  }
+  status<-ocean_application_status(output_dir,settings$profile);ocean_atomic_csv(status,file.path(dest,"method_status.csv"))
+  registry$profile<-settings$profile;registry$cohort_N<-inputs$design$N;registry$available<-file.exists(file.path(dest,registry$file))
+  registry$md5<-NA_character_;registry$md5[registry$available]<-unname(tools::md5sum(file.path(dest,registry$file[registry$available])))
+  registry$status<-ifelse(registry$available,"generated","pending_dependencies")
+  if(settings$profile!="paper")registry$status<-paste0("workflow_check_",registry$status)
+  ocean_atomic_csv(registry,file.path(dest,"artifact_manifest.csv"))
+  state<-if(settings$profile!="paper")"WORKFLOW_CHECK" else if(!all(registry$available))"INCOMPLETE_ARTIFACTS" else if(any(!status$status %in% c("scored","success")))"COMPLETE_WITH_METHOD_FAILURES" else "COMPLETE"
+  ocean_atomic_lines(c(paste("state:",state),paste("cohort:",inputs$design$N),paste("profile:",settings$profile),paste("generated:",sum(registry$available),"/",nrow(registry)),notes,"Workflow completion does not establish convergence. Nothing is copied to Overleaf.","The manuscript's historical 200-profile numbers require its original inputs, fits and environment; ocean500 produces updated results."),file.path(dest,"SUMMARY.txt"))
+  ocean_atomic_rds(list(identity=readRDS(ocean_path(output_dir,"workflow_identity.rds")),analysis_code=eivgp_module_identity(),analysis_package=as.character(utils::packageVersion("eivGP")),settings=settings,input_hashes=tools::md5sum(list.files(data_dir,"[.]csv$",full.names=TRUE)),artifact_manifest=registry,method_status=status,time=Sys.time()),file.path(dest,"provenance.rds"))
+  result<-list(manifest=registry,status=state,method_status=status,review=review,path=dest)
+  ocean_atomic_rds(list(signature=signature,result=result),cache)
+  result
+}
+
+# Split the appendix's point and distributional metrics into readable panels.
+ocean_export_prediction_panels <- function(d,dest,note) {
+  model<-paste(d$Method,d$Calibration,ifelse(d$Test=="Class only","OI","MI"),paste0("[",d$Folds," folds]"))
+  point<-data.frame(Model=model,d[,c("RMSE","RMSE/sY","MAE/sY")],check.names=FALSE)
+  distribution<-data.frame(Model=model,d[,c("CRPS/sY","NLPD_Z","Coverage (%)","Width/sY","Interval score/sY")],check.names=FALSE)
+  ocean_export_paper_table(point,"tab_ocean_prediction_full_point","Point prediction",dest,note)
+  ocean_export_paper_table(distribution,"tab_ocean_prediction_full_distribution","Predictive distributions",dest,note)
+  tex<-c(readLines(file.path(dest,"tab_ocean_prediction_full_point.tex")),readLines(file.path(dest,"tab_ocean_prediction_full_distribution.tex")))
+  tex<-gsub("\\label{tab:tab_ocean_prediction_full_point}","\\label{tab:ocean-si-prediction-full}",tex,fixed=TRUE)
+  ocean_atomic_lines(tex,file.path(dest,"tab_ocean_prediction_full.tex"))
+  ocean_atomic_lines(c("<!doctype html><meta charset='utf-8'>",ocean_table_html(point,"Point prediction",note),
+    ocean_table_html(distribution,"Predictive distributions",note)),file.path(dest,"tab_ocean_prediction_full.html"))
 }

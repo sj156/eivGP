@@ -1,3 +1,12 @@
+# eivGP 0.4.0.9011
+
+- Ocean accepts a single `--cores` allocation for the full reproduction workflow,
+  exports a manuscript-linked table/figure inventory, and retains per-method failures.
+- Failed native comparators no longer abort valid EIV analysis. Partial comparator
+  summaries retain fold counts; missing curves are not fabricated.
+- Prediction and functional stages use the shared pool with separate resident-fit
+  limits, and CPU-slot events remain available for concurrency audits.
+
 # eivGP 0.4.0.9010
 
 - Add the opt-in `sampler="HYBRID"`: joint HMC with one complete ESS sweep

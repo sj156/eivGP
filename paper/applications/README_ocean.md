@@ -1,16 +1,67 @@
 # Ocean application
 
-`ocean.R` runs fitting, single-worker analysis and HTML generation in one command.
-Explicit continuation updates the saved chains, analysis and HTML. Internally,
-fitting and analysis remain separate stages. `ocean.Rmd` is the reader-facing
-report and reads saved results; it cannot fit models or continue MCMC.
-Only `paper/applications/ocean.html` is versioned as a complete example report.
-Ocean execution lives in `helpers.R`, reporting in `plotting.R`; the shared
-`mcmc.R` sampler is unchanged.
+`ocean.R` is the single reproduction entrypoint. After installation, specify only
+its total CPU allocation to run the default 500-profile paper experiment:
+
+```sh
+Rscript paper/applications/ocean.R --cores=16
+```
+
+With options but no `--action`, the action is `fit`: fit, analyze, export all
+paper assets, then render HTML. With no arguments, print the plan. The explicit
+`--action=plan|fit|analyze|continue|report` interfaces remain available. Dataset
+and profile are scientific selections; worker counts are never additional knobs.
+
+The dependency stages are:
+
+| Stage | Tasks and dependencies | Scheduling |
+|---|---|---|
+| Fit | Frozen folds → 15 EIV fits, five native baseline groups, 30 CC fits | Shared pool; at most four chains per fit; independent baselines run concurrently |
+| Predict | Saved fits → fixed seeded draw blocks, OI/MI scores and U intervals | Workers borrow free pool slots; fit residency is bounded separately |
+| Functionals | Predictions → per-fold/calibration m/f estimates and integration checks | Outer jobs and inner draw blocks share the same pool |
+| Paper assets | Scores → tables, cohort/imputation/surface figures, MCMC review | Independent figure files run concurrently |
+| HTML | Completed analysis and exports → reader report | Serial assembly; no fitting |
+
+`--cores=N` caps active computation across all these stages; it does not promise
+100% utilization during I/O or serial work. Waiting coordinators release slots.
+The application holds `.application.lock` through rendering to prevent concurrent writers.
+The per-invocation `core-events/` logs record acquired/released slots; task logs
+record completion and failures. Seeds, chains, iterations and evaluation budgets
+are independent of the allocation. The CLI caps workers to detected CPU capacity.
+macOS/Linux use forked workers; Windows currently falls back to serial execution.
+Parallel PNG exports use Cairo instead of the fork-unsafe macOS Quartz device;
+PDF uses the standard PDF device. Without Cairo on macOS, graphics export is serial.
+
+A failed native competitor is disclosed and does not prevent analysis of valid
+EIV fits. Missing/invalid EIV prerequisites and incompatible provenance still
+stop execution. Analysis never retries optimizers or extends MCMC implicitly.
+Rerun the same fit command to retry failed tasks and reuse compatible completed
+ones; use `--action=continue` only for an intentional chain extension.
+
+### Paper tables and figures
+
+`reports/paper/` contains 8 named PDF figures and 6 primary LaTeX/CSV/HTML tables,
+plus complete-case and paired predictive evidence. `artifact_manifest.csv` maps
+every main-text/appendix label to a file, cohort, profile, availability and hash.
+It includes the previously pending all-fold category-mean figure.
+`method_status.csv` records missing/failed comparators independently of artifact
+availability. `SUMMARY.txt` distinguishes complete output, output with method
+failures, incomplete artifacts, and quick/pilot workflow checks. Completion never
+certifies MCMC convergence. Raw scores and diagnostics remain beside these exports.
+The notebook uses the same package computations; exports do not depend on executing
+an interactive notebook. Nothing is copied into Overleaf automatically.
+
+The current manuscript describes an older **200-profile** experiment. The default
+`ocean500` regenerates the same types of tables/figures for the updated cohort;
+it does not reproduce the older numerical entries. Exact historical values require
+the original inputs, saved fits, selected continuations and matching environment.
+Use `--dataset=ocean200` for the 200-profile design, without relabeling a new run as
+the historical realization. A changed code/package identity needs a separate output
+root or its original environment; never delete the saved identity to force reuse.
 
 ## Install
 
-From the repository root, install this checkout (eivGP 0.4.0.9008):
+From the repository root, install this checkout (eivGP 0.4.0.9011):
 
 ```sh
 Rscript tools/build_package.R

@@ -54,3 +54,9 @@ replication/**/*.utf8.md
 /.r-library/
 /renv/library/
 /renv/staging/
+
+# Platform-specific R package build products
+/eivGP/src/*.o
+/eivGP/src/*.so
+/eivGP/src/*.dll
+/eivGP/src/*.dylib

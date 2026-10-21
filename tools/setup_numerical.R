@@ -20,7 +20,7 @@ mismatch<-actual!=as.character(package_version(expected))
 if(any(mismatch))stop("Dependency versions differ from renv.lock: ",paste(names(expected)[mismatch],collapse=", "),". Restore with tools/setup_numerical.R")
 if(as.character(getRversion())!=lock$R$Version)warning("Lockfile was tested with R ",lock$R$Version,"; this R is ",getRversion(),". Record and validate differences before pooling results")
 if(!check) {
-  status<-system2(file.path(R.home("bin"),"R"),c("CMD","INSTALL",paste0("--library=",shQuote(lib)),shQuote(file.path(root,"eivGP"))))
+  status<-system2(file.path(R.home("bin"),"R"),c("CMD","INSTALL","--preclean",paste0("--library=",shQuote(lib)),shQuote(file.path(root,"eivGP"))))
   if(status!=0)stop("Local package installation failed")
 }
 source(file.path(root,"paper/numerical/common.R"));numerical_package_check()

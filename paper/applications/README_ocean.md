@@ -59,17 +59,42 @@ certifies MCMC convergence. Raw scores and diagnostics remain beside these expor
 The notebook uses the same package computations; exports do not depend on executing
 an interactive notebook. Nothing is copied into Overleaf automatically.
 
-The current manuscript describes an older **200-profile** experiment. The default
-`ocean500` regenerates the same types of tables/figures for the updated cohort;
-it does not reproduce the older numerical entries. Exact historical values require
-the original inputs, saved fits, selected continuations and matching environment.
-Use `--dataset=ocean200` for the 200-profile design, without relabeling a new run as
-the historical realization. A changed code/package identity needs a separate output
-root or its original environment; never delete the saved identity to force reuse.
+The revised manuscript uses the **500-profile** cohort. The six registered
+LaTeX tables include all three original categorical competitors, the two
+complete-case comparison panels, and the common-hidden oxygen summaries.
+The full predictive appendix has separate point/distribution panels with
+within-information loss rankings. CSV exports retain all protocols and fold counts.
+
+`fig_ocean500_target_traces.pdf` reproduces the nine-panel appendix selection
+at salinity 34.25 and pressure 650 dbar: class-2 mean silicate, the response
+at oxygen 75, and mean/individual common-masked class-2 oxygen. The panel
+selection is frozen in `ocean_target_trace_selection()`; it is not reselected
+to make new runs look better. Individual coordinates use the largest finite
+recorded R-hat within that fit's common-masked class-2 set. The reference
+selection includes the late-shift case in fold 2 at 20% calibration.
+All-fold review plots, selected rows, fit hashes, target R-hat/ESS/MCSE, and
+256-to-512-node integration checks are in `diagnostics/target_traces/`.
+Function diagnostics use 256 equally spaced retained states per chain;
+oxygen diagnostics use all retained states. Function traces are conditional
+GP means, without added process draws. Thin raw lines remain visible beneath
+nine-point moving averages. These summaries do not declare whole fits converged.
+
+Trace computation loads at most four fits concurrently; inner draw blocks
+borrow slots from the same `--cores` pool. Each per-fit cache is checked against
+fit and diagnostic hashes, input rows, numerical settings and reporting code.
+No fitting or continuation is performed by these diagnostic routines.
+
+Exact reproduction of the reported numerical realization requires its saved
+fits and matching environment. A fresh paper run reproduces the specified
+experiment and exports, with fixed seeds and budgets. Historical 200-profile
+fits are a different realization. Existing workflow identities remain enforced:
+do not delete or rewrite them to make old fits look compatible with new code.
+Use the original environment to resume an old run, or a separate output for
+new fits. Reporting changes do not authorize implicit refitting.
 
 ## Install
 
-From the repository root, install this checkout (eivGP 0.4.0.9012):
+From the repository root, install this checkout (eivGP 0.4.0.9013):
 
 ```sh
 Rscript tools/build_package.R

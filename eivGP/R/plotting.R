@@ -3707,8 +3707,8 @@ mixedgp_save_plot_jobs <- function(plots,dest,dimensions) {
 # Stable manuscript labels; every artifact is tied to the selected cohort.
 ocean_paper_registry <- function() {
   data.frame(kind=c(rep("figure",8),rep("table",6)),
-    label=c("fig:ocean-si-data","fig:ocean-si-fm","fig:ocean-si-imputation-main","fig:ocean-si-imputation-folds","fig:ocean-si-m-slices","fig:ocean-si-m-folds","fig:ocean-si-fm-folds","fig:ocean-si-mcmc-trace","tab:ocean-si-imputation","tab:ocean-si-prediction","tab:ocean-si-resolution","tab:ocean-si-prediction-full","tab:ocean-si-imputation-class","tab:ocean-si-mcmc"),
-    file=c("fig_ocean_cohort_y_u_x.pdf","fig_ocean_f_m_slice.pdf","fig_ocean_u_imputation_all_training_fold1.pdf","fig_ocean_u_imputation_all_training_all_folds.pdf","fig_ocean_m_pressure_fold1.pdf","fig_ocean_m_pressure_all_folds.pdf","fig_ocean_f_m_slice_all_folds.pdf","fig_ocean_mcmc_diagnostic_selected_trace.pdf","tab_ocean_imputation.tex","tab_ocean_prediction.tex","tab_ocean_resolution.tex","tab_ocean_prediction_full.tex","tab_ocean_imputation_class.tex","tab_ocean_mcmc.tex"),stringsAsFactors=FALSE)
+    label=c("fig:ocean-si-data","fig:ocean-si-fm","fig:ocean-si-imputation-main","fig:ocean-si-imputation-folds","fig:ocean-si-m-slices","fig:ocean-si-m-folds","fig:ocean-si-fm-folds","fig:ocean-si-mcmc-trace","tab:ocean-si-imputation","tab:ocean-si-prediction","tab:ocean-si-resolution","tab:ocean-si-prediction-full","tab:ocean-si-imputation-class","tab:ocean-si-complete-case"),
+    file=c("fig_ocean_cohort_y_u_x.pdf","fig_ocean_f_m_slice.pdf","fig_ocean_u_imputation_all_training_fold1.pdf","fig_ocean_u_imputation_all_training_all_folds.pdf","fig_ocean_m_pressure_fold1.pdf","fig_ocean_m_pressure_all_folds.pdf","fig_ocean_f_m_slice_all_folds.pdf","fig_ocean500_target_traces.pdf","tab_ocean_imputation.tex","tab_ocean_prediction.tex","tab_ocean_resolution.tex","tab_ocean_prediction_full.tex","tab_ocean_imputation_class.tex","tab_ocean_complete_case.tex"),stringsAsFactors=FALSE)
 }
 ocean_cohort_plot <- function(cohort) {
   stopifnot(all(c("U","Y","G2salinity","log_pressure","C") %in% names(cohort)))
@@ -3758,7 +3758,7 @@ ocean_export_application <- function(output_dir,analysis,settings,data_dir,
   files<-files[grepl("(predictive_metrics|baseline_metrics|baseline_status|package_status|convergence_parameters|U_posterior_intervals|m_points|f_points|summary)[.]csv$|fit(_plus20k)?[.]rds$|prediction_distributions[.]rds$",files)]
   files<-files[!startsWith(files,paste0(dest,.Platform$file.sep))]
   settings_id<-settings[setdiff(names(settings),c("action","cores","run_id"))]
-  signature<-list(schema=1L,settings=settings_id,files=file.info(files)[,c("size","mtime")],
+  signature<-list(schema=2L,settings=settings_id,files=file.info(files)[,c("size","mtime")],
     input_hashes=tools::md5sum(list.files(data_dir,"[.]csv$",full.names=TRUE)),code=eivgp_module_identity())
   cache<-file.path(dest,"export.rds")
   if(file.exists(cache)) {
@@ -3815,8 +3815,24 @@ ocean_export_application <- function(output_dir,analysis,settings,data_dir,
     mapping<-c(fig_ocean_f_m_slice="fm_main",fig_ocean_u_imputation_all_training_fold1="u_main",fig_ocean_u_imputation_all_training_all_folds="u_all_folds",fig_ocean_m_pressure_fold1="m_main",fig_ocean_m_pressure_all_folds="m_all_folds",fig_ocean_f_m_slice_all_folds="fm_all_folds")
     jobs<-lapply(mapping,function(n)diagnostics$plots[[n]])
     mixedgp_save_plot_jobs(jobs,dest,function(n)c(if(grepl("imputation",n))13.2 else 11,if(grepl("all_folds",n))14 else if(grepl("f_m_slice",n))4.9 else 7))
-    ggplot2::ggsave(file.path(dest,"fig_ocean_mcmc_diagnostic_selected_trace.pdf"),review$trace,width=11,height=7.5)
+    targets<-ocean_build_target_traces(output_dir,inputs,settings)
+    selected<-ocean_target_trace_selection()
+    keys<-paste(targets$traces$fold,targets$traces$cell,targets$traces$target)
+    if(all(paste(selected$fold,selected$cell,selected$target)%in%keys)) {
+      mixedgp_save_plot_jobs(list(fig_ocean500_target_traces=ocean_target_trace_plot(targets$traces)),dest,function(n)c(7.1,6.5))
+    }
+    audit_dest<-ocean_path(output_dir,"diagnostics","target_traces")
+    ocean_atomic_csv(selected,file.path(audit_dest,"compact_selection.csv"))
+    plots<-lapply(unique(targets$traces$target),function(t) {
+      sel<-unique(targets$traces[targets$traces$target==t,c("fold","cell","target")])
+      sel<-sel[order(sel$fold,sel$cell),]
+      ocean_target_trace_plot(targets$traces,sel,if(t=="m")3L else 2L)
+    });names(plots)<-paste0("review_",unique(targets$traces$target))
+    mixedgp_save_plot_jobs(plots,audit_dest,function(n)c(7.1,8.3))
+    review$targets<-targets
+    ocean_atomic_csv(targets$summary,file.path(dest,"target_diagnostics.csv"))
   }
+  ocean_export_manuscript_tables(dest,inputs)
   status<-ocean_application_status(output_dir,settings$profile);ocean_atomic_csv(status,file.path(dest,"method_status.csv"))
   registry$profile<-settings$profile;registry$cohort_N<-inputs$design$N;registry$available<-file.exists(file.path(dest,registry$file))
   registry$md5<-NA_character_;registry$md5[registry$available]<-unname(tools::md5sum(file.path(dest,registry$file[registry$available])))
@@ -3824,7 +3840,7 @@ ocean_export_application <- function(output_dir,analysis,settings,data_dir,
   if(settings$profile!="paper")registry$status<-paste0("workflow_check_",registry$status)
   ocean_atomic_csv(registry,file.path(dest,"artifact_manifest.csv"))
   state<-if(settings$profile!="paper")"WORKFLOW_CHECK" else if(!all(registry$available))"INCOMPLETE_ARTIFACTS" else if(any(!status$status %in% c("scored","success")))"COMPLETE_WITH_METHOD_FAILURES" else "COMPLETE"
-  ocean_atomic_lines(c(paste("state:",state),paste("cohort:",inputs$design$N),paste("profile:",settings$profile),paste("generated:",sum(registry$available),"/",nrow(registry)),notes,"Workflow completion does not establish convergence. Nothing is copied to Overleaf.","The manuscript's historical 200-profile numbers require its original inputs, fits and environment; ocean500 produces updated results."),file.path(dest,"SUMMARY.txt"))
+  ocean_atomic_lines(c(paste("state:",state),paste("cohort:",inputs$design$N),paste("profile:",settings$profile),paste("generated:",sum(registry$available),"/",nrow(registry)),notes,"Workflow completion does not establish convergence. Nothing is copied to Overleaf.","The revised manuscript uses ocean500. Other cohorts and quick/pilot profiles are distinct analyses; exact historical values require the matching saved fits and environment."),file.path(dest,"SUMMARY.txt"))
   ocean_atomic_rds(list(baseline_recovery=if(file.exists(file.path(output_dir,"baseline_recovery.rds")))readRDS(file.path(output_dir,"baseline_recovery.rds")) else NULL,identity=readRDS(ocean_path(output_dir,"workflow_identity.rds")),analysis_code=eivgp_module_identity(),analysis_package=as.character(utils::packageVersion("eivGP")),settings=settings,input_hashes=tools::md5sum(list.files(data_dir,"[.]csv$",full.names=TRUE)),artifact_manifest=registry,method_status=status,time=Sys.time()),file.path(dest,"provenance.rds"))
   result<-list(manifest=registry,status=state,method_status=status,review=review,path=dest)
   ocean_atomic_rds(list(signature=signature,result=result),cache)
@@ -3843,4 +3859,235 @@ ocean_export_prediction_panels <- function(d,dest,note) {
   ocean_atomic_lines(tex,file.path(dest,"tab_ocean_prediction_full.tex"))
   ocean_atomic_lines(c("<!doctype html><meta charset='utf-8'>",ocean_table_html(point,"Point prediction",note),
     ocean_table_html(distribution,"Predictive distributions",note)),file.path(dest,"tab_ocean_prediction_full.html"))
+}
+
+# Scientific-target diagnostics are postprocessing, never a convergence gate.
+ocean_target_trace_settings <- function() list(schema=1L,states=256L,nodes=256L,
+  check_states=24L,salinity=34.25,pressure=650,oxygen=75,class=2L)
+
+ocean_target_trace_fit <- function(fit,train,fold,cell,burn=0L,
+  spec=ocean_target_trace_settings(),coordinate_diagnostics=NULL) {
+  by<-fit$mcmc$samples_by_chain;nc<-length(by$u)
+  n<-vapply(by$u,nrow,integer(1));stopifnot(nc>=2L,length(unique(n))==1L)
+  n<-n[1];idx<-unique(as.integer(round(seq(1,n,length.out=min(n,spec$states)))))
+  ids<-unlist(lapply(0:(nc-1L),function(c)c*n+idx))
+  info<-fit$mcmc$mcmc_draw_info
+  if(!is.null(info))stopifnot(identical(as.integer(info$chain[ids]),rep(seq_len(nc),each=length(idx))))
+  xraw<-matrix(c(spec$salinity,log(spec$pressure)),1,
+    dimnames=list(NULL,c('G2salinity','log_pressure')))
+  xs<-sweep(sweep(xraw,2,fit$data$x_center,'-'),2,fit$data$x_scale,'/')
+  state_mean<-function(j,nodes=spec$nodes) {
+    tau<-c(-Inf,fit$mcmc$samples_tau[j,],Inf);c<-spec$class
+    lo<-stats::pnorm(tau[c]);hi<-stats::pnorm(tau[c+1L])
+    if(!is.finite(hi-lo)||hi<=lo)stop('Degenerate class probability in target trace')
+    u<-matrix(stats::qnorm(lo+(seq_len(nodes)-.5)/nodes*(hi-lo)),ncol=1)
+    p<-gp_integrated_mean_state_1d(x_train=fit$data$x,u_train=fit$mcmc$samples_u[j,],
+      y_train=fit$data$y,x_star=xs,u_mc=u,logtheta=fit$mcmc$samples_logtheta[j,],
+      sigma2_eps=fit$mcmc$samples_sigma2[j],kernel='se',matern_nu=NULL,return_cov=FALSE)
+    as.numeric(fit$data$y_center+fit$data$y_scale*p$mean)
+  }
+  # Chunked inner jobs borrow the same pool as outer fold jobs.
+  m<-unlist(mixedgp_stage_lapply(split(ids,ceiling(seq_along(ids)/32L)),
+    function(js)vapply(js,state_mean,0)),use.names=FALSE)
+  check<-unique(round(seq(1,length(ids),length.out=min(length(ids),spec$check_states))))
+  alt<-vapply(ids[check],function(j)state_mean(j,2L*spec$nodes),0)
+  series<-list(m=matrix(m,nrow=length(idx),ncol=nc));full<-list();individual<-NA_integer_
+  if(cell!='O0') {
+    f<-predict_eivgp(fit,new_X=xraw,new_U=matrix(spec$oxygen,1),new_U_scale='raw',
+      target='surface',draw_ids=ids,include_process_uncertainty=FALSE)
+    series$f<-matrix(as.numeric(f),nrow=length(idx),ncol=nc)
+    common<-which(!ocean_diag_flag(train$calib_o50)&train$C==spec$class)
+    stopifnot(length(common)>0L,all(common %in% fit$data$miss_idx))
+    full$Umean<-sapply(by$u,function(x)rowMeans(x[,common,drop=FALSE])*fit$data$U_scale+fit$data$U_center)
+    dd<-coordinate_diagnostics
+    if(!is.null(dd)&&all(c('parameter','rhat')%in%names(dd))) {
+      dd<-dd[grepl('^u\\[[0-9]+\\]$',dd$parameter),]
+      dd$id<-as.integer(sub('^u\\[([0-9]+)\\]$','\\1',dd$parameter))
+      dd<-dd[dd$id%in%common & is.finite(dd$rhat),]
+    } else dd<-data.frame()
+    if(!nrow(dd)) {
+      rr<-vapply(common,function(j)posterior::rhat(sapply(by$u,function(x)x[,j])),0)
+      dd<-data.frame(id=common,rhat=rr);dd<-dd[is.finite(dd$rhat),]
+    }
+    # Deterministic fallback for constant coordinates; record the chosen row.
+    individual<-if(nrow(dd))dd$id[which.max(dd$rhat)] else common[1L]
+    full$Uindividual<-sapply(by$u,function(x)x[,individual]*fit$data$U_scale+fit$data$U_center)
+    for(nm in names(full))series[[nm]]<-full[[nm]][idx,,drop=FALSE]
+  }
+  summary<-do.call(rbind,lapply(names(series),function(nm) {
+    mat<-if(nm%in%names(full))full[[nm]] else series[[nm]]
+    data.frame(fold=fold,cell=cell,target=nm,rhat=posterior::rhat(mat),
+      ess=posterior::ess_bulk(mat),mcse_mean=posterior::mcse_mean(mat),
+      chain_mean_range=diff(range(colMeans(mat))),pooled_sd=stats::sd(as.numeric(mat)),
+      diagnostic_draws=nrow(mat),chains=nc)
+  }))
+  traces<-do.call(rbind,lapply(names(series),function(nm)do.call(rbind,lapply(seq_len(nc),
+    function(c)data.frame(fold=fold,cell=cell,target=nm,chain=c,
+      iteration=burn+idx,value=series[[nm]][,c])))))
+  list(traces=traces,summary=summary,individual=individual,ids=ids,
+    integration_check=data.frame(fold=fold,cell=cell,max_abs_delta=max(abs(alt-m[check])),
+      mean_abs_delta=mean(abs(alt-m[check]))))
+}
+
+ocean_build_target_traces <- function(output_dir,inputs,settings,
+  dest=ocean_path(output_dir,'diagnostics','target_traces'),spec=ocean_target_trace_settings()) {
+  dir.create(dest,recursive=TRUE,showWarnings=FALSE)
+  sources<-ocean_final_eiv_sources(output_dir,settings$profile)
+  sources<-sources[sources$available,,drop=FALSE]
+  if(!nrow(sources))stop('No saved fits for scientific-target traces')
+  paths<-mixedgp_stage_lapply(seq_len(nrow(sources)),function(i) {
+    s<-sources[i,];path<-ocean_path(output_dir,s$source,s$fit_file)
+    dp<-ocean_path(output_dir,s$source,'convergence_parameters.csv')
+    train<-inputs$folds[[paste(s$fold,'O50',sep='/')]]$train
+    signature<-list(spec=spec,fit=unname(tools::md5sum(path)),burn=settings$burn,
+      coordinate_diagnostics=if(file.exists(dp))unname(tools::md5sum(dp)) else NULL,
+      train=digest::digest(train),code=digest::digest(body(ocean_target_trace_fit)),
+      package_code=eivgp_module_identity())
+    cache<-file.path(dest,sprintf('fold%02d_%s.rds',s$fold,s$cell))
+    if(file.exists(cache)) {
+      old<-readRDS(cache)
+      if(identical(old$signature,signature))return(cache)
+    }
+    fit<-readRDS(path)
+    z<-ocean_target_trace_fit(fit,train,s$fold,s$cell,settings$burn,spec,
+      if(file.exists(dp))utils::read.csv(dp) else NULL)
+    ocean_atomic_rds(list(signature=signature,source=s,result=z),cache);cache
+  },workers=min(4L,mixedgp_budget_cores()))
+  z<-lapply(paths,function(p)readRDS(p)$result)
+  out<-list(traces=ocean_bind(lapply(z,`[[`,'traces')),summary=ocean_bind(lapply(z,`[[`,'summary')),
+    integration_check=ocean_bind(lapply(z,`[[`,'integration_check')),
+    coordinates=data.frame(fold=sources$fold,cell=sources$cell,
+      selected_row=vapply(z,`[[`,integer(1),'individual')))
+  ocean_atomic_csv(out$summary,file.path(dest,'target_diagnostics.csv'))
+  ocean_atomic_csv(out$integration_check,file.path(dest,'integration_check.csv'))
+  ocean_atomic_csv(out$coordinates,file.path(dest,'selected_coordinates.csv'))
+  ocean_atomic_rds(out$traces,file.path(dest,'traces.rds'))
+  out
+}
+
+ocean_target_trace_selection <- function() {
+  # Frozen manuscript display; do not reselect cases from each rerun's R-hat.
+  data.frame(fold=c(5L,1L,2L,1L,2L,1L,1L,1L,2L),
+    cell=c('O0','O20','O50','O20','O20','O50','O20','O20','O20'),
+    target=c('m','m','m','f','f','f','Umean','Uindividual','Uindividual'))
+}
+ocean_target_trace_plot <- function(traces,selection=ocean_target_trace_selection(),ncol=3L) {
+  parts<-lapply(seq_len(nrow(selection)),function(i) {
+    a<-selection[i,];z<-traces[traces$fold==a$fold & traces$cell==a$cell & traces$target==a$target,,drop=FALSE]
+    if(!nrow(z))return(NULL)
+    label<-switch(a$target,m='m(x, class 2)',f='f(x, oxygen = 75)',
+      Umean='Mean masked oxygen',Uindividual='Individual masked oxygen')
+    z$panel<-paste0('(',letters[i],') ',label,'\n',sub('O','',a$cell),'% calibration, fold ',a$fold)
+    z
+  });z<-ocean_bind(parts)
+  if(!nrow(z))stop('No traces for the requested figure panels')
+  z$panel<-factor(z$panel,levels=unique(z$panel));z$chain<-factor(z$chain)
+  z<-ocean_bind(lapply(split(z,interaction(z$panel,z$chain,drop=TRUE)),function(q) {
+    q<-q[order(q$iteration),];q$smooth<-if(nrow(q)>=9L)as.numeric(stats::filter(q$value,rep(1/9,9),sides=2)) else q$value;q
+  }))
+  ggplot2::ggplot(z,ggplot2::aes(iteration/1000,value,color=chain,group=chain))+
+    ggplot2::geom_line(linewidth=.19,alpha=.28)+
+    ggplot2::geom_line(ggplot2::aes(y=smooth),linewidth=.4,na.rm=TRUE)+
+    ggplot2::facet_wrap(~panel,ncol=ncol,scales='free_y')+
+    ggplot2::scale_color_manual(values=c('#0072B2','#D55E00','#009E73','#CC79A7'))+
+    ggplot2::labs(x='Iteration (thousands; retained states)',y='micromol/kg',color='Chain')+
+    ggplot2::theme_bw(base_size=9)+ggplot2::theme(panel.grid.minor=ggplot2::element_blank(),
+      panel.grid.major=ggplot2::element_line(linewidth=.15,color='grey90'),legend.position='bottom',
+      strip.background=ggplot2::element_rect(fill='grey96'),strip.text=ggplot2::element_text(size=8.5),
+      panel.spacing=grid::unit(.6,'lines'),legend.margin=ggplot2::margin(0,0,0,0),
+      plot.margin=ggplot2::margin(3,4,3,3))
+}
+
+# Manuscript-ready LaTeX is derived from the same unrounded-score exports as HTML.
+# Raw CSVs retain all conditions, fold counts and missing-method information.
+ocean_export_manuscript_tables <- function(dest,inputs) {
+  read<-function(name) {
+    p<-file.path(dest,paste0(name,'.csv'))
+    if(file.exists(p))utils::read.csv(p,check.names=FALSE,stringsAsFactors=FALSE) else NULL
+  }
+  tex<-function(x)gsub('%','\\%',x,fixed=TRUE)
+  mark<-function(d,keys,groups=rep('all',nrow(d)),eligible=rep(TRUE,nrow(d))) {
+    for(g in unique(groups))for(k in keys) {
+      ix<-which(groups==g & eligible);if(!length(ix))next
+      v<-suppressWarnings(as.numeric(sub(' .*','',d[[k]][ix])))
+      if(!any(is.finite(v)))next
+      best<-ix[is.finite(v)&v==min(v,na.rm=TRUE)]
+      d[[k]][best]<-paste0('\\textbf{',sub(' .*','',d[[k]][best]),'}',sub('^[^ ]+','',d[[k]][best]))
+    };d
+  }
+  tabular<-function(d,headers,groups=NULL) {
+    out<-c(paste0('\\begin{tabular}{',paste0(c('l',rep('r',ncol(d)-1)),collapse=''),'}'),
+      '\\toprule',paste0(paste(headers,collapse=' & '),' \\\\'),'\\midrule')
+    for(i in seq_len(nrow(d))) {
+      if(!is.null(groups)&&(i==1L||groups[i]!=groups[i-1L]))out<-c(out,
+        paste0('\\multicolumn{',ncol(d),'}{l}{\\textit{',groups[i],'}}\\\\[2pt]'))
+      out<-c(out,paste0(paste(tex(as.character(d[i,])),collapse=' & '),' \\\\'))
+    };c(out,'\\bottomrule','\\end{tabular}')
+  }
+  note<-paste0('Entries are five-fold means (sample SDs), not independent-replication uncertainty. ',
+    'RMSE is in $\\mu\\mathrm{mol}\\,\\mathrm{kg}^{-1}$; $s_Y=',sprintf('%.4f',inputs$response_sd),
+    '$. Coverage and width refer to 95\\% intervals. Bold marks the lowest displayed loss within each comparison group, not significance. ',
+    'Missing or failed competitors and fold counts are retained in the CSV exports and method\\_status.csv.')
+  write<-function(name,label,caption,body,extra='')ocean_atomic_lines(c(
+    '\\begin{table}[!htbp]','\\centering\\small',paste0('\\caption{',caption,'}'),
+    paste0('\\label{',label,'}'),'\\setlength{\\tabcolsep}{3pt}',body,
+    '\\par\\smallskip','\\begin{minipage}{\\textwidth}\\footnotesize',note,extra,
+    '\\end{minipage}','\\end{table}'),file.path(dest,paste0(name,'.tex')))
+  order_methods<-function(d)d[order(match(d$Method,c('UC-GP','LVGP','EzGP','EIV-GP'))),,drop=FALSE]
+  d<-read('tab_ocean_prediction')
+  if(!is.null(d)&&nrow(d)) {
+    d<-order_methods(d);d<-mark(d,c('RMSE','CRPS/sY'),eligible=d$Folds==5L)
+    write('tab_ocean_prediction','tab:ocean-si-prediction','Silicate prediction without exact training or test oxygen.',
+      tabular(d[,c('Method','RMSE','CRPS/sY','Coverage (%)','Width/sY')],c('Method','RMSE','CRPS/$s_Y$','Cov. (\\%)','Width/$s_Y$')))
+  }
+  d<-read('tab_ocean_resolution')
+  if(!is.null(d)&&nrow(d)) {
+    d<-d[order(d$Calibration,d$Test!="Class only"),];d<-mark(d,c('RMSE','CRPS/sY'),d$Calibration,d$Folds==5L)
+    write('tab_ocean_resolution','tab:ocean-si-resolution','Value of exact test oxygen within each fitted EIV--GP model.',
+      tabular(d[,c('Calibration','Test','RMSE','CRPS/sY','Coverage (%)','Width/sY')],
+        c('Training exact','Test oxygen','RMSE','CRPS/$s_Y$','Cov. (\\%)','Width/$s_Y$')))
+  }
+  for(name in c('tab_ocean_imputation','tab_ocean_imputation_class')) {
+    d<-read(name);if(is.null(d)||!nrow(d))next
+    class<-name=='tab_ocean_imputation_class'
+    d<-mark(d,c('RMSE','MAE'),if(class)d$Class else rep('all',nrow(d)))
+    headers<-c('Calibration',if(class)'Class','Bias','RMSE','MAE','Cov. (\\%)','Width')
+    # Oxygen, unlike response tables, has physical units in all loss columns.
+    old_note<-note;note<-paste0('Entries are five-fold means (sample SDs). Bias, RMSE, MAE and width are in $\\mu\\mathrm{mol}\\,\\mathrm{kg}^{-1}$. ',
+      'Bias is posterior mean minus reference oxygen; coverage and width refer to equal-tailed 95\\% individual-oxygen intervals. ',
+      'Bold marks the lower displayed RMSE and MAE within each comparison.')
+    write(name,if(class)'tab:ocean-si-imputation-class' else 'tab:ocean-si-imputation',
+      paste0(if(class)'Class-specific oxygen imputation' else 'Oxygen imputation',
+        ' on the common ',inputs$design$N*.4,' masked training profiles per fold.'),tabular(d,headers))
+    note<-old_note
+  }
+  d<-read('tab_ocean_prediction_full')
+  if(!is.null(d)&&nrow(d)) {
+    cal<-as.numeric(sub('%','',d$Calibration));d<-d[order(cal,match(d$Method,c('UC-GP','LVGP','EzGP','EIV-GP')),d$Test!='Class only'),]
+    groups<-ifelse(d$Calibration=='0%','A. No exact training oxygen',paste0(ifelse(d$Calibration=='20%','B. ','C. '),tex(d$Calibration),' exact training oxygen'))
+    d<-mark(d,c('RMSE','RMSE/sY','MAE/sY','CRPS/sY','NLPD_Z','Interval score/sY'),groups,d$Folds==5L)
+    d$Model<-paste(d$Method,ifelse(d$Method=='EIV-GP',d$Calibration,''),ifelse(d$Test=='Class only','','mixed'))
+    b<-c(tabular(d[,c('Model','RMSE','RMSE/sY','MAE/sY')],c('Method','RMSE','RMSE/$s_Y$','MAE/$s_Y$'),groups),
+      '\\medskip',tabular(d[,c('Model','CRPS/sY','NLPD_Z','Coverage (%)','Width/sY','Interval score/sY')],
+        c('Method','CRPS/$s_Y$','NLPD$_Z$','Cov. (\\%)','Width/$s_Y$','Score/$s_Y$'),groups))
+    write('tab_ocean_prediction_full','tab:ocean-si-prediction-full','Complete predictive performance summaries.',b,
+      'Unmarked rows use class-only test inputs; mixed rows reveal the indicated calibration fraction at test. NLPD is standardized by subtracting $\\log s_Y$.')
+  }
+  d<-read('tab_ocean_complete_case')
+  if(!is.null(d)&&nrow(d)) {
+    # Keep the two common exact-test subsets; other protocols remain in CSV/HTML.
+    d<-d[grepl('^[0-9]+ \\(x,u(,c)?\\)$',d$Test),,drop=FALSE]
+    if(nrow(d)) {
+      cal<-sub('%.*','',d$Training);method<-sub('(CC)','',d$Method,fixed=TRUE)
+      ix<-order(as.numeric(cal),match(method,c('UC-GP','LVGP','EzGP','EIV-GP')));d<-d[ix,];cal<-cal[ix]
+      groups<-paste0(tex(paste0(cal,'%')),' calibration; ',sub(' .*','',d$Test),' exact-oxygen test profiles per fold')
+      d<-mark(d,c('RMSE','CRPS/sY'),groups,d$Folds==5L)
+      d[['Training n']]<-as.integer(sub('.*[;:] ([0-9]+) rows.*','\\1',d$Training))
+      write('tab_ocean_complete_case','tab:ocean-si-complete-case','Prediction on the common exact-oxygen test subset.',
+        tabular(d[,c('Method','Training n','RMSE','CRPS/sY','Coverage (%)','Width/sY')],
+          c('Method','Training $n$','RMSE','CRPS/$s_Y$','Cov. (\\%)','Width/$s_Y$'),groups),
+        'Complete-case competitors use $(x,u,c)$ and only calibrated training records; EIV--GP retains all training responses and predicts from $(x,u)$.')
+    }
+  }
+  invisible(NULL)
 }

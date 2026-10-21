@@ -247,6 +247,17 @@ if(is.null(surfaces) && all(file.exists(file.path(diagnostics_dir,"tables",c("m_
 saved_review <- if(!is.null(analysis$paper_assets$review)) analysis$paper_assets$review else ocean_refinement_review(output_dir,inputs,diagnostics)
 ```
 
+### Scientific-target traceplots
+
+```{r scientific-target-traces, echo=FALSE, results="asis", fig.width=7.1, fig.height=6.5}
+if(!is.null(analysis$paper_assets$review$targets)) {
+  targets <- analysis$paper_assets$review$targets
+  print(ocean_target_trace_plot(targets$traces))
+  cat("Target-specific checks complement the raw-coordinate screen. Function diagnostics use 256 evaluated states per chain; oxygen diagnostics use full retained chains. Conditional-mean traces do not assess all posterior uncertainty or tail precision.\n\n")
+  cat(ocean_table_html(targets$summary,"Scientific-target R-hat, ESS and Monte Carlo precision"))
+}
+```
+
 <details>
 <summary>Supplementary: computation and posterior approximation</summary>
 

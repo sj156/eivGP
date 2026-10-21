@@ -5,7 +5,7 @@ ocean_load_api <- function(repository_dir=NULL,envir=parent.frame()) {
     lib <- Sys.getenv("EIVGP_R_LIBRARY",file.path(repository_dir,".r-library"))
     if(dir.exists(lib)).libPaths(c(normalizePath(lib),.libPaths()))
   }
-  if(!requireNamespace("eivGP",quietly=TRUE)||utils::packageVersion("eivGP")<"0.4.0.9008")
+  if(!requireNamespace("eivGP",quietly=TRUE)||utils::packageVersion("eivGP")<"0.4.0.9013")
     stop("Install this checkout with Rscript tools/build_package.R and R CMD INSTALL eivGP.")
   if(!is.null(repository_dir)) {
     installed<-utils::read.csv(system.file("module-manifest.csv",package="eivGP"))

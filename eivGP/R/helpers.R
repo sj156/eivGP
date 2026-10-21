@@ -11113,7 +11113,7 @@ ocean_controls <- function() list(
   `UC-GP` = list(n_starts = 8L),
   LVGP = list(n_starts = 8L, max_retries = 2L, max_iter_ini = 100L,
     max_iter_lat = 20L, rescue_iter_ini = 250L, rescue_iter_lat = 80L,
-    max_elapsed_seconds = 900, parallel = FALSE),
+    max_elapsed_seconds = Inf, parallel = TRUE),
   EzGP = list(cv_folds = 2L, maxeval = 100L, cv_score = "nlpd"))
 
 ocean_settings <- function(profile = "paper", action = "plan", folds = 1:5,
@@ -11775,22 +11775,31 @@ read_fold <- function(fold) {
 }
 run_baselines <- function(fold, train, test, fold_out) {
   metrics_path <- ocean_path(fold_out, "baseline_metrics.csv")
-  if (file.exists(metrics_path) && file.exists(ocean_path(fold_out,"baseline_package_outputs.rds"))) {
-    previous<-read.csv(metrics_path)
-    if(setequal(previous$method,c("UC-GP","LVGP","EzGP"))) return(invisible("reused output"))
+  fit_path <- ocean_path(fold_out,"baseline_package_outputs.rds")
+  methods <- c("UC-GP","LVGP","EzGP")
+  fit <- if(file.exists(fit_path))readRDS(fit_path) else NULL
+  done <- if(is.null(fit))character() else fit$status$method[fit$status$status=="success"]
+  pending <- setdiff(methods,done)
+  if(!length(pending) && file.exists(metrics_path) &&
+     setequal(read.csv(metrics_path)$method,methods))return(invisible("reused output"))
+  # Retry only missing methods; preserve their original position-dependent seeds.
+  for(method in pending) {
+    replacement <- run_published_mixedgp_competitors(
+      X_train=as.matrix(train[,c("G2salinity","log_pressure")]),y_train=train$Y,
+      C_train=matrix(train$C,ncol=1L,dimnames=list(NULL,"oxygen_class")),
+      X_test=as.matrix(test[,c("G2salinity","log_pressure")]),
+      C_test=matrix(test$C,ncol=1L,dimnames=list(NULL,"oxygen_class")),
+      m_vec=4L,n_draw=400L,seed=2026092660L+fold*100L+match(method,methods)-1L,
+      methods=method,strict=FALSE,controls=baseline_controls)
+    if(is.null(fit))fit<-replacement else {
+      for(n in setdiff(names(replacement),"status"))fit[[n]][[method]]<-replacement[[n]][[method]]
+      fit$status<-rbind(fit$status[fit$status$method!=method,,drop=FALSE],replacement$status)
+    }
+    # Atomic replacement also avoids writing through a read-only source symlink.
+    atomic_rds(fit,fit_path)
   }
-  # Fit/predict all three published baselines with original continuous X and class C.
-  fit <- eivGP:::run_published_mixedgp_competitors(
-    X_train = as.matrix(train[, c("G2salinity", "log_pressure")]),
-    y_train = train$Y,
-    C_train = matrix(train$C, ncol = 1L, dimnames = list(NULL, "oxygen_class")),
-    X_test = as.matrix(test[, c("G2salinity", "log_pressure")]),
-    C_test = matrix(test$C, ncol = 1L, dimnames = list(NULL, "oxygen_class")),
-    m_vec = 4L, n_draw = 400L, seed = 2026092660L + fold * 100L,
-    methods = c("UC-GP", "LVGP", "EzGP"), strict = FALSE,
-    controls = baseline_controls
-  )
-  saveRDS(fit, ocean_path(fold_out, "baseline_package_outputs.rds"))
+  fit$status<-fit$status[match(methods,fit$status$method),,drop=FALSE]
+  atomic_rds(fit,fit_path)
   atomic_csv(fit$status, ocean_path(fold_out, "baseline_status.csv"))
   metrics <- list()
   predictions <- list()

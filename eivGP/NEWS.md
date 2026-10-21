@@ -1,3 +1,13 @@
+# eivGP 0.4.0.9012
+
+- Ocean retries only missing baseline methods, preserving successful fitted
+  objects and the original method-specific seeds.
+- LVGP optimizer starts share the application CPU pool through a scoped parallel
+  dispatcher; the author package likelihood, starts and optimizer are unchanged.
+- Ocean paper fits retain finite optimizer iteration limits but no longer abort
+  each LVGP attempt after 900 seconds. Recovery provenance remains separate from
+  historical EIV fit identities.
+
 # eivGP 0.4.0.9011
 
 - Ocean accepts a single `--cores` allocation for the full reproduction workflow,

@@ -9391,6 +9391,21 @@ mixedgp_adapter_ucgp_once <- function(X_train,
 }
 
 
+# Run the author package's unchanged optimizer through our bounded executor.
+# Only parallel dispatch bindings are scoped locally; no namespace is modified.
+mixedgp_lvgp_fit <- function(..., parallel=FALSE) {
+  if(!isTRUE(parallel) || is.null(mixedgp_budget()))
+    return(LVGP::LVGP_fit(...,parallel=FALSE))
+  fit <- LVGP::LVGP_fit
+  dispatch <- new.env(parent=environment(fit))
+  dispatch$detectCores <- function(...)mixedgp_budget_cores()
+  dispatch$makeCluster <- function(spec,...)as.integer(spec)
+  dispatch$stopCluster <- function(cl)invisible(NULL)
+  dispatch$parLapply <- function(cl,X,fun,...)mixedgp_stage_lapply(X,fun,...,workers=cl)
+  environment(fit) <- dispatch
+  fit(...,parallel=TRUE)
+}
+
 mixedgp_adapter_lvgp <- function(X_train,
                                  y_train,
                                  C_train,
@@ -9466,7 +9481,7 @@ mixedgp_adapter_lvgp <- function(X_train,
             add = TRUE
           )
         }
-        LVGP::LVGP_fit(
+        mixedgp_lvgp_fit(
           X = train_x,
           Y = as.numeric(y_train),
           ind_qual = p + seq_len(q),

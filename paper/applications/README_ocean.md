@@ -36,7 +36,15 @@ A failed native competitor is disclosed and does not prevent analysis of valid
 EIV fits. Missing/invalid EIV prerequisites and incompatible provenance still
 stop execution. Analysis never retries optimizers or extends MCMC implicitly.
 Rerun the same fit command to retry failed tasks and reuse compatible completed
-ones; use `--action=continue` only for an intentional chain extension.
+ones, including successful methods within a partially failed baseline group;
+use `--action=continue` only for an intentional chain extension.
+LVGP's eight optimizer starts now share the same CPU pool. Its author-package
+likelihood, seeds and finite iteration limits are unchanged; the former
+900-second wall-clock cutoff per attempt is removed. The dispatcher scopes only
+parallel execution bindings and does not modify the LVGP namespace. Optimizer
+nonconvergence remains explicitly reported. Historical runs requiring recovery
+across code versions must record replacements separately; their original EIV
+identity must not be overwritten to force compatibility.
 
 ### Paper tables and figures
 
@@ -61,7 +69,7 @@ root or its original environment; never delete the saved identity to force reuse
 
 ## Install
 
-From the repository root, install this checkout (eivGP 0.4.0.9011):
+From the repository root, install this checkout (eivGP 0.4.0.9012):
 
 ```sh
 Rscript tools/build_package.R

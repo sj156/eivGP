@@ -148,14 +148,30 @@ With no path overrides, outputs go to `~/eivGP-results/study1/` and
 are not moved. To resume an older run, explicitly select its original output
 and data directories and use the compatible code/package version.
 
-Both study entrypoints enable disk checkpoints for the shared GP sampler and
-Study II CUT measurement sampler, including warmup. Every chain saves at the
-first iteration boundary after 300 seconds or 1,000 iterations since its last
-save, and at completion. Override with `--checkpoint-seconds=120` and/or
-`--checkpoint-iterations=500`. A single slow iteration can exceed the requested
-time interval. Third-party optimizers and prediction calculations retain their
-existing completed-stage caching; they do not gain within-iteration restart.
+Both study entrypoints save completed fits immediately and reuse them on rerun.
+The default partial-checkpoint schedule is **every three hours, enabled after six
+hours of actual script runtime**. The first eligible save is at the first iteration
+boundary after hour six, followed by script-clock boundaries at hours nine,
+twelve, and so on. Completed chains also save once this six-hour gate is open.
+The gate uses elapsed runtime, not a prediction of total duration, and resets on
+each command invocation. Before it opens, interrupted fits restart unless a
+compatible checkpoint from an earlier invocation exists. Existing compatible
+checkpoints can still be loaded. Each completed CUT conditional fit is cached
+separately. Timing logs and forecasts still update about every minute.
 
+Defaults are `--checkpoint-seconds=10800 --checkpoint-after-seconds=21600
+--checkpoint-iterations=Inf`. The iteration-count trigger is disabled. An explicit
+`--checkpoint-seconds` or `--checkpoint-iterations` override defaults the delay to
+zero unless `--checkpoint-after-seconds` is also supplied. Set both intervals to
+`Inf` for completed-fit-only operation: no partial checkpoints are written or
+loaded, including at individual chain completion. Direct package sampler calls
+also use completed-fit-only behavior unless checkpoint interval options are set.
+Checkpoint saves occur at iteration boundaries, so a slow iteration can delay a
+save. Third-party optimizers and prediction calculations retain their existing
+completed-stage caching. Existing checkpoint files are never deleted merely
+because the schedule changes.
+
+The following checkpoint details apply only when partial-fit recovery is enabled.
 `<output>/checkpoints/<fit-identity>/chain-XX.rds` stores all generated draws, current
 state, RNG state, and (for GP chains) computational cache and counters. Inputs,
 sampling settings, seeds, package module hashes, R version/platform and RNG kind
@@ -170,12 +186,12 @@ full in-memory arrays. Every generated draw is retained; no thinning is applied.
 A replacement temporarily requires space for both the old and new compressed file.
 
 When a full GP fit is published through the numerical artifact writers, the
-writer reads it back and checks exact equality, full chain-history lengths,
-and agreement of terminal states/RNG with the restart files. Only then does it
-remove that fit's redundant `chain-XX.rds` files and identity file, under the
-checkpoint lock. The full fit (including all conditional CUT chains, diagnostics
+writer reads it back and checks exact equality, all chain draws, model inputs and
+settings, initial/terminal states, RNG, computational cache and sampler counters. Only then does it
+remove that fit's redundant `chain-XX.rds` files under the checkpoint lock.
+The identity file is retained for provenance. The full fit (including all conditional CUT chains, diagnostics
 and continuation state), timing histories, and a small `retired.rds` receipt
-remain. Partial fits, selected prediction states, scores, failed read-back checks,
+remain. Partial fits, continuation-segment checkpoints, selected prediction states, scores, failed read-back checks,
 locked directories and checkpoints outside the configured root do not trigger
 retirement. If no full fit has been published, restart files remain necessary.
 Study II measurement checkpoints are compressed but retained: its analysis
@@ -281,7 +297,6 @@ Rscript paper/numerical/study2.R --component=mechanism --profile=pilot --action=
   --reps=1,25 --calib=20,50 --cores=4 --iter=100000 --warmup=20000 \
   --outer=16 --inner-iter=4000 --inner-warmup=1000 --inner-draws=4 \
   --latent=128 --gp-response-latent=4 --cc-response-latent=16 \
-  --checkpoint-seconds=300 --checkpoint-iterations=5000 \
   --output="$PILOT_STORE/study2" --data-root="$PILOT_STORE/data/study2"
 ```
 
@@ -335,3 +350,43 @@ and seeds independent of core count. Serial and parallel results agree within
 this schema; older serial prediction realizations may differ. Existing result
 and checkpoint identities remain enforced. Use a new output root when the
 recorded identity is incompatible; do not delete provenance files to bypass it.
+
+
+## Verified cleanup of existing Study II CUT checkpoints
+
+Use the package function `prune_study_checkpoints()` on the directory containing
+both `checkpoints/` and `mechanism/` (for follow-up runs, the `reference/` folder).
+It audits old checkpoint trees that predate automatic retirement. The default is
+a dry run: it writes an audit only, without changing the experiment output tree.
+Choose a fresh local audit directory outside the experiment tree on every call.
+
+```r
+library(eivGP)
+root <- "/path/to/study2-followup/reference"
+prune_study_checkpoints(root, audit_dir = "~/checkpoint-audits/dry-run-01")
+prune_study_checkpoints(root, dry_run = FALSE,
+                       audit_dir = "~/checkpoint-audits/cleanup-01")
+```
+
+The destructive call repeats verification; it does not blindly trust a previous
+manifest. A seed or matching filename only identifies a candidate. The verifier
+compares the data, normalized kernel, priors, sampler controls, budgets, every
+saved draw in all chains, initial states, terminal states, RNG, cache and counters.
+Squared-exponential kernels ignore their unused Matérn smoothness argument. A
+unique exact match is required. File hashes are rechecked immediately before
+removal, while holding the mechanism run lock and the individual sampler lock.
+Existing locks are respected, never broken automatically.
+
+Only verified `chain-XX.rds` files are removed. All full conditional fits,
+measurement checkpoints, incomplete/mismatched/ambiguous work, continuation
+segments, identities, timing logs, predictions and scores remain. Current automatic
+retirement uses the same verifier. This legacy cleanup targets the Study II CUT
+layout; other checkpoint types are retained. Code/protocol compatibility rules for
+resuming experiments still apply; running this offline utility does not upgrade,
+rewrite or relabel their saved scientific results.
+
+`manifest.csv` records each directory's status, preservation reason, matched fit,
+verified bytes and removed bytes. `receipts/*.rds` record exact filenames, hashes,
+original sizes and elapsed chain times before deletion and removal status afterwards.
+If interrupted, inspect those receipts and retry with a fresh audit directory.
+Never manually remove a run/sampler lock until all owning processes have stopped.

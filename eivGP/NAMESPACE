@@ -56,3 +56,5 @@ export(save_mixing_plots)
 
 useDynLib(eivGP, .registration=TRUE)
 importFrom(Rcpp,evalCpp)
+
+export(prune_study_checkpoints)

@@ -48,7 +48,7 @@ test_that("verified full fits retire restart copies, preserving continuation and
   expect_length(chains(),0L)
   expect_true(file.exists(file.path(disk,'retired.rds')))
   expect_true(file.exists(file.path(disk,'chain-01-timing.csv')))
-  expect_false(file.exists(file.path(disk,'identity.rds')))
+  expect_true(file.exists(file.path(disk,'identity.rds')))
   options(eivGP.checkpoint_root=NULL)
   a<-suppressWarnings(continue_eivgp(fit,3L,parallel=FALSE))
   b<-suppressWarnings(continue_eivgp(restored,3L,parallel=FALSE))
@@ -58,7 +58,7 @@ test_that("verified full fits retire restart copies, preserving continuation and
 
 test_that("mechanism writer retires multivariate restart copies after full-fit publication", {
   root<-tempfile();dir.create(root);on.exit(unlink(root,recursive=TRUE))
-  old<-options(eivGP.checkpoint_root=file.path(root,'checkpoints'))
+  old<-options(eivGP.checkpoint_root=file.path(root,'checkpoints'),eivGP.checkpoint_iterations=3L)
   on.exit(options(old),add=TRUE)
   n<-10L;u<-seq(-1,1,length.out=n);X<-matrix(cos(seq_len(n)),ncol=1)
   C<-matrix(as.integer(u>0)+1L,ncol=1);U<-matrix(u,ncol=1);U[3:8,]<-NA_real_

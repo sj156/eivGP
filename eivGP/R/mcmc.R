@@ -8599,6 +8599,8 @@ mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
     n_chains=n_chains, seed=seed, priors=priors, control=control,
     store_scores=store_scores, resume=.resume))
   if (!is.null(disk)) on.exit(unlink(file.path(disk, "LOCK"), recursive=TRUE), add=TRUE)
+  checkpoint_enabled <- is.finite(getOption("eivGP.checkpoint_seconds",Inf)) ||
+    is.finite(getOption("eivGP.checkpoint_iterations",Inf))
   run_chain <- function(cc) {
     ctx <- new.env(parent = environment())
     ctx$X <- X; ctx$y <- y; ctx$C <- C; ctx$U_obs <- U_obs
@@ -8654,7 +8656,7 @@ mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
     elapsed_before <- 0
     clock_start <- proc.time()[["elapsed"]]
     path <- if (!is.null(disk)) file.path(disk, sprintf("chain-%02d.rds", cc)) else NULL
-    if (!is.null(path) && file.exists(path)) {
+    if (checkpoint_enabled && !is.null(path) && file.exists(path)) {
       cp <- readRDS(path)
       if (!identical(cp$schema, 1L) || cp$iteration < start || cp$iteration > n_iter)
         stop("Invalid sampler disk checkpoint: ", path)
@@ -8672,8 +8674,7 @@ mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
       if (is.null(path)) return(invisible(NULL))
       now <- proc.time()[["elapsed"]]
       elapsed <- elapsed_before + now - clock_start
-      saving <- force || now-last_save >= getOption("eivGP.checkpoint_seconds", 300) ||
-        iteration-last_iteration >= getOption("eivGP.checkpoint_iterations", 1000L)
+      saving <- mixedgp_checkpoint_due(now,last_save,iteration-last_iteration,force)
       if (saving) {
         mixedgp_checkpoint_write(list(schema=1L, iteration=iteration, state=state,
           initial=initial, draws=mixedgp_checkpoint_prefix(draws, saved), saved=saved, counts=as.list(ctx$counts),
@@ -8681,7 +8682,7 @@ mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
           elapsed_seconds=elapsed), path)
         last_save <<- proc.time()[["elapsed"]]; last_iteration <<- iteration
       }
-      if (saving || now-last_progress >= 60) {
+      if (force || saving || now-last_progress >= 60) {
         elapsed <- elapsed_before + proc.time()[["elapsed"]] - clock_start
         # Rate is local to this chain; queued chains and prediction are not included.
         remaining <- if (iteration > start) elapsed/(iteration-start)*(n_iter-iteration) else NA_real_
@@ -8746,7 +8747,8 @@ mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
        iteration = n_iter, burn = burn, sampler_version = "0.3.1",
        time_seconds = unname(timing["elapsed"]),
        parallel_backend = if (use_fork) "fork" else "serial", parallel_cores = workers,
-       restart_storage = mixedgp_checkpoint_reference(disk))
+       restart_storage = if(checkpoint_enabled && !is.null(disk) &&
+         length(list.files(disk,"^chain-[0-9]+[.]rds$"))) mixedgp_checkpoint_reference(disk) else NULL)
 }
 
 

@@ -1,3 +1,4 @@
+ocean_path <- function(...) getFromNamespace("ocean_path","eivGP")(...)
 # Ocean application entrypoint: implementation is provided by the installed package.
 ocean_load_api <- function(repository_dir=NULL,envir=parent.frame()) {
   if(!is.null(repository_dir)) {
@@ -46,12 +47,12 @@ ocean_output_dir <- function(repository_dir,dataset,profile,output_dir="") {
 
 # Only initial fitting may select a fresh root. Old fits remain untouched.
 ocean_choose_fit_output <- function(output_dir,identity,new_base=output_dir) {
-  idfile<-file.path(output_dir,"workflow_identity.rds")
+  idfile<-ocean_path(output_dir,"workflow_identity.rds")
   if(file.exists(idfile)) {
     if(identical(readRDS(idfile),identity))return(output_dir)
   } else {
     existing<-if(dir.exists(output_dir))list.files(output_dir,all.files=TRUE,no..=TRUE) else character()
-    if(!length(setdiff(existing,c("jobs",".workflow.lock"))))return(output_dir)
+    if(!length(setdiff(existing,c("jobs",".workflow.lock","_meta","logs"))))return(output_dir)
   }
   stem<-paste0(new_base,"_run_",format(Sys.time(),"%Y%m%d_%H%M%S"))
   candidate<-stem;i<-1L
@@ -103,7 +104,7 @@ ocean_cli_params <- function(args=character()) {
 
 # Existing fits own their original sampling settings; extensions only add steps.
 ocean_restore_fit_settings <- function(params,output_dir) {
-  path<-file.path(output_dir,"workflow_identity.rds")
+  path<-ocean_path(output_dir,"workflow_identity.rds")
   if(!file.exists(path))return(params)
   # New fits always use their profile, never inherit old numerical settings.
   if(params$action%in%c("fit","run","plan"))return(params)
@@ -180,7 +181,7 @@ ocean_run_cli <- function(repository_dir,params=list()) {
   execute<-function(stage_settings,import=TRUE) {
     if(stage_settings$action=="fit" && !nzchar(getp("output_dir","")))
       on.exit({
-        identity_path<-file.path(output_dir,"workflow_identity.rds")
+        identity_path<-ocean_path(output_dir,"workflow_identity.rds")
         if(file.exists(identity_path) && identical(readRDS(identity_path),run_identity))
           api$ocean_atomic_rds(output_dir,paste0(ocean_default_output(dataset,profile,repository_dir),".latest-run.rds"))
       },add=TRUE)
@@ -200,6 +201,7 @@ ocean_run_cli <- function(repository_dir,params=list()) {
     cat("Total shared core budget:",settings$cores,"; up to",settings$chains,
       "chain workers per EIV fit; prediction, diagnostics and plots share the same budget; HTML assembly is serial.\n")
   } else {
+    if(settings$action=="fit")api$ocean_storage_init(output_dir)
     # Fail early if HTML cannot be built, before starting an expensive fit.
     ocean_check_report_dependencies()
     result<-api$ocean_logged(file.path(api$ocean_job_dir(output_dir,settings$run_id),"execution.log"),

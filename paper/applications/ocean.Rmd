@@ -56,14 +56,14 @@ settings <- ocean_settings(profile=params$profile,action=params$action,folds=par
   cells=params$cells,modules=params$modules,task_ids=params$task_ids,cores=params$cores,run_id=params$run_id)
 data_dir <- ocean_dataset_dir(repository_dir,dataset,params$data_dir)
 output_dir <- ocean_output_dir(repository_dir,dataset,settings$profile,params$output_dir)
-identity_path <- file.path(output_dir,"workflow_identity.rds")
+identity_path <- ocean_path(output_dir,"workflow_identity.rds")
 if(file.exists(identity_path)) {
   saved_numerics <- readRDS(identity_path)$numerics
   for(key in c("chains","iter","burn"))settings[[key]] <- saved_numerics[[key]]
 }
 if(settings$action=="report" && !dir.exists(output_dir))
   stop("Saved results not found: ",output_dir,". Run ocean.R first, or specify the existing output_dir.")
-diagnostics_dir <- if(nzchar(params$diagnostics_dir)) ocean_resolve_path(params$diagnostics_dir,repository_dir) else file.path(output_dir,"diagnostics")
+diagnostics_dir <- if(nzchar(params$diagnostics_dir)) ocean_resolve_path(params$diagnostics_dir,repository_dir) else ocean_path(output_dir,"diagnostics")
 import_dirs <- as.character(unlist(params$import_dirs)); import_dirs <- import_dirs[nzchar(import_dirs)]
 import_dirs <- ocean_resolve_path(import_dirs,repository_dir)
 cc_output_dir <- if(nzchar(params$cc_output_dir)) ocean_resolve_path(params$cc_output_dir,repository_dir) else output_dir
@@ -227,7 +227,7 @@ diagnostic_run <- analysis$diagnostic_run
 if(!exists("diagnostics")) diagnostics <- NULL
 if(!exists("surfaces")) surfaces <- NULL
 if(is.null(surfaces) && all(file.exists(file.path(diagnostics_dir,"tables",c("m_points.csv","f_points.csv")))) &&
-  all(vapply(1:5,function(f) file.exists(file.path(output_dir,"full5_class4",sprintf("fold%02d",f),"baseline_package_outputs.rds")),logical(1))))
+  all(vapply(1:5,function(f) file.exists(ocean_path(output_dir,"full5_class4",sprintf("fold%02d",f),"baseline_package_outputs.rds")),logical(1))))
   surfaces <- ocean_surface_report(output_dir,data_dir,diagnostics_dir,representative_fold=params$representative_fold)
 ```
 
@@ -304,7 +304,7 @@ ocean_show_cc_predictions(cc_review,section="cc")
 eiv_report <- analysis$prediction
 eiv_report$fold_metrics <- eiv_report$fold_metrics[eiv_report$fold_metrics$variant=="EIV" & eiv_report$fold_metrics$fold %in% settings$folds,]
 evidence <- ocean_prediction_evidence(output_dir,inputs,eiv_report,
-  profile=settings$profile,dest=file.path(output_dir,"prediction_report","cc_revision","eiv_evidence"))
+  profile=settings$profile,dest=ocean_path(output_dir,"prediction_report","cc_revision","eiv_evidence"))
 if(!is.null(evidence))evidence$expected_folds <- settings$folds
 ```
 
@@ -492,7 +492,7 @@ if(!is.null(diagnostics)) print(diagnostics$plots$u_all_folds)
 
 ## 7. Reproducibility and references
 
-- **Execution:** task seeds are independent of assignment/order; receipts validate reuse and merging. Logs are under `<run_id>/` (legacy `jobs/<run_id>/` remains supported).
+- **Execution:** task seeds are independent of assignment/order; receipts validate reuse and merging. Logs are under `logs/<run_id>/` in new flat roots (legacy `jobs/<run_id>/` remains supported).
 - **Prediction evidence:** `prediction_report/cc_revision/` contains current recorded-input/CC/EIV scores and EIV-only matched-input evidence. Each CC task records the precise training/test IDs, transforms, controls, seed and native status.
 - **Input distributions:** `diagnostics/u_distributions/` records common-hidden profile references and plotted density curves; posterior states are thinned deterministically for visualization only.
 - **Posterior review:** `diagnostics/refinement/` contains input-support checks, diagnostic exceptions and selected full-chain MCSE.

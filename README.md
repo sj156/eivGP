@@ -309,7 +309,7 @@ release their slots; active chain and analysis workers acquire slots from the
 same pool. After MCMC, prediction and post-processing can borrow the full budget,
 including when only one fit remains. The number of simultaneously resident fits
 is bounded separately to limit memory use. HTML assembly remains serial.
-Windows currently executes serially. Allocation logs under `jobs/<run_id>/`
+Windows currently executes serially. Allocation logs under `logs/<run_id>/` in new flat Ocean roots (legacy `jobs/<run_id>/` remains readable)
 count outer job coordinators, not instantaneous CPU utilization.
 
 Set numerical-library threads to one **before starting R**, so each active worker
@@ -356,8 +356,8 @@ or standard library paths. Pandoc must be available before fitting starts.
 | Path | Contents |
 | --- | --- |
 | `data/ocean_silicate/n500/` | Frozen 500-profile cohort, five-fold inputs and masks |
-| `~/eivGP-ocean/ocean500/paper/` (or printed run folder) | Formal-budget fits, predictions, receipts, diagnostics and `ocean.html` |
-| `~/eivGP-ocean/ocean500/pilot/` | Separate short-chain workflow results |
+| `results/ocean500/` (or printed run folder) | Formal-budget fits, predictions, receipts, diagnostics and `ocean.html` |
+| `results/ocean500_pilot/` | Separate short-chain workflow results |
 | `paper/applications/ocean.html` | Reader-facing example report generated from the Rmd |
 
 `--output=/absolute/path/ocean500-paper` overrides the result root;
@@ -417,3 +417,10 @@ falls back to one worker; Windows remains serial. Four-chain fits retain all
 four chains even when fewer workers are available. Keep BLAS/OpenMP threads
 limited to one per worker. Detection describes host CPU capacity, not current
 idle CPUs or a guaranteed scheduler/container allocation.
+
+New Ocean roots use storage schema `ocean-flat-v1`: EIV, continuation and
+competitor task folders are siblings under the dataset root, with `data/`,
+`logs/`, `reports/` and `_meta/` for shared material. Existing unmarked roots
+retain their layout. See [Ocean storage and migration](paper/applications/README_ocean.md)
+for the directory specification and the dry-run migration command. No automatic
+migration runs during fitting, prediction, report generation or resume.

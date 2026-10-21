@@ -128,7 +128,43 @@ Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=o
 Passing fits are skipped; conflicting saved extension lengths are rejected.
 `--folds`, `--cells`, `--modules` and `--task-ids` select tasks. `--import-dirs`
 imports compatible verified tasks; `--data-root` selects prepared inputs.
-Per-task logs, core allocations and status are directly under `<run_id>/`, for example `results/ocean500/paper_fit/`. Default run IDs omit the redundant dataset name. Existing `jobs/<run_id>/` folders remain in use when selected by the same run ID. Fit/fold/cell paths remain unchanged for saved-result compatibility.
+New result roots use the versioned `ocean-flat-v1` layout. Scientific tasks are siblings rather than nested under method/fold/calibration wrappers:
+
+```text
+results/ocean500/
+  eiv_fold01_O0/             # fit, predictions, scores and diagnostics together
+  eiv_fold01_O20/
+  eiv_fold01_O50/
+  eiv_fold01_O20_continued/  # continuation kept distinct from initial draws
+  baseline_fold01/          # fold-shared masks and original baselines
+  cc_fold01_O20_EzGP/        # one native competitor task
+  data/                     # frozen input snapshot
+  logs/paper_fit/            # execution status and task logs
+  reports/diagnostics/      # derived tables, figures and caches
+  reports/prediction_report/
+  _meta/                    # original provenance, execution settings
+    storage-layout.rds      # physical layout schema, not scientific identity
+    tasks/                  # task configuration and completion receipts
+  ocean.html
+```
+
+Other folds follow the same naming. Pilot/quick roots remain separate from paper roots. `_meta/initial` and `_meta/continuation` retain any stage-wide legacy metadata; task payloads never live beneath them. Explicit report directories remain supported.
+
+Unmarked existing roots retain their legacy paths. Readers, reports, continuation, completion receipts and imports resolve through the package's storage-path API. Importing between layouts translates paths and checks payload hashes. Scientific provenance checks are unchanged: migration does **not** make a historical fit compatible with a different sampler/package version. Derived diagnostic caches still require matching code and settings; rebuild them in a new diagnostics directory if those changed.
+
+### Plan migration after the existing job finishes
+
+The migration script is **dry-run by default** and refuses a source with `.workflow.lock`. Do not remove a lock while its job is running. Use a new, absent destination; existing outputs are never overwritten.
+
+```bash
+Rscript paper/applications/migrate_ocean.R \
+  --source=/path/to/results/ocean/ocean500/paper \
+  --destination=/path/to/results/ocean500
+```
+
+This prints a collision-checked file map without copying or moving results. After reviewing the plan and confirming the source job has finished, explicit `--apply=true` copies into a temporary destination, verifies source/destination hashes, rewrites receipt paths only, and publishes the completed directory. The original source is retained. It needs enough free space for a second copy. `_meta/migration-manifest.csv` records both sets of hashes; `_meta/migration.rds` retains the source identity. Existing rendered HTML and provenance text remain historical artifacts; regenerate reports through the updated reader when needed. No scientific draws are thinned, deleted, recomputed or relabeled.
+
+When preparing this update alongside an active job, install into a separate R library and select it with `EIVGP_R_LIBRARY`; do not replace the library used by the active process.
 
 ## Generate HTML from saved results
 

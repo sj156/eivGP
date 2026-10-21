@@ -1835,15 +1835,18 @@ ocean_combine_results <- function(source_dirs, output_dir, identity) {
   for(source in sources) {
     source <- normalizePath(source,mustWork=TRUE)
     if(identical(source,normalizePath(output_dir,mustWork=TRUE))) stop("Cannot import a directory into itself.")
-    path <- file.path(source,"workflow_identity.rds")
+    path <- ocean_path(source,"workflow_identity.rds")
     if(!file.exists(path) || !identical(readRDS(path),identity)) stop("Incompatible imported run: ",source)
-    done <- list.files(file.path(source,"workflow_tasks"),"[.]done[.]rds$",full.names=TRUE)
+    done <- list.files(ocean_path(source,"workflow_tasks"),"[.]done[.]rds$",full.names=TRUE)
     for(receipt_path in done) {
       receipt <- readRDS(receipt_path); id <- sub("[.]done[.]rds$","",basename(receipt_path))
       ocean_verify_receipt(source,id,identity)
-      for(rel in receipt$files) {
-        from <- file.path(source,rel); to <- file.path(output_dir,rel)
-        key <- rel
+      destination_files <- ocean_result_relative(output_dir,
+        ocean_legacy_task_relative(receipt$files,identity$profile))
+      for(i in seq_along(receipt$files)) {
+        rel <- receipt$files[i]
+        from <- ocean_path(source,rel); to <- ocean_path(output_dir,destination_files[i])
+        key <- destination_files[i]
         hash <- ocean_hashes(from)
         if(file.exists(to) && !identical(ocean_hashes(to),hash)) stop("Conflicting existing payload: ",rel)
         if(!is.null(plan[[key]]) && !identical(plan[[key]]$hash,hash)) stop("Conflicting imported payloads: ",rel)
@@ -1851,6 +1854,7 @@ ocean_combine_results <- function(source_dirs, output_dir, identity) {
       }
       if(!is.null(receipts[[id]]) && !identical(receipts[[id]]$hashes,receipt$hashes))
         stop("Conflicting completed task: ",id)
+      receipt$files <- destination_files
       receipts[[id]] <- receipt
     }
   }
@@ -1860,7 +1864,7 @@ ocean_combine_results <- function(source_dirs, output_dir, identity) {
     stopifnot(identical(ocean_hashes(item$to),item$hash))
   }
   for(id in names(receipts)) ocean_atomic_rds(receipts[[id]],
-    file.path(output_dir,"workflow_tasks",paste0(id,".done.rds")))
+    ocean_path(output_dir,"workflow_tasks",paste0(id,".done.rds")))
   invisible(names(receipts))
 }
 
@@ -1870,7 +1874,7 @@ ocean_bind <- function(parts) {
   cols <- unique(unlist(lapply(parts,names)))
   do.call(rbind,lapply(parts,function(x) {for(n in setdiff(cols,names(x))) x[[n]]<-NA; x[,cols,drop=FALSE]}))
 }
-ocean_prediction_report <- function(output_dir,inputs,profile="paper",report_dir=file.path(output_dir,"prediction_report")) {
+ocean_prediction_report <- function(output_dir,inputs,profile="paper",report_dir=ocean_path(output_dir,"prediction_report")) {
   rows <- list(); inventory <- list(); original <- if(profile!="quick") "full5_class4" else "smoke_class4"
   final_sources <- ocean_final_eiv_sources(output_dir,profile)
   add <- function(path,f,cell,variant) {
@@ -1887,17 +1891,17 @@ ocean_prediction_report <- function(output_dir,inputs,profile="paper",report_dir
     rows[[length(rows)+1L]] <<- z
   }
   for(f in if(profile!="quick") 1:5 else 1L) {
-    initial <- file.path(output_dir,original,sprintf("fold%02d",f))
-    add(file.path(initial,"baseline_metrics.csv"),f,"baseline","Original baseline")
+    initial <- ocean_path(output_dir,original,sprintf("fold%02d",f))
+    add(ocean_path(initial,"baseline_metrics.csv"),f,"baseline","Original baseline")
     for(cell in if(profile!="quick") c("O0","O20","O50") else c("O0","O20","O50")) {
       final<-final_sources[final_sources$fold==f & final_sources$cell==cell,]
-      path<-file.path(output_dir,final$source)
+      path<-ocean_path(output_dir,final$source)
       available<-isTRUE(final$available)
       inventory[[length(inventory)+1L]]<-data.frame(fold=f,cell,
         stage=if(final$continued)ocean_continuation_label(output_dir) else "initial",available,
         initial_screen_pass=final$initial_screen_pass,final_screen_pass=final$final_screen_pass)
       # Use the latest explicitly saved stage; diagnostic flags remain visible.
-      if(available)add(file.path(path,"predictive_metrics.csv"),f,cell,"EIV")
+      if(available)add(ocean_path(path,"predictive_metrics.csv"),f,cell,"EIV")
     }
   }
   raw <- ocean_bind(rows); summaries <- list()
@@ -2033,8 +2037,8 @@ ocean_prediction_panel_html <- function(d, caption, note="") {
 }
 ocean_export_paper_table <- function(d,name,caption,dest,note="") {
   if(!nrow(d)) return(invisible(NULL))
-  ocean_atomic_csv(d,file.path(dest,paste0(name,".csv")))
-  ocean_atomic_lines(c(as.character(knitr::kable(ocean_table_markup(d,"pipe"),format="pipe",row.names=FALSE,align=ocean_table_align(d))),"",note),file.path(dest,paste0(name,".md")))
+  ocean_atomic_csv(d,ocean_path(dest,paste0(name,".csv")))
+  ocean_atomic_lines(c(as.character(knitr::kable(ocean_table_markup(d,"pipe"),format="pipe",row.names=FALSE,align=ocean_table_align(d))),"",note),ocean_path(dest,paste0(name,".md")))
   tex_data <- ocean_table_markup(d,"latex")
   tex_data[] <- lapply(tex_data,ocean_tex_note)
   names(tex_data) <- ocean_tex_note(names(tex_data))
@@ -2043,20 +2047,20 @@ ocean_export_paper_table <- function(d,name,caption,dest,note="") {
   tex <- paste0(strsplit(tex,"\\end{table}",fixed=TRUE)[[1]][1],
     "\\par\\smallskip\n\\begin{minipage}{\\linewidth}\\footnotesize\n",ocean_tex_note(note),
     "\n\\end{minipage}\n\\end{table}")
-  ocean_atomic_lines(tex,file.path(dest,paste0(name,".tex")))
+  ocean_atomic_lines(tex,ocean_path(dest,paste0(name,".tex")))
   html <- ocean_table_html(d,caption,note)
   ocean_atomic_lines(c("<!doctype html><meta charset='utf-8'>",
     "<style>body{font:15px/1.5 sans-serif;margin:24px}table{border-collapse:collapse}td,th{padding:7px 10px;border-bottom:1px solid #ddd}caption{text-align:left;font-weight:600}.note{color:#555}</style>",html),
-    file.path(dest,paste0(name,".html")))
+    ocean_path(dest,paste0(name,".html")))
   invisible(html)
 }
 # Group training/test information in panel headings, keeping the paper LaTeX
 # body compact. CSV retains explicit columns for filtering and checking.
 ocean_export_prediction_report <- function(report,dest) {
-  ocean_atomic_csv(report$fold_metrics,file.path(dest,"fold_metrics_raw.csv"))
-  ocean_atomic_csv(report$summary,file.path(dest,"summary_raw.csv"))
-  ocean_atomic_csv(report$fold_metrics_SD_Y,file.path(dest,"fold_metrics_SD_Y.csv"))
-  ocean_atomic_csv(report$availability,file.path(dest,"eiv_availability.csv"))
+  ocean_atomic_csv(report$fold_metrics,ocean_path(dest,"fold_metrics_raw.csv"))
+  ocean_atomic_csv(report$summary,ocean_path(dest,"summary_raw.csv"))
+  ocean_atomic_csv(report$fold_metrics_SD_Y,ocean_path(dest,"fold_metrics_SD_Y.csv"))
+  ocean_atomic_csv(report$availability,ocean_path(dest,"eiv_availability.csv"))
   mixedgp_save_plot_jobs(report$plots,dest,function(name)c(10,6))
   invisible(report)
 }
@@ -2089,7 +2093,7 @@ ocean_fit_overview <- function(analysis, output_dir) {
 
 # Response-level evidence reconstructed from saved predictions; never fits.
 ocean_prediction_evidence <- function(output_dir, inputs, report, profile="paper",
-  dest=file.path(output_dir,"prediction_report","evidence")) {
+  dest=ocean_path(output_dir,"prediction_report","evidence")) {
   if(is.null(report) || !nrow(report$fold_metrics)) return(NULL)
   raw <- report$fold_metrics
   sources <- ocean_final_eiv_sources(output_dir,profile)
@@ -2105,15 +2109,15 @@ ocean_prediction_evidence <- function(output_dir, inputs, report, profile="paper
     d <- inputs$folds[[paste(r$fold,if(cell=="O0") "O20" else cell,sep="/")]]; te <- d$test
     known <- if(cell=="O0") rep(FALSE,nrow(te)) else d$observed_test_mixed
     if(r$variant=="Original baseline") {
-      saved <- load_saved(file.path(output_dir,root,sprintf("fold%02d",r$fold),"baseline_package_outputs.rds"))
+      saved <- load_saved(ocean_path(output_dir,root,sprintf("fold%02d",r$fold),"baseline_package_outputs.rds"))
       draws <- saved$draws[[r$method]]; point <- saved$means[[r$method]]
     } else if(r$variant=="EIV") {
       s <- sources[sources$fold==r$fold & sources$cell==cell,]
-      path <- file.path(output_dir,s$source)
-      saved <- load_saved(file.path(path,"prediction_distributions.rds"))
+      path <- ocean_path(output_dir,s$source)
+      saved <- load_saved(ocean_path(path,"prediction_distributions.rds"))
       stopifnot(identical(as.logical(saved$known),as.logical(known)))
       draws <- saved[[if(r$prediction_mode=="class_only") "xc" else "mixed"]]
-      pred <- read.csv(file.path(path,if(r$prediction_mode=="class_only") "predictions.csv" else "mixed_predictions.csv"))
+      pred <- read.csv(ocean_path(path,if(r$prediction_mode=="class_only") "predictions.csv" else "mixed_predictions.csv"))
       stopifnot(identical(as.character(pred$cohort_id),as.character(te$cohort_id)))
       point <- pred$predicted_Y
     } else stop("Unsupported prediction variant: ",r$variant)
@@ -2171,7 +2175,7 @@ ocean_prediction_evidence <- function(output_dir, inputs, report, profile="paper
   ans <- list(oof=oof,pooled=pooled,subgroups=ocean_bind(subgroups),
     information=ocean_bind(info),paired=ocean_bind(pairs),SD_Y=report$SD_Y)
   for(n in c("oof","pooled","subgroups","information","paired"))
-    if(nrow(ans[[n]])) ocean_atomic_csv(ans[[n]],file.path(dest,paste0(n,".csv")))
+    if(nrow(ans[[n]])) ocean_atomic_csv(ans[[n]],ocean_path(dest,paste0(n,".csv")))
   ans
 }
 
@@ -2230,7 +2234,7 @@ ocean_evidence_table <- function(evidence, type, eiv_only=FALSE, labels=ocean_pr
 
 # Current OI/CC/MI predictions.
 ocean_cc_prediction_tables <- function(output_dir,inputs,legacy,cc_output_dir="",
-  profile="paper",dest=file.path(output_dir,"prediction_report","cc_revision"),
+  profile="paper",dest=ocean_path(output_dir,"prediction_report","cc_revision"),
   expected_folds=NULL) {
   roots <- ocean_final_eiv_sources(output_dir,profile)
   if(is.null(expected_folds))expected_folds<-sort(unique(roots$fold))
@@ -2270,15 +2274,15 @@ ocean_cc_prediction_tables <- function(output_dir,inputs,legacy,cc_output_dir=""
   if(nzchar(cc_output_dir)) {
     tasks<-ocean_task_catalogue("paper");tasks<-tasks[tasks$module=="complete_case_baselines" & tasks$fold %in% expected_folds,]
     for(i in seq_len(nrow(tasks))) {
-      t<-tasks[i,];dir<-file.path(cc_output_dir,"complete_case_baselines/fits",t$task_id)
-      if(!file.exists(file.path(dir,"metrics.csv")))next
+      t<-tasks[i,];dir<-ocean_path(cc_output_dir,"complete_case_baselines/fits",t$task_id)
+      if(!file.exists(ocean_path(dir,"metrics.csv")))next
       if(!ocean_verify_receipt(cc_output_dir,t$task_id))stop("Unverified CC task: ",t$task_id)
-      design<-readRDS(file.path(dir,"design.rds"));d<-inputs$folds[[paste(t$fold,t$cell,sep="/")]]
+      design<-readRDS(ocean_path(dir,"design.rds"));d<-inputs$folds[[paste(t$fold,t$cell,sep="/")]]
       stopifnot(identical(as.character(design$training_ids),as.character(d$train$cohort_id[d$observed_train])),
         identical(as.character(design$test_ids),as.character(d$test$cohort_id[d$observed_test_mixed])),
         identical(design$protocol,"native-CC-observed-u-subset-v1"))
-      z<-read.csv(file.path(dir,"metrics.csv"));z$source_profile<-design$profile
-      status<-read.csv(file.path(dir,"package_status.csv"))
+      z<-read.csv(ocean_path(dir,"metrics.csv"));z$source_profile<-design$profile
+      status<-read.csv(ocean_path(dir,"package_status.csv"))
       z$optimization_status<-status$optimization_status[match(t$method,status$method)]
       control<-design$controls[[t$method]]
       spec<-switch(t$method,`UC-GP`=paste0("starts=",control$n_starts),
@@ -2303,9 +2307,9 @@ ocean_cc_prediction_tables <- function(output_dir,inputs,legacy,cc_output_dir=""
       sp<-z$source_profile[1]
       add(z,"CC matched subset",paste0(sub("O","",cell),"% CC: ",inputs$design$train_exact[[cell]]," rows"),
         paste0(inputs$design$test_exact[[cell]]," (x,u,c)"),sp)
-      s<-roots[roots$cell==cell & roots$fold==f,];dir<-file.path(output_dir,s$source)
-      saved<-readRDS(file.path(dir,"prediction_distributions.rds"));k<-saved$known
-      pred<-read.csv(file.path(dir,"mixed_predictions.csv"));d<-inputs$folds[[paste(f,cell,sep="/")]]
+      s<-roots[roots$cell==cell & roots$fold==f,];dir<-ocean_path(output_dir,s$source)
+      saved<-readRDS(ocean_path(dir,"prediction_distributions.rds"));k<-saved$known
+      pred<-read.csv(ocean_path(dir,"mixed_predictions.csv"));d<-inputs$folds[[paste(f,cell,sep="/")]]
       stopifnot(identical(as.logical(k),as.logical(d$observed_test_mixed)),
         identical(as.character(pred$cohort_id),as.character(d$test$cohort_id)))
       draws<-saved$mixed[,k,drop=FALSE]
@@ -2333,9 +2337,9 @@ ocean_cc_prediction_tables <- function(output_dir,inputs,legacy,cc_output_dir=""
   }
   summary<-ocean_bind(summary)
   dir.create(dest,recursive=TRUE,showWarnings=FALSE)
-  ocean_atomic_csv(raw,file.path(dest,"fold_metrics.csv"));ocean_atomic_csv(summary,file.path(dest,"summary.csv"))
+  ocean_atomic_csv(raw,ocean_path(dest,"fold_metrics.csv"));ocean_atomic_csv(summary,ocean_path(dest,"summary.csv"))
   pooled_cc<-summary[summary$scope=="CC matched subset",c("cell","method","source_profile","n_folds","fold_ids","complete_folds","N_total","RMSE_mean","RMSE_sd","pooled_RMSE")]
-  ocean_atomic_csv(pooled_cc,file.path(dest,"cc_pooled_rmse.csv"))
+  ocean_atomic_csv(pooled_cc,ocean_path(dest,"cc_pooled_rmse.csv"))
   list(raw=raw,summary=summary,cc=cc,dest=dest,pooled_cc=pooled_cc,computation_details=ocean_bind(details),expected_folds=expected_folds)
 }
 # Labels are presentation parameters; never infer fitting inputs from suffixes.
@@ -2475,17 +2479,17 @@ ocean_diag_sources <- function(output_dir) {
   ocean_diag_require(all(selected$available),"Final fits selected from current initial diagnostics are incomplete.")
   sources<-selected[,c("fold","cell","source","continued","fit_file")]
   for(i in seq_len(nrow(sources))) {
-    s<-sources[i,];path<-file.path(output_dir,s$source)
+    s<-sources[i,];path<-ocean_path(output_dir,s$source)
     for(file in c(s$fit_file,"predictive_metrics.csv","prediction_distributions.rds",
       "U_posterior_intervals.csv","convergence_summary.csv"))
-      ocean_diag_require(file.exists(file.path(path,file)),paste("Incomplete paper output:",path,file))
+      ocean_diag_require(file.exists(ocean_path(path,file)),paste("Incomplete paper output:",path,file))
   }
-  manifest <- file.path(output_dir, "continuation_plus20k", "final_review_20260927", "fit_sources.csv")
+  manifest <- ocean_path(output_dir, "continuation_plus20k", "final_review_20260927", "fit_sources.csv")
   if (file.exists(manifest)) {
     recorded <- ocean_diag_csv(manifest, c("fold", "cell", "source", "continued"))
     i <- match(paste(sources$fold, sources$cell), paste(recorded$fold, recorded$cell))
     ocean_diag_require(nrow(recorded) == 15L && !anyNA(i) &&
-      identical(sources$source, recorded$source[i]), "Final-review source manifest disagrees with the paper run.")
+      identical(sources$source, ocean_result_relative(output_dir,recorded$source[i])), "Final-review source manifest disagrees with the paper run.")
   }
   sources
 }
@@ -2521,7 +2525,7 @@ ocean_diag_u_display <- function(output_dir, inputs, sources) {
     s <- sources[i, ]; tr <- inputs$train[[s$fold]]
     observed <- switch(s$cell, O0 = rep(FALSE, nrow(tr)),
       O20 = tr$calib_o20, O50 = tr$calib_o50)
-    z <- ocean_diag_csv(file.path(output_dir, s$source, "U_posterior_intervals.csv"),
+    z <- ocean_diag_csv(ocean_path(output_dir, s$source, "U_posterior_intervals.csv"),
       c("cohort_id", "C", "posterior_mean", "q025", "q975", "scale"))
     expected_scale <- if (s$cell == "O0") "model" else "raw"
     ocean_diag_require(!anyDuplicated(z$cohort_id) &&
@@ -2568,7 +2572,7 @@ ocean_diag_u <- function(output_dir, inputs, sources) {
   points <- list()
   for (i in which(sources$cell != "O0")) {
     s <- sources[i, ]; tr <- inputs$train[[s$fold]]
-    z <- ocean_diag_csv(file.path(output_dir, s$source, "U_posterior_intervals.csv"),
+    z <- ocean_diag_csv(ocean_path(output_dir, s$source, "U_posterior_intervals.csv"),
       c("cohort_id", "C", "posterior_mean", "q025", "q975", "scale"))
     mask <- tr[[if (s$cell == "O20") "calib_o20" else "calib_o50"]]
     ocean_diag_require(!anyDuplicated(z$cohort_id) && setequal(z$cohort_id, tr$cohort_id[!mask]) &&
@@ -2654,9 +2658,9 @@ ocean_diag_point_summary <- function(draws, means, grid) {
 # 4. Package-only functional posterior calculations, cached separately per fit -
 ocean_diag_functionals <- function(i, sources, output_dir, inputs, grids, settings,
   cache_dir, overwrite) {
-  s <- sources[i, ]; path <- file.path(output_dir, s$source)
-  fit_path <- file.path(path, s$fit_file)
-  prediction_path <- file.path(path, "prediction_distributions.rds")
+  s <- sources[i, ]; path <- ocean_path(output_dir, s$source)
+  fit_path <- ocean_path(path, s$fit_file)
+  prediction_path <- ocean_path(path, "prediction_distributions.rds")
   tr <- inputs$train[[s$fold]]
   mg <- grids$m[grids$m$design == "candidate_A" | s$cell != "O0", ]
   identity <- list(version = "ocean-diagnostics-1", package = as.character(utils::packageVersion("eivGP")),
@@ -2665,9 +2669,10 @@ ocean_diag_functionals <- function(i, sources, output_dir, inputs, grids, settin
     prediction_stream_schema = if(is.null(mixedgp_budget())) 0L else 1L,
     m_grid = mg, f_grid = grids$f, settings = settings,
     code = list(body(ocean_diag_functionals), body(ocean_diag_balanced_ids), body(ocean_diag_point_summary)))
-  cache_path <- file.path(cache_dir, sprintf("fold%02d_%s.rds", s$fold, s$cell))
+  cache_path <- ocean_path(cache_dir, sprintf("fold%02d_%s.rds", s$fold, s$cell))
   if (file.exists(cache_path) && !overwrite) {
     saved <- readRDS(cache_path)
+    saved$identity$source$source <- ocean_result_relative(output_dir,saved$identity$source$source)
     ocean_diag_require(identical(saved$identity, identity),
       paste("Diagnostic cache inputs changed. Choose a new report_dir or set overwrite=TRUE:", cache_path))
     return(saved$result)
@@ -2731,13 +2736,13 @@ ocean_diag_prediction <- function(output_dir, inputs, sources) {
   metrics <- c("RMSE", "MAE", "CRPS", "NLPD", "Coverage95", "Width95", "IntervalScore95")
   rows <- masks <- list()
   for (fold in 1:5) {
-    path <- file.path(output_dir, "full5_class4", sprintf("fold%02d", fold))
-    z <- ocean_diag_csv(file.path(path, "baseline_metrics.csv"), c("fold", "cell", "method", "n_test", metrics))
+    path <- ocean_path(output_dir, "full5_class4", sprintf("fold%02d", fold))
+    z <- ocean_diag_csv(ocean_path(path, "baseline_metrics.csv"), c("fold", "cell", "method", "n_test", metrics))
     ocean_diag_require(nrow(z) == 3L && setequal(z$method, c("UC-GP", "LVGP", "EzGP")) &&
       all(z$fold == fold & z$n_test == nrow(inputs$test[[fold]])), "Unexpected baseline scores.")
     z$task <- "class_only"; z$test_exact_fraction <- 0
     rows[[length(rows) + 1L]] <- z[, c("fold", "cell", "method", "task", "test_exact_fraction", "n_test", metrics)]
-    mask <- ocean_diag_csv(file.path(path, "test_U_masks.csv"),
+    mask <- ocean_diag_csv(ocean_path(path, "test_U_masks.csv"),
       c("cohort_id", "C", "observed_U_O20", "observed_U_O50"))
     te <- inputs$test[[fold]]
     ocean_diag_require(nrow(mask) == nrow(te) && !anyDuplicated(mask$cohort_id) &&
@@ -2750,11 +2755,11 @@ ocean_diag_prediction <- function(output_dir, inputs, sources) {
     masks[[fold]] <- data.frame(fold = fold, mask)
     for (i in which(sources$fold == fold)) {
       s <- sources[i, ]
-      z <- ocean_diag_csv(file.path(output_dir, s$source, "predictive_metrics.csv"),
+      z <- ocean_diag_csv(ocean_path(output_dir, s$source, "predictive_metrics.csv"),
         c("fold", "cell", "method", "n_test", metrics))
       ocean_diag_require(nrow(z) == 2L && setequal(z$method, c("EIV-GP xc", "EIV-GP mixed")) &&
         all(z$fold == fold & z$cell == s$cell & z$n_test == nrow(inputs$test[[fold]])), "Unexpected EIV prediction scores.")
-      saved <- readRDS(file.path(output_dir, s$source, "prediction_distributions.rds"))
+      saved <- readRDS(ocean_path(output_dir, s$source, "prediction_distributions.rds"))
       known <- switch(s$cell, O0 = rep(FALSE, nrow(te)), O20 = m20, O50 = m50)
       ocean_diag_require(identical(as.logical(saved$known), known) &&
         ncol(saved$xc) == nrow(te) && ncol(saved$mixed) == nrow(te) &&
@@ -2907,8 +2912,8 @@ ocean_diag_plots <- function(u, m, f, grids, representative_fold, baseline_same_
 }
 
 # 7. Rmd entry point: postprocess and export; no fitting ------------------------
-ocean_build_diagnostics <- function(output_dir, data_dir = file.path(output_dir, "data"),
-  report_dir = file.path(output_dir, "diagnostics"), representative_fold = 1L,
+ocean_build_diagnostics <- function(output_dir, data_dir = ocean_path(output_dir, "data"),
+  report_dir = ocean_path(output_dir, "diagnostics"), representative_fold = 1L,
   overwrite = FALSE) {
   for (package in c("eivGP", "ggplot2", "patchwork"))
     ocean_diag_require(requireNamespace(package, quietly = TRUE), paste("Required package:", package))
@@ -2928,9 +2933,9 @@ ocean_build_diagnostics <- function(output_dir, data_dir = file.path(output_dir,
     mean_states_per_chain=8L,n_latent=16L,mean_gp_draws=4L,
     surface_gp_draws=2L,seed=202610080L)
   for (subdir in c("tables", "figures", "internal", "cache"))
-    dir.create(file.path(report_dir, subdir), recursive = TRUE, showWarnings = FALSE)
+    dir.create(ocean_path(report_dir, subdir), recursive = TRUE, showWarnings = FALSE)
   run_one <- function(i) ocean_diag_functionals(i, sources, output_dir, inputs, grids, settings,
-    cache_dir = file.path(report_dir, "cache"), overwrite = overwrite)
+    cache_dir = ocean_path(report_dir, "cache"), overwrite = overwrite)
   parts <- mixedgp_stage_lapply(seq_len(nrow(sources)), run_one,
     workers=max(1L,ceiling(mixedgp_budget_cores()/4L)))
   m <- do.call(rbind, lapply(parts, `[[`, "m"))
@@ -2943,14 +2948,14 @@ ocean_build_diagnostics <- function(output_dir, data_dir = file.path(output_dir,
   widths <- stats::aggregate(Width95 ~ fold + cell + C, m[m$design == "candidate_A", ], mean)
   width_summary <- ocean_diag_fold_summary(widths, c("cell", "C"), "Width95")
   diag <- lapply(seq_len(nrow(sources)), function(i) {
-    s <- sources[i, ]; d <- utils::read.csv(file.path(output_dir, s$source, "convergence_summary.csv"))
+    s <- sources[i, ]; d <- utils::read.csv(ocean_path(output_dir, s$source, "convergence_summary.csv"))
     data.frame(fold = s$fold, cell = s$cell, d)
   })
-  baseline_paths <- file.path(output_dir,"full5_class4",sprintf("fold%02d",1:5),"baseline_package_outputs.rds")
+  baseline_paths <- ocean_path(output_dir,"full5_class4",sprintf("fold%02d",1:5),"baseline_package_outputs.rds")
   baseline_same_x <- if(all(file.exists(baseline_paths)))
     ocean_baseline_mean_grid(output_dir,grids$m[grids$m$design=="same_x",]) else NULL
   plots <- ocean_diag_plots(u,m,f,grids,representative_fold,baseline_same_x)
-  write_csv <- function(x, subdir, name) utils::write.csv(x, file.path(report_dir, subdir, name), row.names = FALSE)
+  write_csv <- function(x, subdir, name) utils::write.csv(x, ocean_path(report_dir, subdir, name), row.names = FALSE)
   write_csv(u$points, "tables", "u_common_missing_points.csv")
   write_csv(u$display_points, "tables", "u_display_points.csv")
   write_csv(u$display_scales, "internal", "u_display_scales.csv")
@@ -2960,8 +2965,8 @@ ocean_build_diagnostics <- function(output_dir, data_dir = file.path(output_dir,
   write_csv(m, "tables", "m_points.csv"); write_csv(f, "tables", "f_points.csv")
   if(!is.null(baseline_same_x)) write_csv(baseline_same_x,"tables","baseline_m_same_x.csv")
   paper_u <- ocean_paper_u_tables(u$summary)
-  ocean_export_paper_table(paper_u$main,"paper_u_imputation_main","Oxygen imputation: common masked training profiles",file.path(report_dir,"tables"),paper_u$note)
-  ocean_export_paper_table(paper_u$class,"paper_u_imputation_class","Class-specific oxygen imputation",file.path(report_dir,"tables"),paper_u$note)
+  ocean_export_paper_table(paper_u$main,"paper_u_imputation_main","Oxygen imputation: common masked training profiles",ocean_path(report_dir,"tables"),paper_u$note)
+  ocean_export_paper_table(paper_u$class,"paper_u_imputation_class","Class-specific oxygen imputation",ocean_path(report_dir,"tables"),paper_u$note)
   write_csv(prediction$fold_metrics_raw, "tables", "y_prediction_fold_raw.csv")
   write_csv(prediction$fold_metrics_SD_Y, "tables", "y_prediction_fold_SD_Y.csv")
   write_csv(prediction$summary_raw, "tables", "y_prediction_summary_raw.csv")
@@ -2979,20 +2984,20 @@ ocean_build_diagnostics <- function(output_dir, data_dir = file.path(output_dir,
   write_csv(do.call(rbind, diag), "internal", "mcmc_existing_summary.csv")
   dimensions <- list(u_main = c(13.2, 5.2), m_main = c(10, 7), fm_main = c(11, 4.9),
     u_all_folds = c(13.2, 14.5), m_all_folds = c(13, 13), fm_all_folds = c(11, 14))
-  mixedgp_save_plot_jobs(plots,file.path(report_dir,"figures"),function(name)dimensions[[name]])
+  mixedgp_save_plot_jobs(plots,ocean_path(report_dir,"figures"),function(name)dimensions[[name]])
   provenance <- list(settings = settings, representative_fold = representative_fold,
-    package = as.character(utils::packageVersion("eivGP")), upstream_commit = if(file.exists(file.path(output_dir,"workflow_identity.rds"))) readRDS(file.path(output_dir,"workflow_identity.rds"))$upstream_commit else NA_character_,
-    input_hashes = tools::md5sum(file.path(data_dir, c("cohort_manifest.csv",
+    package = as.character(utils::packageVersion("eivGP")), upstream_commit = if(file.exists(ocean_path(output_dir,"workflow_identity.rds"))) readRDS(ocean_path(output_dir,"workflow_identity.rds"))$upstream_commit else NA_character_,
+    input_hashes = tools::md5sum(ocean_path(data_dir, c("cohort_manifest.csv",
       sprintf("fold%02d_train.csv", 1:5), sprintf("fold%02d_test.csv", 1:5)))),
     source_hashes = lapply(seq_len(nrow(sources)), function(i) {
       s <- sources[i, ]
-      tools::md5sum(file.path(output_dir, s$source, c(s$fit_file,
+      tools::md5sum(ocean_path(output_dir, s$source, c(s$fit_file,
         "prediction_distributions.rds", "predictive_metrics.csv", "U_posterior_intervals.csv")))
     }),
     draw_ids = lapply(parts, `[[`, "draw_ids"), SD_Y = prediction$SD_Y,
     main_targets = c("training U imputation", "m(x,c)", "f(x,u) and same-X m(x,c)", "held-out Y prediction"))
-  saveRDS(provenance, file.path(report_dir, "internal", "provenance.rds"))
-  capture.output(utils::sessionInfo(), file = file.path(report_dir, "internal", "sessionInfo.txt"))
+  saveRDS(provenance, ocean_path(report_dir, "internal", "provenance.rds"))
+  capture.output(utils::sessionInfo(), file = ocean_path(report_dir, "internal", "sessionInfo.txt"))
   invisible(list(u = u, m = m, f = f, prediction = prediction, grids = grids, plots = plots, baseline_same_x=baseline_same_x,
     integration_check = checks, sources = sources, report_dir = report_dir, provenance = provenance))
 }
@@ -3028,7 +3033,7 @@ ocean_native_mean <- function(method,fit,grid) {
 ocean_baseline_mean_grid <- function(output_dir,grid,folds=1:5) {
   out <- list()
   for(fold in folds) {
-    saved <- readRDS(file.path(output_dir,"full5_class4",sprintf("fold%02d",fold),"baseline_package_outputs.rds"))
+    saved <- readRDS(ocean_path(output_dir,"full5_class4",sprintf("fold%02d",fold),"baseline_package_outputs.rds"))
     for(method in c("UC-GP","LVGP","EzGP")) {
       mean <- ocean_native_mean(method,saved$fits[[method]],grid)
       stopifnot(length(mean)==nrow(grid),all(is.finite(mean)))
@@ -3106,11 +3111,11 @@ ocean_surface_point_roles <- function(d,train) {
 }
 
 # Descriptive data analysis: measured nearby responses provide data context.
-ocean_surface_report <- function(output_dir,data_dir,diagnostics_dir=file.path(output_dir,"diagnostics"),
+ocean_surface_report <- function(output_dir,data_dir,diagnostics_dir=ocean_path(output_dir,"diagnostics"),
   representative_fold=1L,folds=1:5) {
   inputs <- ocean_diag_inputs(data_dir); grids <- ocean_diag_grids(inputs$cohort)
-  m <- read.csv(file.path(diagnostics_dir,"tables/m_points.csv"))
-  f <- read.csv(file.path(diagnostics_dir,"tables/f_points.csv"))
+  m <- read.csv(ocean_path(diagnostics_dir,"tables/m_points.csv"))
+  f <- read.csv(ocean_path(diagnostics_dir,"tables/f_points.csv"))
   baseline_all <- ocean_baseline_mean_grid(output_dir,grids$m,folds)
   baseline <- baseline_all[baseline_all$design=="candidate_A",]
   baseline_same <- baseline_all[baseline_all$design=="same_x",]
@@ -3177,12 +3182,12 @@ ocean_surface_report <- function(output_dir,data_dir,diagnostics_dir=file.path(o
   }
   plots <- list(m_comparison=plot_m(),f_with_observations=plot_f(),
     m_comparison_all_folds=plot_m(TRUE),f_with_observations_all_folds=plot_f(TRUE))
-  dest <- file.path(diagnostics_dir,"surface_comparison")
-  ocean_atomic_csv(baseline,file.path(dest,"baseline_m_points.csv"))
-  ocean_atomic_csv(baseline_same,file.path(dest,"baseline_m_same_x.csv"))
-  ocean_atomic_csv(points_m,file.path(dest,"nearby_m_observations.csv"))
-  ocean_atomic_csv(selected_m,file.path(dest,"m_selection_audit.csv"))
-  ocean_atomic_csv(points_f,file.path(dest,"nearby_f_observations.csv"))
+  dest <- ocean_path(diagnostics_dir,"surface_comparison")
+  ocean_atomic_csv(baseline,ocean_path(dest,"baseline_m_points.csv"))
+  ocean_atomic_csv(baseline_same,ocean_path(dest,"baseline_m_same_x.csv"))
+  ocean_atomic_csv(points_m,ocean_path(dest,"nearby_m_observations.csv"))
+  ocean_atomic_csv(selected_m,ocean_path(dest,"m_selection_audit.csv"))
+  ocean_atomic_csv(points_f,ocean_path(dest,"nearby_f_observations.csv"))
   mixedgp_save_plot_jobs(plots,dest,function(n)c(
     if(grepl("fm_",n)||grepl("m_comparison",n))11 else 10,
     if(grepl("all_folds",n))13 else if(grepl("fm_",n))4.9 else 7))
@@ -3193,7 +3198,7 @@ ocean_surface_report <- function(output_dir,data_dir,diagnostics_dir=file.path(o
 # No fitting routine is called. Optional copied caches retain their full identity
 # checks inside ocean_build_diagnostics; changed fits/settings are rejected.
 ocean_run_diagnostics <- function(output_dir,data_dir,
-  report_dir=file.path(output_dir,"diagnostics"),
+  report_dir=ocean_path(output_dir,"diagnostics"),
   representative_fold=1L,cache_from="",
   build_prediction=TRUE,build_surfaces=TRUE,prediction_report=NULL) {
   for(p in c("eivGP","ggplot2","patchwork","digest"))
@@ -3205,16 +3210,16 @@ ocean_run_diagnostics <- function(output_dir,data_dir,
   progress <- function(stage) ocean_atomic_lines(c(paste("stage:",stage),
     paste("updated:",format(Sys.time(),"%Y-%m-%d %H:%M:%S %z")),
     paste("pid:",Sys.getpid()),"Postprocessing saved fits only; no MCMC or baseline refit."),
-    file.path(report_dir,"PROGRESS.txt"))
+    ocean_path(report_dir,"PROGRESS.txt"))
   progress("input and source audit")
   inputs <- ocean_prepare_inputs(data_dir)
   sources <- ocean_diag_sources(output_dir)
   copied <- character()
   if(nzchar(cache_from)) {
     from <- normalizePath(cache_from,mustWork=TRUE)
-    dir.create(file.path(report_dir,"cache"),showWarnings=FALSE)
+    dir.create(ocean_path(report_dir,"cache"),showWarnings=FALSE)
     for(n in sprintf("fold%02d_%s.rds",sources$fold,sources$cell)) {
-      source <- file.path(from,n); target <- file.path(report_dir,"cache",n)
+      source <- ocean_path(from,n); target <- ocean_path(report_dir,"cache",n)
       if(file.exists(source) && !file.exists(target)) {
         stopifnot(file.copy(source,target)); copied <- c(copied,n)
       }
@@ -3227,10 +3232,10 @@ ocean_run_diagnostics <- function(output_dir,data_dir,
   if(build_prediction) {
     progress("saved response prediction summaries")
     prediction <- ocean_prediction_report(output_dir,inputs,
-      report_dir=file.path(report_dir,"prediction"))
+      report_dir=ocean_path(report_dir,"prediction"))
   }
   if(!build_prediction && !is.null(prediction))
-    ocean_export_prediction_report(prediction,file.path(report_dir,"prediction"))
+    ocean_export_prediction_report(prediction,ocean_path(report_dir,"prediction"))
   if(build_surfaces) {
     progress("native baseline m comparison and nearby measured-profile overlays")
     surfaces <- ocean_surface_report(output_dir,data_dir,report_dir,
@@ -3239,15 +3244,15 @@ ocean_run_diagnostics <- function(output_dir,data_dir,
   main <- c("U imputation (O0/O20/O50, hollow calibration)"="figures/u_main.png",
     "m: native baselines and pressure-balanced nearby profiles"="surface_comparison/m_comparison.png",
     "f: S=34.25, P=650, measured nearby profiles"="surface_comparison/f_with_observations.png")
-  main <- main[file.exists(file.path(report_dir,main))]
+  main <- main[file.exists(ocean_path(report_dir,main))]
   ut <- ocean_paper_u_tables(diagnostics$u$summary)
-  ocean_atomic_lines(c("# Ocean diagnostics review","",ocean_table_html(ut$main,"Training oxygen imputation",ut$note)),file.path(report_dir,"INDEX.md"))
+  ocean_atomic_lines(c("# Ocean diagnostics review","",ocean_table_html(ut$main,"Training oxygen imputation",ut$note)),ocean_path(report_dir,"INDEX.md"))
   ocean_atomic_lines(c('<!doctype html><meta charset="utf-8"><title>Ocean diagnostics</title>',
-    ocean_table_html(ut$main,"Training oxygen imputation",ut$note)),file.path(report_dir,"preview.html"))
+    ocean_table_html(ut$main,"Training oxygen imputation",ut$note)),ocean_path(report_dir,"preview.html"))
   saveRDS(list(diagnostic_plots=diagnostics$plots,surface_plots=if(!is.null(surfaces))surfaces$plots else NULL,
-    prediction_plots=if(!is.null(prediction))prediction$plots else NULL,u_tables=ut),file.path(report_dir,"internal/presentation_plots.rds"))
+    prediction_plots=if(!is.null(prediction))prediction$plots else NULL,u_tables=ut),ocean_path(report_dir,"internal/presentation_plots.rds"))
   saveRDS(list(source_fit_root=output_dir,report_dir=report_dir,representative_fold=representative_fold,
-    no_refit=TRUE,time=as.character(Sys.time())),file.path(report_dir,"internal/review_run.rds"))
+    no_refit=TRUE,time=as.character(Sys.time())),ocean_path(report_dir,"internal/review_run.rds"))
   progress("COMPLETE")
   invisible(list(diagnostics=diagnostics,prediction=prediction,surfaces=surfaces,report_dir=report_dir))
 }
@@ -3256,17 +3261,17 @@ ocean_run_diagnostics <- function(output_dir,data_dir,
 # Source this file from Rmd/R without executing the CLI below.
 # Compact saved-result checks, separate from fitting and function caches.
 ocean_refinement_review <- function(output_dir, inputs, diagnostics,
-  dest=file.path(output_dir,"diagnostics","refinement")) {
+  dest=ocean_path(output_dir,"diagnostics","refinement")) {
   if(is.null(diagnostics)) return(NULL)
   sources <- ocean_final_eiv_sources(output_dir,ocean_saved_profile(output_dir))
   stopifnot(all(sources$available))
   signature <- list(schema=3L,sources=sources,
     files=lapply(seq_len(nrow(sources)),function(i) {
-      p<-file.path(output_dir,sources$source[i])
-      list(diag=unname(tools::md5sum(file.path(p,"convergence_parameters.csv"))),
-        fit=file.info(file.path(p,sources$fit_file[i]))[,c("size","mtime")])
+      p<-ocean_path(output_dir,sources$source[i])
+      list(diag=unname(tools::md5sum(ocean_path(p,"convergence_parameters.csv"))),
+        fit=file.info(ocean_path(p,sources$fit_file[i]))[,c("size","mtime")])
     }),code=body(ocean_refinement_review))
-  cached <- file.path(dest,"saved_chain_review.rds")
+  cached <- ocean_path(dest,"saved_chain_review.rds")
   if(file.exists(cached)) {
     old<-readRDS(cached)
     if(identical(old$signature,signature)) return(old$result)
@@ -3281,7 +3286,7 @@ ocean_refinement_review <- function(output_dir, inputs, diagnostics,
   summary <- exceptions <- list(); tables<-list()
   finite <- function(x,fun) {x<-x[is.finite(x)];if(length(x))fun(x) else NA_real_}
   for(i in seq_len(nrow(sources))) {
-    s<-sources[i,];z<-read.csv(file.path(output_dir,s$source,"convergence_parameters.csv"))
+    s<-sources[i,];z<-read.csv(ocean_path(output_dir,s$source,"convergence_parameters.csv"))
     tables[[i]]<-z
     summary[[i]]<-data.frame(fold=s$fold,cell=s$cell,stage=if(s$continued)ocean_continuation_label(output_dir) else "Initial",
       max_finite_Rhat=finite(z$rhat,max),min_finite_bulk_ESS=finite(z$ess_bulk,min),
@@ -3298,7 +3303,7 @@ ocean_refinement_review <- function(output_dir, inputs, diagnostics,
     bad<-z[!is.finite(z$rhat) | !is.finite(z$ess_bulk) | !is.finite(z$ess_tail),]
     if(!nrow(bad) && i!=selected && i!=trace_selected) next
     cat(sprintf("Reviewing saved chains: fold %d / %s\n",s$fold,s$cell))
-    fit<-readRDS(file.path(output_dir,s$source,s$fit_file));by<-fit$mcmc$samples_by_chain
+    fit<-readRDS(ocean_path(output_dir,s$source,s$fit_file));by<-fit$mcmc$samples_by_chain
     for(j in seq_len(nrow(bad))) {
       name<-bad$parameter[j]
       if(grepl("^dictionary_occupancy",name)) {
@@ -3360,9 +3365,9 @@ ocean_refinement_review <- function(output_dir, inputs, diagnostics,
     precision=precision,trace=trace_plot,selected=sources[selected,],
     trace_selected=sources[trace_selected,],trace_parameters=trace_parameters)
   dir.create(dest,recursive=TRUE,showWarnings=FALSE)
-  for(n in c("support","mcmc","exceptions","precision")) ocean_atomic_csv(result[[n]],file.path(dest,paste0(n,".csv")))
-  ggplot2::ggsave(file.path(dest,"selected_trace.png"),trace_plot,width=11,height=7.5,dpi=160)
-  ggplot2::ggsave(file.path(dest,"selected_trace.pdf"),trace_plot,width=11,height=7.5)
+  for(n in c("support","mcmc","exceptions","precision")) ocean_atomic_csv(result[[n]],ocean_path(dest,paste0(n,".csv")))
+  ggplot2::ggsave(ocean_path(dest,"selected_trace.png"),trace_plot,width=11,height=7.5,dpi=160)
+  ggplot2::ggsave(ocean_path(dest,"selected_trace.pdf"),trace_plot,width=11,height=7.5)
   saveRDS(list(signature=signature,result=result),cached)
   result
 }
@@ -3395,22 +3400,22 @@ ocean_design_review <- function(inputs) {
 # Class-specific marginal imputed-U distributions, a supplement to individual
 # interval calibration. Equal weight per common-hidden training profile.
 ocean_u_distribution_report <- function(output_dir,inputs,representative_fold=1L,
-  dest=file.path(output_dir,"diagnostics","u_distributions")) {
+  dest=ocean_path(output_dir,"diagnostics","u_distributions")) {
   sources<-ocean_final_eiv_sources(output_dir,ocean_saved_profile(output_dir))
   sources<-sources[sources$fold==representative_fold,]
   if(nrow(sources)!=3L || !all(sources$available))return(NULL)
   tr<-inputs$folds[[paste(representative_fold,"O50",sep="/")]]$train
   ids<-which(!tr$calib_o50);stopifnot(length(ids)==sum(!tr$calib_o50),all(!tr$calib_o20[ids]))
-  files<-file.path(output_dir,sources$source,sources$fit_file)
+  files<-ocean_path(output_dir,sources$source,sources$fit_file)
   signature<-list(schema=1L,sources=sources,files=file.info(files)[,c("size","mtime")],
     ids=tr$cohort_id[ids],reference=tr$U[ids],classes=tr$C[ids],draws_per_chain=1000L)
-  dir.create(dest,recursive=TRUE,showWarnings=FALSE);cache<-file.path(dest,"posterior_inputs.rds")
+  dir.create(dest,recursive=TRUE,showWarnings=FALSE);cache<-ocean_path(dest,"posterior_inputs.rds")
   if(file.exists(cache) && identical(readRDS(cache)$signature,signature)) {
     object<-readRDS(cache)$object
   } else {
     object<-list()
     for(cell in c("O0","O20","O50")) {
-      s<-sources[sources$cell==cell,];fit<-readRDS(file.path(output_dir,s$source,s$fit_file))
+      s<-sources[sources$cell==cell,];fit<-readRDS(ocean_path(output_dir,s$source,s$fit_file))
       draw<-do.call(rbind,lapply(fit$mcmc$samples_by_chain$u,function(u) {
         idx<-unique(round(seq(1,nrow(u),length.out=min(1000L,nrow(u)))))
         as.matrix(u)[idx,ids,drop=FALSE]
@@ -3470,12 +3475,12 @@ ocean_u_distribution_report <- function(output_dir,inputs,representative_fold=1L
     title=paste0("Class-specific imputed-U distributions | fold ",representative_fold),
     subtitle="Solid: equally weighted individual posteriors. Gray histogram/rug: the same measured references within each class.",
     caption="Same common-hidden profiles in each c. O0 has no raw-U overlay.\nO20/O50 share bins, posterior KDE bandwidths and axes within class; marginal spread is not individual uncertainty alone.")
-  ocean_atomic_csv(do.call(rbind,curves),file.path(dest,"density_curves.csv"))
-  ocean_atomic_csv(do.call(rbind,histograms),file.path(dest,"reference_histograms.csv"))
-  ocean_atomic_csv(tr[ids,c("cohort_id","C","U")],file.path(dest,"reference_profiles.csv"))
+  ocean_atomic_csv(do.call(rbind,curves),ocean_path(dest,"density_curves.csv"))
+  ocean_atomic_csv(do.call(rbind,histograms),ocean_path(dest,"reference_histograms.csv"))
+  ocean_atomic_csv(tr[ids,c("cohort_id","C","U")],ocean_path(dest,"reference_profiles.csv"))
   for(ext in c("png","pdf")) {
-    ggplot2::ggsave(file.path(dest,paste0("class_specific.",ext)),p,width=12,height=11,dpi=160)
-    ggplot2::ggsave(file.path(dest,paste0("overall.",ext)),pooled,width=12,height=4.5,dpi=160)
+    ggplot2::ggsave(ocean_path(dest,paste0("class_specific.",ext)),p,width=12,height=11,dpi=160)
+    ggplot2::ggsave(ocean_path(dest,paste0("overall.",ext)),pooled,width=12,height=4.5,dpi=160)
   }
   list(plot=p,pooled_plot=pooled,source=sources,common_ids=tr$cohort_id[ids],dest=dest)
 }

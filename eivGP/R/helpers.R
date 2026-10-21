@@ -11216,10 +11216,10 @@ ocean_continuation_policy <- function(profile="paper",n_iter=NULL) {
 # Keep historical checkpoint paths stable; record the actual budget separately.
 ocean_continuation_iterations <- function(output_dir,profile="paper",fold,cell,
   requested=NULL,register=FALSE) {
-  path<-file.path(output_dir,"continuation_plus20k",sprintf("fold%02d",fold),cell,
+  path<-ocean_path(output_dir,"continuation_plus20k",sprintf("fold%02d",fold),cell,
     "continuation_settings.rds")
   saved<-if(file.exists(path))readRDS(path)$n_iter else NULL
-  if(is.null(saved) && file.exists(file.path(dirname(path),"fit_plus20k.rds")))
+  if(is.null(saved) && file.exists(ocean_path(dirname(path),"fit_plus20k.rds")))
     saved<-ocean_continuation_policy(profile)$n_iter # Legacy fixed-budget outputs.
   if(!is.null(saved))saved<-ocean_continuation_policy(profile,saved)$n_iter
   if(register && !is.null(saved) && !is.null(requested) && saved!=requested)
@@ -11232,7 +11232,7 @@ ocean_continuation_iterations <- function(output_dir,profile="paper",fold,cell,
 }
 
 ocean_continuation_lengths <- function(output_dir,profile=ocean_saved_profile(output_dir)) {
-  paths<-list.files(file.path(output_dir,"continuation_plus20k"),
+  paths<-list.files(if(ocean_storage_flat(output_dir))output_dir else ocean_path(output_dir,"continuation_plus20k"),
     "^continuation_settings[.]rds$",recursive=TRUE,full.names=TRUE)
   if(!length(paths))return(ocean_continuation_policy(profile)$n_iter)
   sort(unique(vapply(paths,function(path)
@@ -11257,28 +11257,30 @@ ocean_read_screen <- function(path) {
 ocean_continuation_decisions <- function(output_dir,profile="paper",write=FALSE,continuation_iter=NULL) {
   rows<-list()
   for(f in if(profile!="quick")1:5 else 1L) for(cell in if(profile!="quick")c("O0","O20","O50") else c("O0","O20","O50")) {
-    path<-file.path(if(profile!="quick")"full5_class4" else "smoke_class4",sprintf("fold%02d",f),cell,"convergence_parameters.csv")
-    screen<-ocean_read_screen(file.path(output_dir,path))
+    path<-ocean_path(if(profile!="quick")"full5_class4" else "smoke_class4",sprintf("fold%02d",f),cell,"convergence_parameters.csv")
+    path<-ocean_result_relative(output_dir,path)
+    screen<-ocean_read_screen(ocean_path(output_dir,path))
     needs<-if(profile=="quick")FALSE else if(screen$ready)!screen$screen_pass else NA
     rows[[length(rows)+1L]]<-cbind(data.frame(fold=f,cell,initial_diagnostics=path),screen,
       needs_continuation=needs,decision=if(is.na(needs))"awaiting_initial" else if(needs)paste0("append_",ocean_continuation_iterations(output_dir,profile,f,cell,continuation_iter)) else "keep_initial")
   }
   d<-do.call(rbind,rows)
-  if(write)ocean_atomic_csv(d,file.path(output_dir,"continuation_decisions.csv"))
+  if(write)ocean_atomic_csv(d,ocean_path(output_dir,"continuation_decisions.csv"))
   d
 }
 
 ocean_final_eiv_sources <- function(output_dir,profile="paper") {
   decisions<-ocean_continuation_decisions(output_dir,profile)
   rows<-lapply(seq_len(nrow(decisions)),function(i) {
-    d<-decisions[i,];continued<-file.exists(file.path(output_dir,"continuation_plus20k",
+    d<-decisions[i,];continued<-file.exists(ocean_path(output_dir,"continuation_plus20k",
       sprintf("fold%02d",d$fold),d$cell,"fit_plus20k.rds"))
-    source<-file.path(if(continued)"continuation_plus20k" else if(profile!="quick")"full5_class4" else "smoke_class4",
+    source<-ocean_path(if(continued)"continuation_plus20k" else if(profile!="quick")"full5_class4" else "smoke_class4",
       sprintf("fold%02d",d$fold),d$cell)
-    final<-ocean_read_screen(file.path(output_dir,source,"convergence_parameters.csv"))
+    source<-ocean_result_relative(output_dir,source)
+    final<-ocean_read_screen(ocean_path(output_dir,source,"convergence_parameters.csv"))
     data.frame(fold=d$fold,cell=d$cell,source,continued,
       fit_file=if(continued)"fit_plus20k.rds" else "fit.rds",
-      available=d$ready && file.exists(file.path(output_dir,source,"predictive_metrics.csv")),
+      available=d$ready && file.exists(ocean_path(output_dir,source,"predictive_metrics.csv")),
       initial_screen_pass=d$screen_pass,final_screen_pass=final$screen_pass)
   })
   do.call(rbind,rows)
@@ -11306,7 +11308,7 @@ ocean_resolve_path <- function(path,repository_dir) {
   path <- path.expand(as.character(path))
   if(!length(path)) return(character())
   absolute <- grepl("^(/|[A-Za-z]:[/\\\\]|\\\\\\\\)",path)
-  ifelse(absolute,path,file.path(repository_dir,path))
+  ifelse(absolute,path,ocean_path(repository_dir,path))
 }
 
 # Frozen design and test masks. This never draws a new cohort or calibration set.
@@ -11322,7 +11324,7 @@ ocean_test_masks <- function(test,fold) {
     observed_U_O50=k50,mask_seed=202609260L+fold)
 }
 ocean_read_inputs <- function(data_dir) {
-  cohort<-read.csv(file.path(data_dir,"cohort_manifest.csv"))
+  cohort<-read.csv(ocean_path(data_dir,"cohort_manifest.csv"))
   stopifnot(nrow(cohort)%in%c(200L,500L,1000L),!anyDuplicated(cohort$profile),!anyDuplicated(cohort$cohort_id))
   cohort$C<-findInterval(cohort$U,c(50,100,150))+1L
   cohort$oxygen_class<-factor(cohort$C,levels=1:4,labels=c("<50","50-100","100-150","150-180"))
@@ -11333,8 +11335,8 @@ ocean_prepare_inputs <- function(data_dir) {
   stopifnot(all(table(factor(cohort$C,levels=1:4))==N/4))
   folds<-list();held<-character();audit<-list()
   for(f in 1:5) {
-    tr<-read.csv(file.path(data_dir,sprintf("fold%02d_train.csv",f)))
-    te<-read.csv(file.path(data_dir,sprintf("fold%02d_test.csv",f)))
+    tr<-read.csv(ocean_path(data_dir,sprintf("fold%02d_train.csv",f)))
+    te<-read.csv(ocean_path(data_dir,sprintf("fold%02d_test.csv",f)))
     tr$C<-findInterval(tr$U,c(50,100,150))+1L;te$C<-findInterval(te$U,c(50,100,150))+1L
     tr$calib_o20<-ocean_diag_flag(tr$calib_o20);tr$calib_o50<-ocean_diag_flag(tr$calib_o50)
     stopifnot(nrow(tr)==ntrain,nrow(te)==ntest,!length(intersect(tr$profile,te$profile)),
@@ -11350,7 +11352,7 @@ ocean_prepare_inputs <- function(data_dir) {
         all(is.finite(as.matrix(d[,columns[3:7]]))),all(d$U>0 & d$U<180),
         all(d$G2pressure>=300 & d$G2pressure<=1500),max(abs(d$log_pressure-log(d$G2pressure)))<1e-10)
     }
-    masks<-ocean_test_masks(te,f);saved<-file.path(data_dir,sprintf("fold%02d_test_U_masks.csv",f))
+    masks<-ocean_test_masks(te,f);saved<-ocean_path(data_dir,sprintf("fold%02d_test_U_masks.csv",f))
     stopifnot(file.exists(saved),isTRUE(all.equal(read.csv(saved),masks,check.attributes=FALSE)),
       sum(masks$observed_U_O20)==.2*ntest,sum(masks$observed_U_O50)==.5*ntest)
     for(cell in c("O20","O50")) {
@@ -11417,31 +11419,31 @@ ocean_assert_identity <- function(saved,current,output_dir) {
 
 ocean_task_files <- function(task,profile="paper",stage="analyze") {
   if(stage %in% c("fit","continue") && task$module %in% c("eiv","continuation")) {
-    sub<-file.path(if(task$module=="continuation")"continuation_plus20k" else
+    sub<-ocean_path(if(task$module=="continuation")"continuation_plus20k" else
       if(profile=="quick")"smoke_class4" else "full5_class4",sprintf("fold%02d",task$fold),task$cell)
-    return(file.path(sub,c(if(task$module=="continuation")"fit_plus20k.rds" else "fit.rds",
+    return(ocean_path(sub,c(if(task$module=="continuation")"fit_plus20k.rds" else "fit.rds",
       "convergence_parameters.csv","convergence_summary.csv",
       if(task$module=="continuation")"continuation_settings.rds")))
   }
   initial <- if(profile!="quick") "full5_class4" else "smoke_class4"
-  if(task$module=="original_baselines") return(file.path(initial,sprintf("fold%02d",task$fold),
+  if(task$module=="original_baselines") return(ocean_path(initial,sprintf("fold%02d",task$fold),
     c("baseline_metrics.csv","baseline_package_outputs.rds","baseline_status.csv","baseline_predictions.csv")))
-  if(task$module=="complete_case_baselines") return(file.path("complete_case_baselines/fits",task$task_id,
+  if(task$module=="complete_case_baselines") return(ocean_path("complete_case_baselines/fits",task$task_id,
     c("package_output.rds","metrics.csv","predictions.csv","package_status.csv","design.rds")))
-  sub <- file.path(if(task$module=="continuation") "continuation_plus20k" else initial,
+  sub <- ocean_path(if(task$module=="continuation") "continuation_plus20k" else initial,
     sprintf("fold%02d",task$fold),task$cell)
-  file.path(sub,c(if(task$module=="continuation") "fit_plus20k.rds" else "fit.rds",
+  ocean_path(sub,c(if(task$module=="continuation") "fit_plus20k.rds" else "fit.rds",
     "metrics.csv","predictive_metrics.csv","predictions.csv","mixed_predictions.csv",
     "prediction_distributions.rds","U_posterior_intervals.csv","convergence_parameters.csv",
     "convergence_summary.csv",if(task$module=="continuation")"continuation_settings.rds",
     if(task$cell=="O0") "imputations_model_scale.csv" else "imputations.csv"))
 }
 ocean_verify_receipt <- function(output_dir,id,identity=NULL) {
-  path <- file.path(output_dir,"workflow_tasks",paste0(id,".done.rds"))
+  path <- ocean_path(output_dir,"workflow_tasks",paste0(id,".done.rds"))
   if(!file.exists(path)) return(FALSE)
   receipt <- readRDS(path)
   if(!is.null(identity) && !identical(receipt$identity,identity)) stop("Task identity mismatch: ",id)
-  files <- file.path(output_dir,receipt$files)
+  files <- ocean_path(output_dir,receipt$files)
   if(!all(file.exists(files)) || !identical(ocean_hashes(files),receipt$hashes))
     stop("Incomplete or changed completed task: ",id)
   TRUE
@@ -11452,7 +11454,7 @@ ocean_run_task <- function(task,repository_dir,output_dir,settings,inputs,identi
   env <- new.env(parent=environment())
   env$root <- output_dir; env$smoke <- settings$profile=="quick"
   env$stage <- settings$action
-  env$out <- file.path(output_dir,if(env$smoke) "smoke_class4" else "full5_class4")
+  env$out <- ocean_path(output_dir,if(env$smoke) "smoke_class4" else "full5_class4")
   env$iter <- settings$iter; env$burn <- settings$burn; env$chains <- settings$chains
   env$cores <- if(env$smoke) 1L else settings$cores; env$u_block <- 8L
   env$baseline_controls <- ocean_cc_controls(settings$profile)
@@ -11465,15 +11467,15 @@ ocean_run_task <- function(task,repository_dir,output_dir,settings,inputs,identi
     ocean_run_complete_case(task,output_dir,settings,inputs)
   } else if(task$module %in% c("eiv","original_baselines")) {
     ocean_initial_functions(env)
-    d <- env$read_fold(task$fold); fold_out <- file.path(env$out,sprintf("fold%02d",task$fold))
+    d <- env$read_fold(task$fold); fold_out <- ocean_path(env$out,sprintf("fold%02d",task$fold))
     dir.create(fold_out,recursive=TRUE,showWarnings=FALSE)
     if(task$module=="eiv") env$run_eiv(task$fold,task$cell,d$train,d$test,fold_out)
     else env$run_baselines(task$fold,d$train,d$test,fold_out)
   } else if(task$module=="continuation") {
     dependency <- sprintf("fit_eiv_fold%02d_%s",task$fold,task$cell)
     if(!ocean_verify_receipt(output_dir,dependency,identity)) stop("Missing initial task: ",dependency)
-    env$out <- file.path(output_dir,"continuation_plus20k")
-    env$original_path <- function(fold,cell) file.path(output_dir,"full5_class4",sprintf("fold%02d",fold),cell,"fit.rds")
+    env$out <- ocean_path(output_dir,"continuation_plus20k")
+    env$original_path <- function(fold,cell) ocean_path(output_dir,"full5_class4",sprintf("fold%02d",fold),cell,"fit.rds")
     ocean_continuation_functions(env); env$run_one(task$fold,task$cell)
   } else stop("Unknown application task module: ",task$module)
   invisible(NULL)
@@ -11535,13 +11537,15 @@ ocean_job_dir <- function(output_dir,run_id) {
      run_id %in% c("data","full5_class4","smoke_class4","prediction","diagnostics",
                    "continuation_plus20k","figures","receipts"))
     stop("Choose a distinct execution run_id, such as paper_fit.")
-  legacy <- file.path(output_dir,"jobs",run_id)
-  if(dir.exists(legacy))legacy else file.path(output_dir,run_id)
+  if(ocean_storage_flat(output_dir))return(ocean_path(output_dir,"logs",run_id))
+  legacy <- ocean_path(output_dir,"jobs",run_id)
+  if(dir.exists(legacy))legacy else ocean_path(output_dir,run_id)
 }
 
 # Unified entry; report never invokes a fit. All cached computations are validated.
 ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
   import_dirs=character()) {
+  if(settings$action=="fit")ocean_storage_init(output_dir)
   release_budget <- mixedgp_budget_enter(settings$cores)
   on.exit(release_budget(),add=TRUE)
   settings$cores <- mixedgp_budget_cores()
@@ -11558,30 +11562,30 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
     suppressPackageStartupMessages(library(eivGP))
     identity <- ocean_identity(repository_dir,data_dir,settings)
     dir.create(output_dir,recursive=TRUE,showWarnings=FALSE)
-    lock <- file.path(output_dir,".workflow.lock")
+    lock <- ocean_path(output_dir,".workflow.lock")
     if(!dir.create(lock,showWarnings=FALSE)) stop("Output directory is locked: ",lock,
       ". Confirm the previous process has stopped before removing a stale lock.")
     on.exit(unlink(lock,recursive=TRUE),add=TRUE)
-    idfile <- file.path(output_dir,"workflow_identity.rds")
+    idfile <- ocean_path(output_dir,"workflow_identity.rds")
     if(file.exists(idfile)) {
       ocean_assert_identity(readRDS(idfile),identity,output_dir)
     } else {
-      if(length(setdiff(list.files(output_dir,all.files=TRUE,no..=TRUE),c(".workflow.lock","jobs",basename(ocean_job_dir(output_dir,settings$run_id))))))
+      if(length(setdiff(list.files(output_dir,all.files=TRUE,no..=TRUE),c(".workflow.lock","jobs","_meta","logs",basename(ocean_job_dir(output_dir,settings$run_id))))))
         stop("Existing outputs lack distributed provenance. Read them with action=report, or use a fresh directory.")
       ocean_atomic_rds(identity,idfile)
     }
-    dir.create(file.path(output_dir,"data"),showWarnings=FALSE)
+    dir.create(ocean_path(output_dir,"data"),showWarnings=FALSE)
     csv <- list.files(data_dir,"[.]csv$",full.names=TRUE)
     for(f in csv) {
-      to <- file.path(output_dir,"data",basename(f))
+      to <- ocean_path(output_dir,"data",basename(f))
       if(file.exists(to)) stopifnot(identical(ocean_hashes(f),ocean_hashes(to))) else stopifnot(file.copy(f,to))
     }
     for(f in 1:5) {
-      path <- file.path(output_dir,if(settings$profile!="quick") "full5_class4" else "smoke_class4",sprintf("fold%02d",f),"test_U_masks.csv")
+      path <- ocean_path(output_dir,if(settings$profile!="quick") "full5_class4" else "smoke_class4",sprintf("fold%02d",f),"test_U_masks.csv")
       ocean_atomic_csv(inputs$folds[[paste(f,"O20",sep="/")]]$masks,path)
     }
-    ocean_atomic_rds(settings,file.path(output_dir,"execution_settings.rds"))
-    ocean_atomic_rds(settings,file.path(output_dir,paste0("execution_settings_",stage,".rds")))
+    ocean_atomic_rds(settings,ocean_path(output_dir,"execution_settings.rds"))
+    ocean_atomic_rds(settings,ocean_path(output_dir,paste0("execution_settings_",stage,".rds")))
     ocean_combine_results(import_dirs,output_dir,identity)
     job <- ocean_job_dir(output_dir,settings$run_id)
     status <- if(execute) selected else selected[FALSE,,drop=FALSE]
@@ -11590,15 +11594,15 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
     status$allocated_cores<-rep(NA_integer_,nrow(status))
     status$worker_pid<-rep(NA_integer_,nrow(status))
     publish <- function(state,current="none") {
-      ocean_atomic_csv(status,file.path(job,"task_status.csv"))
+      ocean_atomic_csv(status,ocean_path(job,"task_status.csv"))
       ocean_atomic_lines(c(paste("state:",state),paste("updated:",format(Sys.time(),"%Y-%m-%d %H:%M:%S %z")),
         paste("pid:",Sys.getpid()),paste("current:",current),
         sprintf("executed done: %d/%d; failed: %d; conditional skips: %d",sum(status$state %in% c("DONE","REUSED")),nrow(status)-sum(status$state=="SKIPPED_CONVERGED"),sum(status$state=="FAILED"),sum(status$state=="SKIPPED_CONVERGED")),
         paste("Total core budget:",settings$cores,"; shared across chains and analysis. See execution_schedule.csv and task logs.")),
-        file.path(job,"PROGRESS.txt"))
+        ocean_path(job,"PROGRESS.txt"))
     }
-    ocean_atomic_csv(inputs$audit,file.path(job,"design_audit.csv"))
-    capture.output(utils::sessionInfo(),file=file.path(job,"sessionInfo.txt"))
+    ocean_atomic_csv(inputs$audit,ocean_path(job,"design_audit.csv"))
+    capture.output(utils::sessionInfo(),file=ocean_path(job,"sessionInfo.txt"))
     pending<-integer();ids<-character(nrow(selected))
     for(i in if(execute) seq_len(nrow(selected)) else integer()) {
       task <- selected[i,,drop=FALSE]; id <- task$task_id
@@ -11611,7 +11615,7 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
           status$state[i]<-"FAILED";status$detail[i]<-paste("Missing verified initial fit:",dependency)
           publish("RUNNING",id);next
         }
-        checkpoint<-file.path(output_dir,"continuation_plus20k",sprintf("fold%02d",task$fold),task$cell,"fit_plus20k.rds")
+        checkpoint<-ocean_path(output_dir,"continuation_plus20k",sprintf("fold%02d",task$fold),task$cell,"fit_plus20k.rds")
         if(stage=="analyze" && !file.exists(checkpoint)) {
           status$state[i]<-"SKIPPED_NOT_REQUESTED";publish("RUNNING",id);next
         }
@@ -11627,23 +11631,23 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
         }
       }
       if(ocean_verify_receipt(output_dir,id,identity)) {status$state[i]<-"REUSED";publish("RUNNING",id);next}
-      cfg <- file.path(output_dir,"workflow_tasks",paste0(id,".config.rds"))
+      cfg <- ocean_path(output_dir,"workflow_tasks",paste0(id,".config.rds"))
       if(file.exists(cfg) && !identical(readRDS(cfg),list(identity=identity,task=task))) stop("Partial-task identity mismatch: ",id)
       ocean_atomic_rds(list(identity=identity,task=task),cfg)
       pending<-c(pending,i)
     }
     events<-data.frame(task_id=character(),event=character(),time=numeric(),
       worker_pid=integer(),allocated_cores=integer(),active_cores=integer())
-    ocean_atomic_csv(events,file.path(job,"execution_schedule.csv"))
+    ocean_atomic_csv(events,ocean_path(job,"execution_schedule.csv"))
     event<-function(i,type,active) {
       events<<-rbind(events,data.frame(task_id=ids[i],event=type,time=as.numeric(Sys.time()),
         worker_pid=status$worker_pid[i],allocated_cores=status$allocated_cores[i],active_cores=active))
-      ocean_atomic_csv(events,file.path(job,"execution_schedule.csv"))
+      ocean_atomic_csv(events,ocean_path(job,"execution_schedule.csv"))
     }
     work<-function(i,allocated) {
       task<-selected[i,,drop=FALSE];rownames(task)<-NULL;id<-ids[i]
       local_settings<-settings;local_settings$cores<-allocated
-      log_path<-file.path(job,"tasks",paste0(id,".log"))
+      log_path<-ocean_path(job,"tasks",paste0(id,".log"))
       dir.create(dirname(log_path),recursive=TRUE,showWarnings=FALSE)
       log<-file(log_path,open="at");old_message<-getConnection(sink.number(type="message"))
       sink(log);sink(log,type="message")
@@ -11652,11 +11656,11 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
       t0<-proc.time()[3]
       outcome<-tryCatch({
         ocean_run_task(task,repository_dir,output_dir,local_settings,inputs,identity)
-        files<-ocean_task_files(task,settings$profile,stage)
-        stopifnot(all(file.exists(file.path(output_dir,files))))
+        files<-ocean_result_relative(output_dir,ocean_task_files(task,settings$profile,stage))
+        stopifnot(all(file.exists(ocean_path(output_dir,files))))
         ocean_atomic_rds(list(identity=identity,task=task,files=files,
-          hashes=ocean_hashes(file.path(output_dir,files)),finished=as.character(Sys.time())),
-          file.path(output_dir,"workflow_tasks",paste0(id,".done.rds")))
+          hashes=ocean_hashes(ocean_path(output_dir,files)),finished=as.character(Sys.time())),
+          ocean_path(output_dir,"workflow_tasks",paste0(id,".done.rds")))
         NULL
       },error=function(e)e)
       detail<-if(inherits(outcome,"error"))conditionMessage(outcome) else ""
@@ -11683,8 +11687,8 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
       function(i,allocated) mixedgp_budget_worker(function() work(i,settings$cores)),
       start_task,finish_task))
     publish(if(any(status$state=="FAILED")) "SELECTED_COMPLETE_WITH_FAILURES" else "SELECTED_COMPLETE")
-    ocean_atomic_lines(capture.output(print(status,row.names=FALSE)),file.path(job,"SUMMARY.txt"))
-    if(any(status$state=="FAILED")) stop("Some selected tasks failed; inspect ",file.path(job,"task_status.csv"))
+    ocean_atomic_lines(capture.output(print(status,row.names=FALSE)),ocean_path(job,"SUMMARY.txt"))
+    if(any(status$state=="FAILED")) stop("Some selected tasks failed; inspect ",ocean_path(job,"task_status.csv"))
   }
   decisions<-ocean_continuation_decisions(output_dir,settings$profile,write=dir.exists(output_dir),
     continuation_iter=settings$continuation_iter)
@@ -11695,7 +11699,7 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
 
 # Read numerical metadata without refitting or changing saved results.
 ocean_saved_profile <- function(output_dir) {
-  p<-file.path(output_dir,"workflow_identity.rds")
+  p<-ocean_path(output_dir,"workflow_identity.rds")
   if(file.exists(p))readRDS(p)$profile else "paper"
 }
 ocean_continuation_label <- function(output_dir)
@@ -11740,17 +11744,17 @@ probability_score <- function(draws,point,y,fold,method,cell) {
 }
 
 read_fold <- function(fold) {
-  train <- read.csv(file.path(root, "data", sprintf("fold%02d_train.csv", fold)))
-  test <- read.csv(file.path(root, "data", sprintf("fold%02d_test.csv", fold)))
+  train <- read.csv(ocean_path(root, "data", sprintf("fold%02d_train.csv", fold)))
+  test <- read.csv(ocean_path(root, "data", sprintf("fold%02d_test.csv", fold)))
   train$C <- as.integer(findInterval(train$U, c(50, 100, 150)) + 1L)
   test$C <- as.integer(findInterval(test$U, c(50, 100, 150)) + 1L)
-  design<-ocean_prepare_inputs(file.path(root,"data"))
+  design<-ocean_prepare_inputs(ocean_path(root,"data"))
   stopifnot(identical(train$cohort_id,design$folds[[paste(fold,"O20",sep="/")]]$train$cohort_id))
   list(train = train, test = test)
 }
 run_baselines <- function(fold, train, test, fold_out) {
-  metrics_path <- file.path(fold_out, "baseline_metrics.csv")
-  if (file.exists(metrics_path) && file.exists(file.path(fold_out,"baseline_package_outputs.rds"))) {
+  metrics_path <- ocean_path(fold_out, "baseline_metrics.csv")
+  if (file.exists(metrics_path) && file.exists(ocean_path(fold_out,"baseline_package_outputs.rds"))) {
     previous<-read.csv(metrics_path)
     if(setequal(previous$method,c("UC-GP","LVGP","EzGP"))) return(invisible("reused output"))
   }
@@ -11765,8 +11769,8 @@ run_baselines <- function(fold, train, test, fold_out) {
     methods = c("UC-GP", "LVGP", "EzGP"), strict = FALSE,
     controls = baseline_controls
   )
-  saveRDS(fit, file.path(fold_out, "baseline_package_outputs.rds"))
-  atomic_csv(fit$status, file.path(fold_out, "baseline_status.csv"))
+  saveRDS(fit, ocean_path(fold_out, "baseline_package_outputs.rds"))
+  atomic_csv(fit$status, ocean_path(fold_out, "baseline_status.csv"))
   metrics <- list()
   predictions <- list()
   for (method in c("UC-GP", "LVGP", "EzGP")) {
@@ -11778,15 +11782,15 @@ run_baselines <- function(fold, train, test, fold_out) {
   }
   if (length(metrics)) atomic_csv(do.call(rbind, metrics), metrics_path)
   if (length(predictions)) atomic_csv(do.call(rbind, predictions),
-    file.path(fold_out, "baseline_predictions.csv"))
+    ocean_path(fold_out, "baseline_predictions.csv"))
   failed <- fit$status$method[fit$status$status != "success"]
   if (length(failed)) stop("Baseline failures: ", paste(failed, collapse = ","))
   invisible("all three baselines fitted")
 }
 run_eiv <- function(fold, cell, train, test, fold_out) {
-  cell_out <- file.path(fold_out, cell)
+  cell_out <- ocean_path(fold_out, cell)
   dir.create(cell_out, showWarnings = FALSE)
-  metric_path <- file.path(cell_out, "metrics.csv")
+  metric_path <- ocean_path(cell_out, "metrics.csv")
   if (file.exists(metric_path)) return(invisible("reused output"))
   # 1. Assemble X/C and reveal U only on the fixed training-calibration mask.
   x_train <- as.matrix(train[, c("G2salinity", "log_pressure")])
@@ -11798,7 +11802,7 @@ run_eiv <- function(fold, cell, train, test, fold_out) {
     train[[paste0("calib_", tolower(cell))]] == 1L
   u_obs[mask, 1L] <- train$U[mask]
   seed_offset <- c(O0 = 0L, O20 = 20L, O50 = 50L)[[cell]]
-  fit_path <- file.path(cell_out, "fit.rds")
+  fit_path <- ocean_path(cell_out, "fit.rds")
   if(identical(get0("stage",inherits=TRUE),"analyze") && !file.exists(fit_path))
     stop("Missing fit; run ocean.R --action=fit first: ",fit_path)
   fit <- if (file.exists(fit_path)) readRDS(fit_path) else {
@@ -11815,7 +11819,7 @@ run_eiv <- function(fold, cell, train, test, fold_out) {
     )
     # RMD-END eiv-fit
     saveRDS(model, fit_path)
-    capture.output(summary(model), file = file.path(cell_out, "fit_summary.txt"))
+    capture.output(summary(model), file = ocean_path(cell_out, "fit_summary.txt"))
     model
   }
   diagnostic_parts <- lapply(
@@ -11823,14 +11827,14 @@ run_eiv <- function(fold, cell, train, test, fold_out) {
     function(z) z[, c("parameter", "rhat", "ess_bulk", "ess_tail", "target_pass"),
                   drop = FALSE])
   diagnostics <- do.call(rbind, diagnostic_parts)
-  atomic_csv(diagnostics, file.path(cell_out, "convergence_parameters.csv"))
+  atomic_csv(diagnostics, ocean_path(cell_out, "convergence_parameters.csv"))
   finite_rhat <- diagnostics$rhat[is.finite(diagnostics$rhat)]
   finite_ess <- diagnostics$ess_bulk[is.finite(diagnostics$ess_bulk)]
   atomic_csv(data.frame(max_finite_rhat = if (length(finite_rhat)) max(finite_rhat) else NA_real_,
                         min_finite_ess_bulk = if (length(finite_ess)) min(finite_ess) else NA_real_,
                         limited_screen_pass = length(finite_rhat) > 0L && length(finite_ess) > 0L &&
                           max(finite_rhat) <= 1.01 && min(finite_ess) >= 400),
-             file.path(cell_out, "convergence_summary.csv"))
+             ocean_path(cell_out, "convergence_summary.csv"))
   if(identical(get0("stage",inherits=TRUE),"fit"))return(invisible("fit saved; analysis deferred"))
   n_draw <- nrow(fit$mcmc$samples_tau)
   stopifnot(is.finite(n_draw), n_draw > 0L)
@@ -11844,14 +11848,14 @@ run_eiv <- function(fold, cell, train, test, fold_out) {
   # RMD-END eiv-predict
   point <- colMeans(as.matrix(response_draws))
   atomic_csv(data.frame(cohort_id = test$cohort_id, observed_Y = test$Y,
-    predicted_Y = point), file.path(cell_out, "predictions.csv"))
+    predicted_Y = point), ocean_path(cell_out, "predictions.csv"))
   metrics <- score(point, test$Y, fold, "EIV-GP", cell)
 
   # Freeze nested test masks once per fold using the prespecified seed, without Y.
   masks<-ocean_test_masks(test,fold);known20<-masks$observed_U_O20;known50<-masks$observed_U_O50
   known<-switch(cell,O0=rep(FALSE,nrow(test)),O20=known20,O50=known50)
   atomic_csv(data.frame(cohort_id=test$cohort_id,C=test$C,observed_U_O20=known20,observed_U_O50=known50,mask_seed=202609260L+fold),
-    file.path(fold_out,"test_U_masks.csv"))
+    ocean_path(fold_out,"test_U_masks.csv"))
   mixed<-response_draws
   if (any(known)) {
     xu<-eivGP::predict_eivgp(fit,new_X=x_test[known,,drop=FALSE],new_U=matrix(test$U[known],ncol=1L),new_U_scale="raw",
@@ -11863,11 +11867,11 @@ run_eiv <- function(fold, cell, train, test, fold_out) {
   }
   stopifnot(identical(mixed[,!known,drop=FALSE],response_draws[,!known,drop=FALSE]))
   saveRDS(list(xc=response_draws,mixed=mixed,known=known,draw_ids=draw_ids),
-    file.path(cell_out,"prediction_distributions.rds"))
+    ocean_path(cell_out,"prediction_distributions.rds"))
   atomic_csv(data.frame(cohort_id=test$cohort_id,observed_Y=test$Y,predicted_Y=colMeans(mixed),test_U_observed=known),
-    file.path(cell_out,"mixed_predictions.csv"))
+    ocean_path(cell_out,"mixed_predictions.csv"))
   atomic_csv(rbind(probability_score(response_draws,point,test$Y,fold,"EIV-GP xc",cell),
-    probability_score(mixed,colMeans(mixed),test$Y,fold,"EIV-GP mixed",cell)),file.path(cell_out,"predictive_metrics.csv"))
+    probability_score(mixed,colMeans(mixed),test$Y,fold,"EIV-GP mixed",cell)),ocean_path(cell_out,"predictive_metrics.csv"))
 
   # 4. Impute hidden training U; O0 uses model coordinates, O20/O50 raw units.
   hidden <- which(!is.finite(u_obs[, 1L]))
@@ -11877,7 +11881,7 @@ run_eiv <- function(fold, cell, train, test, fold_out) {
     imp_point <- colMeans(matrix(imp[, , 1L], nrow = length(draw_ids)))
     atomic_csv(data.frame(cohort_id = train$cohort_id[hidden], C = train$C[hidden],
       true_U_raw = train$U[hidden], EIV_U_model_mean = imp_point),
-      file.path(cell_out, "imputations_model_scale.csv"))
+      ocean_path(cell_out, "imputations_model_scale.csv"))
   } else {
     # RMD-BEGIN eiv-impute
     imp <- eivGP::impute_eivgp(fit, rows = hidden, draw_ids = draw_ids, scale = "raw")
@@ -11887,20 +11891,20 @@ run_eiv <- function(fold, cell, train, test, fold_out) {
     imp_base <- as.numeric(calib_means[as.character(train$C[hidden])])
     atomic_csv(data.frame(cohort_id = train$cohort_id[hidden], C = train$C[hidden],
       true_U = train$U[hidden], EIV_U_mean = imp_point,
-      class_calibration_mean = imp_base), file.path(cell_out, "imputations.csv"))
+      class_calibration_mean = imp_base), ocean_path(cell_out, "imputations.csv"))
     metrics <- rbind(metrics,
       score(imp_point, train$U[hidden], fold, "EIV U imputation", cell),
       score(imp_base, train$U[hidden], fold, "calibration class mean", cell))
   }
   iq<-apply(matrix(imp[,,1L],nrow=length(draw_ids)),2L,quantile,c(.025,.975))
-  atomic_csv(data.frame(cohort_id=train$cohort_id[hidden],C=train$C[hidden],posterior_mean=imp_point,q025=iq[1,],q975=iq[2,],scale=if(cell=="O0")"model" else "raw"),file.path(cell_out,"U_posterior_intervals.csv"))
+  atomic_csv(data.frame(cohort_id=train$cohort_id[hidden],C=train$C[hidden],posterior_mean=imp_point,q025=iq[1,],q975=iq[2,],scale=if(cell=="O0")"model" else "raw"),ocean_path(cell_out,"U_posterior_intervals.csv"))
   atomic_csv(metrics, metric_path)
   tau <- as.matrix(fit$mcmc$samples_tau)
   atomic_csv(data.frame(boundary = seq_len(ncol(tau)),
     q025_model_scale = apply(tau, 2L, quantile, .025),
     median_model_scale = apply(tau, 2L, median),
     q975_model_scale = apply(tau, 2L, quantile, .975)),
-    file.path(cell_out, "threshold_posterior_model_scale.csv"))
+    ocean_path(cell_out, "threshold_posterior_model_scale.csv"))
   invisible(paste0("Y RMSE ", round(metrics$RMSE[1L], 3)))
 }
 
@@ -11940,10 +11944,10 @@ probability_score<-function(draws,point,y,fold,cell,method) {
 }
 
 run_one <- function(fold, cell) {
-  task_out <- file.path(out, sprintf("fold%02d", fold), cell)
+  task_out <- ocean_path(out, sprintf("fold%02d", fold), cell)
   dir.create(task_out, recursive = TRUE, showWarnings = FALSE)
-  metrics_path <- file.path(task_out, "metrics.csv")
-  fit_path <- file.path(task_out, "fit_plus20k.rds")
+  metrics_path <- ocean_path(task_out, "metrics.csv")
+  fit_path <- ocean_path(task_out, "fit_plus20k.rds")
   if (file.exists(metrics_path)) {
     fit <- readRDS(fit_path)
     set_task(fold, cell, "DONE", "reused complete continuation",
@@ -11968,16 +11972,16 @@ run_one <- function(fold, cell) {
   }
   diag <- diagnostic_row(fit)
   diagnostic_parts<-lapply(fit$diagnostics[c("rhat_hyper","rhat_tau","rhat_u")],function(z)z[,c("parameter","rhat","ess_bulk","ess_tail","target_pass"),drop=FALSE])
-  atomic_csv(do.call(rbind,diagnostic_parts),file.path(task_out,"convergence_parameters.csv"))
-  atomic_csv(data.frame(max_finite_rhat=diag$max_rhat,min_finite_ess_bulk=diag$min_ess_bulk,limited_screen_pass=diag$pass_screen),file.path(task_out,"convergence_summary.csv"))
+  atomic_csv(do.call(rbind,diagnostic_parts),ocean_path(task_out,"convergence_parameters.csv"))
+  atomic_csv(data.frame(max_finite_rhat=diag$max_rhat,min_finite_ess_bulk=diag$min_ess_bulk,limited_screen_pass=diag$pass_screen),ocean_path(task_out,"convergence_summary.csv"))
   atomic_csv(data.frame(fold = fold, cell = cell, stage = paste0("plus",continuation_iter),
     max_rhat = diag$max_rhat, min_ess_bulk = diag$min_ess_bulk,
-    pass_screen = diag$pass_screen), file.path(task_out, "diagnostics.csv"))
-  capture.output(summary(fit), file = file.path(task_out, "fit_summary.txt"))
+    pass_screen = diag$pass_screen), ocean_path(task_out, "diagnostics.csv"))
+  capture.output(summary(fit), file = ocean_path(task_out, "fit_summary.txt"))
   if(identical(get0("stage",inherits=TRUE),"continue"))return(invisible("continued fit saved; analysis deferred"))
 
-  train <- read.csv(file.path(root, "data", sprintf("fold%02d_train.csv", fold)))
-  test <- read.csv(file.path(root, "data", sprintf("fold%02d_test.csv", fold)))
+  train <- read.csv(ocean_path(root, "data", sprintf("fold%02d_train.csv", fold)))
+  test <- read.csv(ocean_path(root, "data", sprintf("fold%02d_test.csv", fold)))
   train$C <- as.integer(findInterval(train$U, c(50, 100, 150)) + 1L)
   test$C <- as.integer(findInterval(test$U, c(50, 100, 150)) + 1L)
   stopifnot((nrow(train)+nrow(test))%in%c(200L,500L,1000L),
@@ -11994,13 +11998,13 @@ run_one <- function(fold, cell) {
   point <- colMeans(as.matrix(response_draws))
   metrics <- score(point, test$Y, fold, cell, "EIV-GP")
   atomic_csv(data.frame(cohort_id = test$cohort_id, observed_Y = test$Y,
-    predicted_Y = point), file.path(task_out, "predictions.csv"))
+    predicted_Y = point), ocean_path(task_out, "predictions.csv"))
 
   mask <- if (cell == "O0") rep(FALSE, nrow(train)) else
     train[[paste0("calib_", tolower(cell))]] == 1L
 
   # Use the fixed test observation masks for both initial and continued fits.
-  saved_masks<-read.csv(file.path(root,"full5_class4",sprintf("fold%02d",fold),"test_U_masks.csv"))
+  saved_masks<-read.csv(ocean_path(root,"full5_class4",sprintf("fold%02d",fold),"test_U_masks.csv"))
   stopifnot(identical(as.character(saved_masks$cohort_id),as.character(test$cohort_id)))
   known<-if(cell=="O0")rep(FALSE,nrow(test)) else as.logical(saved_masks[[paste0("observed_U_",cell)]])
   stopifnot(sum(known)==switch(cell,O0=0,O20=.2,O50=.5)*nrow(test))
@@ -12014,10 +12018,10 @@ run_one <- function(fold, cell) {
     }
   }
   stopifnot(identical(mixed[,!known,drop=FALSE],response_draws[,!known,drop=FALSE]))
-  atomic_rds(list(xc=response_draws,mixed=mixed,known=known,draw_ids=draw_ids),file.path(task_out,"prediction_distributions.rds"))
-  atomic_csv(data.frame(cohort_id=test$cohort_id,observed_Y=test$Y,predicted_Y=colMeans(mixed),test_U_observed=known),file.path(task_out,"mixed_predictions.csv"))
+  atomic_rds(list(xc=response_draws,mixed=mixed,known=known,draw_ids=draw_ids),ocean_path(task_out,"prediction_distributions.rds"))
+  atomic_csv(data.frame(cohort_id=test$cohort_id,observed_Y=test$Y,predicted_Y=colMeans(mixed),test_U_observed=known),ocean_path(task_out,"mixed_predictions.csv"))
   atomic_csv(rbind(probability_score(response_draws,point,test$Y,fold,cell,"EIV-GP xc"),
-    probability_score(mixed,colMeans(mixed),test$Y,fold,cell,"EIV-GP mixed")),file.path(task_out,"predictive_metrics.csv"))
+    probability_score(mixed,colMeans(mixed),test$Y,fold,cell,"EIV-GP mixed")),ocean_path(task_out,"predictive_metrics.csv"))
   hidden <- which(!mask)
   imp <- eivGP::impute_eivgp(fit, rows = hidden, draw_ids = draw_ids,
                       scale = if (cell == "O0") "model" else "raw")
@@ -12025,21 +12029,21 @@ run_one <- function(fold, cell) {
   if (cell == "O0") {
     atomic_csv(data.frame(cohort_id = train$cohort_id[hidden], C = train$C[hidden],
       true_U_raw = train$U[hidden], EIV_U_model_mean = imp_point),
-      file.path(task_out, "imputations_model_scale.csv"))
+      ocean_path(task_out, "imputations_model_scale.csv"))
   } else {
     calib_means <- tapply(train$U[mask], train$C[mask], mean)
     imp_base <- as.numeric(calib_means[as.character(train$C[hidden])])
     atomic_csv(data.frame(cohort_id = train$cohort_id[hidden], C = train$C[hidden],
       true_U = train$U[hidden], EIV_U_mean = imp_point,
       class_calibration_mean = imp_base),
-      file.path(task_out, "imputations.csv"))
+      ocean_path(task_out, "imputations.csv"))
     metrics <- rbind(metrics,
       score(imp_point, train$U[hidden], fold, cell, "EIV U imputation"),
       score(imp_base, train$U[hidden], fold, cell, "calibration class mean"))
   }
   iq<-apply(matrix(imp[,,1L],nrow=length(draw_ids)),2L,quantile,c(.025,.975))
   atomic_csv(data.frame(cohort_id=train$cohort_id[hidden],C=train$C[hidden],posterior_mean=imp_point,q025=iq[1,],q975=iq[2,],
-    scale=if(cell=="O0")"model" else "raw"),file.path(task_out,"U_posterior_intervals.csv"))
+    scale=if(cell=="O0")"model" else "raw"),ocean_path(task_out,"U_posterior_intervals.csv"))
   atomic_csv(metrics, metrics_path)
   minutes <- as.numeric(difftime(Sys.time(), t0, units = "mins"))
   set_task(fold, cell, "DONE", paste0("Y RMSE ", round(metrics$RMSE[1], 3)),
@@ -12074,20 +12078,20 @@ ocean_run_complete_case <- function(task,output_dir,settings,inputs) {
   center <- colMeans(train[,cols]); spread <- vapply(train[,cols],sd,0)
   stopifnot(all(is.finite(spread)),all(spread>0))
   transform <- function(z) sweep(sweep(as.matrix(z[,cols]),2L,center,"-"),2L,spread,"/")
-  dir <- file.path(output_dir,"complete_case_baselines/fits",task$task_id)
+  dir <- ocean_path(output_dir,"complete_case_baselines/fits",task$task_id)
   dir.create(dir,recursive=TRUE,showWarnings=FALSE)
   design <- list(protocol="native-CC-observed-u-subset-v1",profile=settings$profile,
     fold=task$fold,cell=task$cell,method=task$method,seed=task$fit_seed,
     training_ids=train$cohort_id,test_ids=test$cohort_id,center=center,scale=spread,
     controls=ocean_cc_controls(settings$profile),n_draw=400L,
     omitted_test_ids=d$test$cohort_id[!d$observed_test_mixed])
-  ocean_atomic_rds(design,file.path(dir,"design.rds"))
+  ocean_atomic_rds(design,ocean_path(dir,"design.rds"))
   ans <- eivGP:::run_published_mixedgp_competitors(
     X_train=transform(train),y_train=train$Y,C_train=matrix(train$C,ncol=1L),
     X_test=transform(test),C_test=matrix(test$C,ncol=1L),m_vec=4L,n_draw=400L,
     seed=task$fit_seed,methods=task$method,strict=FALSE,controls=design$controls)
-  ocean_atomic_rds(ans,file.path(dir,"package_output.rds"))
-  ocean_atomic_csv(ans$status,file.path(dir,"package_status.csv"))
+  ocean_atomic_rds(ans,ocean_path(dir,"package_output.rds"))
+  ocean_atomic_csv(ans$status,ocean_path(dir,"package_status.csv"))
   if(!task$method %in% names(ans$means) || any(ans$status$status!="success"))
     stop("CC native fitting failed: ",paste(ans$status$message,collapse="; "))
   # The original probability scoring function accepts any matched test size.
@@ -12096,9 +12100,9 @@ ocean_run_complete_case <- function(task,output_dir,settings,inputs) {
   score <- env$probability_score(ans$draws[[task$method]],point,test$Y,
     task$fold,paste0(task$method,"(CC)"),task$cell)
   score$profile <- settings$profile;score$n_train <- nrow(train)
-  ocean_atomic_csv(score,file.path(dir,"metrics.csv"))
+  ocean_atomic_csv(score,ocean_path(dir,"metrics.csv"))
   ocean_atomic_csv(data.frame(cohort_id=test$cohort_id,observed_Y=test$Y,
-    predicted_Y=point),file.path(dir,"predictions.csv"))
+    predicted_Y=point),ocean_path(dir,"predictions.csv"))
   invisible(design)
 }
 
@@ -12137,10 +12141,10 @@ ocean_analysis_impl <- function(repository_dir,data_dir,output_dir,settings,impo
     available<-a$prediction
     if(is.null(available))available<-ocean_prediction_report(output_dir,a$inputs,settings$profile)
     ready<-all(available$availability$available) && all(vapply(1:5,function(f)
-      file.exists(file.path(output_dir,"full5_class4",sprintf("fold%02d",f),"baseline_package_outputs.rds")),logical(1)))
+      file.exists(ocean_path(output_dir,"full5_class4",sprintf("fold%02d",f),"baseline_package_outputs.rds")),logical(1)))
     if(ready) {
       d<-ocean_run_diagnostics(output_dir,data_dir,
-        report_dir=if(nzchar(diagnostics_dir))diagnostics_dir else file.path(output_dir,"diagnostics"),
+        report_dir=if(nzchar(diagnostics_dir))diagnostics_dir else ocean_path(output_dir,"diagnostics"),
         representative_fold=representative_fold,
         build_prediction=FALSE,prediction_report=available,
         build_surfaces="surface_comparison" %in% settings$modules)
@@ -12153,7 +12157,7 @@ ocean_analysis_impl <- function(repository_dir,data_dir,output_dir,settings,impo
 # ---- numerical paper workflow: isolated helpers avoid application name collisions ----
 eivgp_numerical_api <- function(repo_root) {
   NUMERICAL_REPO_ROOT <- normalizePath(repo_root,mustWork=TRUE)
-  numerical_default_data <- function(study)file.path(path.expand("~/eivGP-results"),"data",study)
+  numerical_default_data <- function(study)ocean_path(path.expand("~/eivGP-results"),"data",study)
   numerical_default_output <- function(study)file.path(path.expand("~/eivGP-results"),study)
   numerical_package_check <- function()invisible(TRUE) # checkout CLI validates locked environment
 F <- function(name) getFromNamespace(name, "eivGP")
@@ -13224,4 +13228,140 @@ mixedgp_predict_blocks <- function(args,FUN=predict_eivgp,object_name="object") 
   }
   attr(ans,"prediction_stream_schema") <- 1L
   ans
+}
+
+# Ocean storage schema 1. Model identities and RNG streams are independent of
+# this physical layout. Unmarked roots retain their historical layout.
+ocean_storage_flat <- function(root) {
+  marker <- file.path(root,"_meta","storage-layout.rds")
+  if(!file.exists(marker))return(FALSE)
+  schema <- readRDS(marker)
+  if(!identical(schema$schema,"ocean-flat-v1"))stop("Unknown ocean storage schema: ",marker)
+  TRUE
+}
+ocean_flat_relative <- function(path) {
+  path <- gsub("\\\\","/",path)
+  path <- sub("^_meta/initial(?=/|$)","full5_class4",path,perl=TRUE)
+  path <- sub("^_meta/continuation(?=/|$)","continuation_plus20k",path,perl=TRUE)
+  path <- sub("^_meta/cc(?=/|$)","complete_case_baselines/fits",path,perl=TRUE)
+  path <- sub("^baseline_(fold[0-9]+)/(?=O[0-9]+(?:/|$))","full5_class4/\\1/",path,perl=TRUE)
+  path <- sub("^(full5_class4|smoke_class4)/(fold[0-9]+)/(O[0-9]+)(?=/|$)","eiv_\\2_\\3",path,perl=TRUE)
+  path <- sub("^(full5_class4|smoke_class4)/(fold[0-9]+)(?=/|$)","baseline_\\2",path,perl=TRUE)
+  path <- sub("^(full5_class4|smoke_class4)(?=/|$)","_meta/initial",path,perl=TRUE)
+  path <- sub("^continuation_plus20k/(fold[0-9]+)/(O[0-9]+)(?=/|$)","eiv_\\1_\\2_continued",path,perl=TRUE)
+  path <- sub("^continuation_plus20k(?=/|$)","_meta/continuation",path,perl=TRUE)
+  path <- sub("^complete_case_baselines/fits/(cc_[^/]+)(?=/|$)","\\1",path,perl=TRUE)
+  path <- sub("^complete_case_baselines/fits(?=/|$)","_meta/cc",path,perl=TRUE)
+  path <- sub("^workflow_tasks(?=/|$)","_meta/tasks",path,perl=TRUE)
+  path <- sub("^jobs/([^/]+)/tasks/","logs/\\1/",path)
+  path <- sub("^jobs(?=/|$)","logs",path,perl=TRUE)
+  path <- sub("^logs/([^/]+)/tasks/","logs/\\1/",path)
+  path <- sub("^(prediction_report|diagnostics|surface_report)(?=/|$)","reports/\\1",path,perl=TRUE)
+  meta <- grepl("^(workflow_identity[.]rds|execution_settings[^/]*[.]rds|continuation_decisions[.]csv)$",path)
+  path[meta] <- paste0("_meta/",path[meta])
+  path
+}
+ocean_result_relative <- function(root,path) {
+  if(ocean_storage_flat(root))ocean_flat_relative(path)else path
+}
+# Assemble first, then resolve against the nearest explicitly marked root.
+# This also handles paths built incrementally by task-local closures.
+ocean_path <- function(...,fsep=.Platform$file.sep) {
+  paths <- file.path(...,fsep=fsep)
+  vapply(paths,function(path) {
+    candidate <- path
+    repeat {
+      if(dir.exists(candidate) && file.exists(file.path(candidate,"_meta","storage-layout.rds"))) {
+        if(!ocean_storage_flat(candidate))return(path)
+        if(identical(path,candidate))return(path)
+        rel <- substring(path,nchar(candidate)+2L)
+        return(file.path(candidate,ocean_flat_relative(rel)))
+      }
+      parent <- dirname(candidate)
+      if(identical(parent,candidate)||candidate==".")return(path)
+      candidate <- parent
+    }
+  },character(1),USE.NAMES=FALSE)
+}
+ocean_storage_init <- function(root) {
+  if(ocean_storage_flat(root))return(invisible(root))
+  if(dir.exists(file.path(root,".workflow.lock")))stop("Output directory is locked: ",root)
+  existing <- if(dir.exists(root))list.files(root,all.files=TRUE,no..=TRUE)else character()
+  # Never opt an existing, unmarked result tree into a new schema implicitly.
+  if(length(existing))return(invisible(root))
+  dir.create(file.path(root,"_meta"),recursive=TRUE,showWarnings=FALSE)
+  saveRDS(list(schema="ocean-flat-v1"),file.path(root,"_meta","storage-layout.rds"))
+  invisible(root)
+}
+
+# Dry-run by default. Copy into a new sibling, verify bytes, then publish it.
+# The source remains usable; never rewrite model provenance to make it current.
+ocean_migrate_storage <- function(source,destination,dry_run=TRUE) {
+  source <- normalizePath(source,mustWork=TRUE)
+  destination <- path.expand(destination)
+  if(!dir.exists(dirname(destination)))stop("Destination parent must exist.")
+  destination <- file.path(normalizePath(dirname(destination)),basename(destination))
+  if(file.exists(destination)||dir.exists(destination))stop("Destination already exists: ",destination)
+  if(startsWith(paste0(destination,"/"),paste0(source,"/")))stop("Destination must be outside source.")
+  lock <- file.path(source,".workflow.lock")
+  if(dir.exists(lock))stop("Source is locked. Wait for its job to finish; do not migrate an active run.")
+  if(ocean_storage_flat(source))stop("Source already uses the flat layout.")
+  files <- character(); pending <- ""
+  while(length(pending)) {
+    directory <- pending[1L];pending <- pending[-1L]
+    entries <- list.files(file.path(source,directory),all.files=TRUE,no..=TRUE)
+    relative <- if(nzchar(directory))file.path(directory,entries)else entries
+    full <- file.path(source,relative)
+    if(any(nzchar(Sys.readlink(full))))stop("Migration does not follow symbolic links.")
+    dirs <- dir.exists(full)
+    files <- c(files,relative[!dirs]);pending <- c(pending,relative[dirs])
+  }
+  files <- sort(files)
+  mapped <- ocean_flat_relative(files)
+  if(anyDuplicated(mapped))stop("Destination collision in migration plan.")
+  plan <- data.frame(source=files,destination=mapped,bytes=file.info(file.path(source,files))$size)
+  if(isTRUE(dry_run))return(plan)
+  if(!dir.create(lock,showWarnings=FALSE))stop("Source became locked.")
+  on.exit(unlink(lock,recursive=TRUE),add=TRUE)
+  current_files <- sort(list.files(source,recursive=TRUE,all.files=TRUE,no..=TRUE))
+  current_files <- current_files[!dir.exists(file.path(source,current_files))]
+  if(!identical(files,current_files))stop("Source inventory changed before migration acquired its lock.")
+  stage <- tempfile(".ocean-migration-",tmpdir=dirname(destination))
+  dir.create(stage);on.exit(if(dir.exists(stage))unlink(stage,recursive=TRUE),add=TRUE)
+  before <- unname(tools::md5sum(file.path(source,files)))
+  if(anyNA(before))stop("Cannot hash all source files.")
+  for(i in seq_along(files)) {
+    target <- file.path(stage,mapped[i]);dir.create(dirname(target),recursive=TRUE,showWarnings=FALSE)
+    if(!file.copy(file.path(source,files[i]),target,copy.mode=TRUE,copy.date=TRUE))stop("Copy failed: ",files[i])
+  }
+  if(!identical(before,unname(tools::md5sum(file.path(stage,mapped)))) ||
+     !identical(before,unname(tools::md5sum(file.path(source,files)))))stop("Source changed or copy verification failed.")
+  # Receipts record actual relative locations; scientific identities/hashes stay intact.
+  receipts <- mapped[grepl("^_meta/tasks/.*[.]done[.]rds$",mapped)]
+  for(p in receipts) {
+    receipt <- readRDS(file.path(stage,p))
+    if(any(grepl("(^/|^[A-Za-z]:|(^|/)\\.\\.(/|$))",receipt$files)))stop("Unsafe receipt path: ",p)
+    receipt$files <- ocean_flat_relative(receipt$files)
+    if(!identical(unname(tools::md5sum(file.path(stage,receipt$files))),receipt$hashes))stop("Invalid source receipt: ",p)
+    saveRDS(receipt,file.path(stage,p))
+  }
+  dir.create(file.path(stage,"_meta"),showWarnings=FALSE)
+  saveRDS(list(schema="ocean-flat-v1"),file.path(stage,"_meta","storage-layout.rds"))
+  plan$source_md5 <- before
+  plan$destination_md5 <- unname(tools::md5sum(file.path(stage,mapped)))
+  write.csv(plan,file.path(stage,"_meta","migration-manifest.csv"),row.names=FALSE)
+  saveRDS(list(source=source,source_identity=readRDS(file.path(source,"workflow_identity.rds")),
+    migrated_at=as.character(Sys.time()),note="Original scientific provenance retained; code compatibility is still enforced."),
+    file.path(stage,"_meta","migration.rds"))
+  if(file.exists(destination)||!file.rename(stage,destination))stop("Cannot publish migration destination.")
+  invisible(plan)
+}
+
+# Task receipts may be imported between legacy and flat roots in either direction.
+ocean_legacy_task_relative <- function(path,profile="paper") {
+  initial <- if(isTRUE(profile=="quick"))"smoke_class4"else"full5_class4"
+  path <- sub("^eiv_(fold[0-9]+)_(O[0-9]+)_continued(?=/|$)","continuation_plus20k/\\1/\\2",path,perl=TRUE)
+  path <- sub("^eiv_(fold[0-9]+)_(O[0-9]+)(?=/|$)",paste0(initial,"/\\1/\\2"),path,perl=TRUE)
+  path <- sub("^baseline_(fold[0-9]+)(?=/|$)",paste0(initial,"/\\1"),path,perl=TRUE)
+  sub("^(cc_[^/]+)(?=/|$)","complete_case_baselines/fits/\\1",path,perl=TRUE)
 }

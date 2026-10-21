@@ -40,3 +40,14 @@ test_that('complete-case manuscript table excludes different test protocols', {
   expect_false(grepl('8.792',tex,fixed=TRUE))
   expect_equal(read.csv(file.path(dest,'tab_ocean_complete_case.csv'),check.names=FALSE),d)
 })
+
+test_that('paper trace axes match the appendix without mislabeling pilot traces', {
+  z<-data.frame(fold=1L,cell='O20',target='m',chain=1L,
+    iteration=c(5001L,50000L),value=c(1,2))
+  selection<-data.frame(fold=1L,cell='O20',target='m')
+  p<-ocean_target_trace_plot(z,selection)
+  expect_identical(p$labels$x,'Iteration (thousands; burn-in ends at 5)')
+  expect_equal(p$scales$get_scales('x')$breaks,c(10,30,50))
+  z$iteration<-c(31L,80L)
+  expect_identical(ocean_target_trace_plot(z,selection)$labels$x,'Iteration (thousands; retained states)')
+})

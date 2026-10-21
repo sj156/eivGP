@@ -1,16 +1,48 @@
 # Ocean application
 
-`ocean.R` is the single reproduction entrypoint. After installation, specify only
-its total CPU allocation to run the default 500-profile paper experiment:
+Use three method-oriented scripts. Each method script fits missing compatible
+tasks and immediately analyzes its own results; no separate analysis action is needed.
+The defaults are the 500-profile paper design, four chains and 50,000 iterations.
+Only the total CPU allocation needs to be specified:
 
 ```sh
-Rscript paper/applications/ocean.R --cores=16
+Rscript paper/applications/ocean-eivGP.R --cores=16
+Rscript paper/applications/ocean-competitors.R --cores=16
+Rscript paper/applications/ocean-report.R --cores=16
 ```
 
-With options but no `--action`, the action is `fit`: fit, analyze, export all
-paper assets, then render HTML. With no arguments, print the plan. The explicit
-`--action=plan|fit|analyze|continue|report` interfaces remain available. Dataset
-and profile are scientific selections; worker counts are never additional knobs.
+Run these sequentially against the same result directory. `ocean-eivGP.R` owns
+EIV-GP prediction, oxygen imputation, m/f summaries and scientific-target traces.
+`ocean-competitors.R` owns UC-GP, LVGP and EzGP together, including their original
+categorical and complete-case fits, predictions and scores. `ocean-report.R`
+assembles the comparisons, six manuscript tables, eight figures and `ocean.html`
+from saved results. All scientific calculations remain in the installed package;
+`ocean-workflow.R` shares CLI orchestration without copying model implementations.
+Method reports are `reports/eivGP/index.html` and `reports/competitors/index.html`.
+
+For the existing paper fits, explicitly prohibit fitting:
+
+```sh
+Rscript paper/applications/ocean-eivGP.R --cores=16 --reuse-only=true --output=/path/to/saved-paper
+Rscript paper/applications/ocean-competitors.R --cores=16 --reuse-only=true --output=/path/to/saved-paper
+Rscript paper/applications/ocean-report.R --cores=16 --output=/path/to/saved-paper
+```
+
+Saved-only execution requires the selected fits and prediction artifacts and
+checks prepared inputs against the frozen run. Missing prerequisites stop with
+an error; neither optimizers nor MCMC are called. Historical fitting provenance
+is preserved. Use the same `--diagnostics-dir=/path/to/diagnostics` on the EIV and
+report commands when rebuilding derived diagnostics in a separate location.
+Caches are validated against their inputs and code; reporting may reconstruct
+missing derived summaries but cannot fit or continue a model.
+
+Use `--plan=true` on a method script to list its tasks without running them.
+`--profile=pilot|quick`, `--dataset`, `--output`, `--data-root`, `--folds`, and
+`--cells` remain available. Method reports summarize available saved scores;
+selectors constrain fitting tasks. Quick is a one-fold EIV/CC workflow check;
+use pilot to exercise the original categorical competitors as well.
+The existing `ocean.R`/`ocean.Rmd` remain compatible with older callers and explicit
+continuation, but the three scripts above are the paper reproduction interface.
 
 The dependency stages are:
 
@@ -156,13 +188,15 @@ salinity, their squares and cross-products. Training calibration is nested at
 20%/50%, with class/cell coverage and boundary anchors. Test-u masks use R seed
 `202609260 + fold`, with nested class-balanced 20%/50% quotas.
 
-## Fit and explicitly continue
+## Fitting and explicit continuation
 
-Run from the repository root. The main application uses ocean500.
+The two method commands above combine fitting and analysis. Rerunning a method
+command reuses verified compatible tasks. An incompatible saved fitting identity
+stops instead of silently sending the two method groups to different directories.
+Select a new `--output` for new fits or the original environment to resume old fits.
+Chain extension remains an explicit advanced operation:
 
 ```sh
-Rscript paper/applications/ocean.R --action=plan --profile=paper --dataset=ocean500 --cores=16
-Rscript paper/applications/ocean.R --action=fit --profile=paper --dataset=ocean500 --cores=16
 Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=16
 ```
 
@@ -252,15 +286,10 @@ When preparing this update alongside an active job, install into a separate R li
 
 ## Generate HTML from saved results
 
-`fit` and `continue` already generate HTML. To update results without MCMC:
-
-```sh
-Rscript paper/applications/ocean.R --action=analyze --profile=paper --dataset=ocean500
-Rscript paper/applications/ocean.R --action=report --profile=paper --dataset=ocean500
-```
-
-`analyze` reads saved chains and rebuilds predictions/diagnostics/HTML; `report`
-reads saved predictions and renders HTML. Direct Rmd rendering is also available:
+The method scripts write their group reports; `ocean-report.R --cores=16`
+assembles the combined manuscript report from saved fits and scores. Use
+`--reuse-only=true` with the method scripts to prohibit fitting. No separate
+`--action=analyze` command is required. Direct Rmd rendering is also available:
 
 ```r
 rmarkdown::render("paper/applications/ocean.Rmd",
@@ -269,7 +298,7 @@ rmarkdown::render("paper/applications/ocean.Rmd",
     run_id="ocean500_paper_report",appendix=TRUE))
 ```
 
-Use `analyze` to create predictions from any checkpoints produced through the low-level fitting API.
+The method scripts create predictions after fitting in the same invocation. Saved-only mode requires those prediction artifacts; it does not reinterpret incomplete historical checkpoints with a new fitting environment.
 The Rmd defaults to `report`, also accepts `plan`, and rejects fitting actions.
 Custom package libraries must also be on the R session's `.libPaths()`.
 

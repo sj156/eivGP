@@ -289,10 +289,12 @@ separate application installation and dataset guide, see
 #### Fit and analyze the Ocean experiment
 
 ```sh
-Rscript paper/applications/ocean.R --action=plan --profile=paper --dataset=ocean500 --cores=16
+Rscript paper/applications/ocean-eivGP.R --plan=true --cores=16
 
-# Fit, save checkpoints, analyze with the shared core budget, and generate HTML.
-Rscript paper/applications/ocean.R --action=fit --profile=paper --dataset=ocean500 --cores=16
+# Fit and analyze each method group, then assemble manuscript comparisons.
+Rscript paper/applications/ocean-eivGP.R --cores=16
+Rscript paper/applications/ocean-competitors.R --cores=16
+Rscript paper/applications/ocean-report.R --cores=16
 
 # Explicitly extend flagged fits, then update analysis and HTML.
 Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=16
@@ -346,7 +348,7 @@ Rscript paper/applications/ocean.R --action=fit --profile=pilot --dataset=ocean2
 Rscript paper/applications/ocean.R --action=continue --profile=pilot --dataset=ocean200 --folds=1,2 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --continuation-iter=40 --cores=8 --output="$OCEAN_CHECK_OUTPUT"
 ```
 
-Both commands finish with single-worker analysis and generate or update
+Both commands retain the allocated core budget for analysis and generate or update
 `$OCEAN_CHECK_OUTPUT/ocean.html`. Only the second requests continuation. The CLI
 finds a custom library through `EIVGP_R_LIBRARY`, otherwise through `.r-library/`
 or standard library paths. Pandoc must be available before fitting starts.
@@ -364,18 +366,19 @@ or standard library paths. Pandoc must be available before fitting starts.
 `--data-root` overrides the prepared input directory. Both overrides must also
 be supplied to report generation. Check `jobs/ocean500_paper_fit/task_status.csv`
 for completion and the saved convergence/optimizer diagnostics separately.
-The versioned HTML is the verified 200-profile short-chain example. The 500-profile
-formal run remains to be completed; a finished short-chain run is not evidence
-of convergence. `ocean200` is also available; prepare `ocean1000` folds separately
+The versioned example HTML is a 200-profile short-chain workflow check. The revised
+manuscript uses the completed 500-profile fits, including all three competitors
+and complete-case comparisons. Regenerate its report from those saved fits;
+workflow completion alone does not establish convergence. `ocean200` is also available; prepare `ocean1000` folds separately
 as described in the Ocean guide.
 
 #### Rebuild the Ocean report without fitting
 
 ```sh
-# Analyze saved chains and regenerate HTML; no model fitting.
-Rscript paper/applications/ocean.R --action=analyze --profile=paper --dataset=ocean500
-# Rebuild HTML from saved predictions and summaries.
-Rscript paper/applications/ocean.R --action=report --profile=paper --dataset=ocean500
+# Analyze completed saved fits and scores; fail rather than fit missing models.
+Rscript paper/applications/ocean-eivGP.R --reuse-only=true --cores=16
+Rscript paper/applications/ocean-competitors.R --reuse-only=true --cores=16
+Rscript paper/applications/ocean-report.R --cores=16
 ```
 
 The CLI already generates HTML. Direct Rmd rendering remains available using the same dataset, profile and result root:
@@ -427,9 +430,10 @@ migration runs during fitting, prediction, report generation or resume.
 
 ### Ocean: one CPU allocation, complete paper exports
 
-After installation, `Rscript paper/applications/ocean.R --cores=16` runs the
-500-profile paper workflow through fitting, predictions, diagnostics, paper tables
-and figures, and HTML. Use `--action=plan` to preview or `--action=analyze` to
-postprocess compatible saved fits. See [Ocean reproduction](paper/applications/README_ocean.md).
+After installation, run `ocean-eivGP.R`, `ocean-competitors.R`, then
+`ocean-report.R` from `paper/applications/`, each with `--cores=16`. The first two
+combine fitting and analysis by method group; the third assembles paper tables,
+figures and HTML. Use `--plan=true` to preview or `--reuse-only=true` on the method
+scripts to prohibit fitting when reproducing completed saved results. See [Ocean reproduction](paper/applications/README_ocean.md).
 `reports/paper/artifact_manifest.csv` maps the manuscript labels to generated files;
 method failures remain explicit and no historical 200-profile values are relabeled.

@@ -3985,12 +3985,14 @@ ocean_target_trace_plot <- function(traces,selection=ocean_target_trace_selectio
   z<-ocean_bind(lapply(split(z,interaction(z$panel,z$chain,drop=TRUE)),function(q) {
     q<-q[order(q$iteration),];q$smooth<-if(nrow(q)>=9L)as.numeric(stats::filter(q$value,rep(1/9,9),sides=2)) else q$value;q
   }))
+  paper_axis<-identical(as.numeric(range(z$iteration)),c(5001,50000))
   ggplot2::ggplot(z,ggplot2::aes(iteration/1000,value,color=chain,group=chain))+
     ggplot2::geom_line(linewidth=.19,alpha=.28)+
     ggplot2::geom_line(ggplot2::aes(y=smooth),linewidth=.4,na.rm=TRUE)+
     ggplot2::facet_wrap(~panel,ncol=ncol,scales='free_y')+
     ggplot2::scale_color_manual(values=c('#0072B2','#D55E00','#009E73','#CC79A7'))+
-    ggplot2::labs(x='Iteration (thousands; retained states)',y='micromol/kg',color='Chain')+
+    ggplot2::scale_x_continuous(breaks=if(paper_axis)c(10,30,50) else ggplot2::waiver())+
+    ggplot2::labs(x=if(paper_axis)'Iteration (thousands; burn-in ends at 5)' else 'Iteration (thousands; retained states)',y='micromol/kg',color='Chain')+
     ggplot2::theme_bw(base_size=9)+ggplot2::theme(panel.grid.minor=ggplot2::element_blank(),
       panel.grid.major=ggplot2::element_line(linewidth=.15,color='grey90'),legend.position='bottom',
       strip.background=ggplot2::element_rect(fill='grey96'),strip.text=ggplot2::element_text(size=8.5),

@@ -223,7 +223,7 @@ ocean_run_cli <- function(repository_dir,params=list()) {
     old_options <- options(eivGP.core_events=event_dir)
     on.exit(options(old_options),add=TRUE)
     release_budget <- getFromNamespace("mixedgp_budget_enter","eivGP")(settings$cores)
-    on.exit(release_budget(),add=TRUE)
+    on.exit(release_budget(),add=TRUE,after=FALSE)
     # Fail early if HTML cannot be built, before starting an expensive fit.
     ocean_check_report_dependencies()
     result<-api$ocean_logged(file.path(api$ocean_job_dir(output_dir,settings$run_id),"execution.log"),

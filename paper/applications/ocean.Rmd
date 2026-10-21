@@ -30,7 +30,7 @@ nested measurement masks are constructed on a fixed, class-balanced cohort.
 
 ## 1. Computation settings
 
-- **Workflow:** `ocean.R --action=fit` fits models, analyzes saved chains using the shared core budget, and renders this report. Explicit `continue` updates the same analysis and report.
+- **Workflow:** `ocean-eivGP.R` and `ocean-competitors.R` each fit and analyze their method group with one shared core budget; `ocean-report.R` assembles this report from saved results. Use `--reuse-only=true` on the method scripts to prohibit fitting.
 - **Action:** `report` reads saved fits; `plan` displays the proposed analysis without fitting.
 - **Dataset:** `ocean200`, `ocean500` or `ocean1000`; prepare the 1000-profile folds once using `data/ocean_silicate/prepare_folds.R`.
 - **Selection:** `folds`, `cells` and `modules` select tasks without changing seeds or numerical settings.
@@ -43,7 +43,7 @@ Runnable examples are in `README_ocean.md`.
 knitr::opts_chunk$set(echo=TRUE,message=FALSE,warning=TRUE,cache=FALSE,error=FALSE)
 Sys.setenv(OMP_NUM_THREADS="1",OPENBLAS_NUM_THREADS="1",MKL_NUM_THREADS="1",VECLIB_MAXIMUM_THREADS="1")
 if(!params$action %in% c("report","plan"))
-  stop("Run experiments with Rscript paper/applications/ocean.R --action=run; render this Rmd with action='report'.")
+  stop("Run ocean-eivGP.R and ocean-competitors.R, then ocean-report.R; render this Rmd with action='report'.")
 if(any(nzchar(as.character(unlist(params$import_dirs)))))
   stop("Import results with ocean.R --import-dirs=... before rendering the report.")
 dataset<-match.arg(params$dataset,c("ocean200","ocean500","ocean1000"))
@@ -62,7 +62,7 @@ if(file.exists(identity_path)) {
   for(key in c("chains","iter","burn"))settings[[key]] <- saved_numerics[[key]]
 }
 if(settings$action=="report" && !dir.exists(output_dir))
-  stop("Saved results not found: ",output_dir,". Run ocean.R first, or specify the existing output_dir.")
+  stop("Saved results not found: ",output_dir,". Run the method scripts first, or specify the existing output_dir.")
 diagnostics_dir <- if(nzchar(params$diagnostics_dir)) ocean_resolve_path(params$diagnostics_dir,repository_dir) else ocean_path(output_dir,"diagnostics")
 import_dirs <- as.character(unlist(params$import_dirs)); import_dirs <- import_dirs[nzchar(import_dirs)]
 import_dirs <- ocean_resolve_path(import_dirs,repository_dir)
@@ -194,7 +194,7 @@ cat(ocean_table_html(design_review$overlap,"Cruise overlap in held-out predictio
 ## 3. Model fitting and numerical assessment
 
 The following chunk reads saved fits, predictions and imputations. Model fitting
-and explicit continuation are separate `ocean.R` actions; each automatically runs analysis with the shared core budget and renders the report.
+and analysis are combined in the two method scripts. Explicit continuation remains available through `ocean.R --action=continue`; the report script never extends chains.
 
 ```{r saved-results, class.source="fold-show", results="hide"}
 snapshot<-get0(".ocean_precomputed_analysis",inherits=TRUE)

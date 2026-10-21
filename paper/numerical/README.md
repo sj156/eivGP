@@ -156,16 +156,40 @@ save, and at completion. Override with `--checkpoint-seconds=120` and/or
 time interval. Third-party optimizers and prediction calculations retain their
 existing completed-stage caching; they do not gain within-iteration restart.
 
-`<output>/checkpoints/<fit-identity>/chain-XX.rds` stores all draws, current
+`<output>/checkpoints/<fit-identity>/chain-XX.rds` stores all generated draws, current
 state, RNG state, and (for GP chains) computational cache and counters. Inputs,
 sampling settings, seeds, package module hashes, R version/platform and RNG kind
 identify a fit. Reissuing the same command restores saved iterations and reuses
 completed chains. Writes use a temporary file and same-directory rename, leaving
 the previous checkpoint intact until replacement succeeds. This protects against
 partial writes; it is not a guarantee against filesystem or disk failure.
-Keep sufficient free disk space: raw restart files retain full chain arrays,
-in addition to final analysis artifacts, and a write temporarily needs room for
-both versions. No draws are thinned for checkpointing.
+There is one rolling checkpoint per chain, not one file per save. Checkpoints
+use lossless gzip compression and contain only generated draw/trace rows, omitting
+unused allocation for future iterations. Restart restores those rows into the
+full in-memory arrays. Every generated draw is retained; no thinning is applied.
+A replacement temporarily requires space for both the old and new compressed file.
+
+When a full GP fit is published through the numerical artifact writers, the
+writer reads it back and checks exact equality, full chain-history lengths,
+and agreement of terminal states/RNG with the restart files. Only then does it
+remove that fit's redundant `chain-XX.rds` files and identity file, under the
+checkpoint lock. The full fit (including all conditional CUT chains, diagnostics
+and continuation state), timing histories, and a small `retired.rds` receipt
+remain. Partial fits, selected prediction states, scores, failed read-back checks,
+locked directories and checkpoints outside the configured root do not trigger
+retirement. If no full fit has been published, restart files remain necessary.
+Study II measurement checkpoints are compressed but retained: its analysis
+artifact does not preserve the full terminal sampler state. Cleanup adds a
+read-back verification cost at fit publication; checkpoint compression also costs
+CPU time, in exchange for reduced storage and I/O.
+
+This policy applies to newly generated, linked artifacts. It does not scan or
+delete older output trees, infer completion from a filename, or migrate historical
+runs. Existing portable-drive results need an inventory and verification against
+their final fits before cleanup. The reader supports older full-allocation
+checkpoint layouts, but the existing code/protocol compatibility checks still
+apply: do not switch a running experiment to new code or bypass its identity
+checks merely to shrink its checkpoints.
 
 After a crash, a `<fit-identity>/LOCK/owner.csv` may remain. Verify its recorded
 host and PID are no longer running before removing that exact `LOCK` directory.

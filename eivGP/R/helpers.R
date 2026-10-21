@@ -2407,6 +2407,7 @@ mixedgp_save_artifact <- function(object, path) {
   saveRDS(mixedgp_pack_artifact(object), tmp, version = 3L)
   # Never remove a valid prior checkpoint before a successful replacement.
   if (!file.rename(tmp, path)) stop("Cannot publish artifact; prior file retained: ", path)
+  mixedgp_retire_saved_checkpoints(object, path)
   invisible(path)
 }
 
@@ -12197,6 +12198,7 @@ atomic_rds <- function(x,path) {
   dir.create(dirname(path),recursive=TRUE,showWarnings=FALSE)
   tmp<-tempfile(tmpdir=dirname(path));on.exit(unlink(tmp));saveRDS(F("mixedgp_pack_artifact")(x),tmp)
   if(!file.rename(tmp,path)) stop("Cannot publish checkpoint: ",path)
+  mixedgp_retire_saved_checkpoints(x,path)
 }
 retire_conditional_fit <- function(path, states_path) {
   saved<-readRDS(states_path)
@@ -12264,7 +12266,8 @@ measurement_cut <- function(C,U_obs,cfg,seed) {
     path <- if(!is.null(disk))file.path(disk,sprintf("chain-%02d.rds",chain))else NULL
     start <- 0L; elapsed_before <- 0; started <- proc.time()[["elapsed"]]
     if(!is.null(path)&&file.exists(path)) {
-      cp<-readRDS(path); start<-cp$iteration;st<-cp$state;states<-cp$states;trace<-cp$trace
+      cp<-readRDS(path); start<-cp$iteration;st<-cp$state;states<-cp$states
+      trace<-mixedgp_checkpoint_restore_draws(list(trace=cp$trace),list(trace=trace))$trace
       elapsed_before<-cp$elapsed_seconds;F("mixedgp_restore_rng_state")(cp$rng)
     }
     last_save<-last_progress<-proc.time()[["elapsed"]];last_iteration<-start
@@ -12274,7 +12277,7 @@ measurement_cut <- function(C,U_obs,cfg,seed) {
       saving<-force || now-last_save>=getOption("eivGP.checkpoint_seconds",300) ||
         it-last_iteration>=getOption("eivGP.checkpoint_iterations",1000L)
       if(saving) {
-        mixedgp_checkpoint_write(list(iteration=it,state=st,states=states,trace=trace,
+        mixedgp_checkpoint_write(list(iteration=it,state=st,states=states,trace=trace[seq_len(max(0L,it-cfg$warmup)),,drop=FALSE],
           rng=F("mixedgp_rng_state")(),elapsed_seconds=elapsed),path)
         last_save<<-proc.time()[["elapsed"]];last_iteration<<-it
       }
@@ -12991,7 +12994,7 @@ mixedgp_checkpoint_write <- function(object, path) {
   dir.create(dirname(path), recursive=TRUE, showWarnings=FALSE)
   tmp <- tempfile(".checkpoint-", tmpdir=dirname(path))
   on.exit(unlink(tmp), add=TRUE)
-  saveRDS(object, tmp, compress=FALSE, version=3L)
+  saveRDS(object, tmp, compress="gzip", version=3L)
   if (!file.rename(tmp, path)) stop("Cannot publish checkpoint; prior file retained: ", path)
   invisible(path)
 }
@@ -13397,4 +13400,89 @@ ocean_legacy_task_relative <- function(path,profile="paper") {
   path <- sub("^eiv_(fold[0-9]+)_(O[0-9]+)(?=/|$)",paste0(initial,"/\\1/\\2"),path,perl=TRUE)
   path <- sub("^baseline_(fold[0-9]+)(?=/|$)",paste0(initial,"/\\1"),path,perl=TRUE)
   sub("^(cc_[^/]+)(?=/|$)","complete_case_baselines/fits/\\1",path,perl=TRUE)
+}
+
+# Keep only rows already generated; restore into freshly allocated arrays on
+# restart. Handles legacy checkpoints containing the full allocated arrays too.
+mixedgp_checkpoint_prefix <- function(draws, n) {
+  lapply(draws,function(x) {
+    if(is.null(x))return(NULL)
+    dims<-dim(x)
+    if(is.null(dims))return(x[seq_len(n)])
+    do.call(`[`,c(list(x,seq_len(n)),rep(list(TRUE),length(dims)-1L),list(drop=FALSE)))
+  })
+}
+mixedgp_checkpoint_restore_draws <- function(saved, allocated) {
+  if(!identical(names(saved),names(allocated)))stop("Checkpoint draw fields differ")
+  for(name in names(allocated)) {
+    x<-saved[[name]];target<-allocated[[name]]
+    if(is.null(x)&&is.null(target))next
+    dims<-dim(target);n<-if(is.null(dim(x)))length(x)else dim(x)[1L]
+    limit<-if(is.null(dims))length(target)else dims[1L]
+    if(n>limit || !identical(dim(x)[-1L],dims[-1L]))stop("Checkpoint draw dimensions differ")
+    if(n) {
+      if(is.null(dims))target[seq_len(n)]<-x else
+        target<-do.call(`[<-`,c(list(target,seq_len(n)),rep(list(TRUE),length(dims)-1L),list(value=x)))
+    }
+    allocated[name]<-list(target)
+  }
+  allocated
+}
+mixedgp_checkpoint_reference <- function(directory) {
+  if(is.null(directory))return(NULL)
+  list(directory=normalizePath(directory,mustWork=TRUE),
+       identity_md5=unname(tools::md5sum(file.path(directory,"identity.rds"))))
+}
+
+# Retirement is allowed only when an exact read-back of a published full fit
+# succeeds. Selected prediction states, scores and incomplete fits never qualify.
+mixedgp_retire_saved_checkpoints <- function(object, path) {
+  refs<-function(x) {
+    if(!is.list(x)||is.data.frame(x))return(list())
+    ref<-attr(x,"eivgp_restart_storage",exact=TRUE)
+    if(!is.null(ref) && is.list(x$checkpoint) && length(x$mcmc$samples_by_chain)) {
+      expected<-x$checkpoint$iteration-x$checkpoint$burn
+      parts<-unlist(x$mcmc$samples_by_chain,recursive=FALSE)
+      complete<-is.finite(expected)&&expected>0 && all(vapply(parts,function(a)
+        is.null(a)||(if(is.null(dim(a)))length(a)else dim(a)[1L])==expected,logical(1)))
+      if(complete)return(list(c(ref,list(checkpoint=x$checkpoint))))
+      return(list())
+    }
+    if(is.list(x$mcmc))return(list())
+    unlist(lapply(x,refs),recursive=FALSE)
+  }
+  candidates<-refs(object)
+  root<-getOption("eivGP.checkpoint_root",NULL)
+  if(!length(candidates)||is.null(root))return(invisible(NULL))
+  # Do not risk successful fitting because cleanup encounters an I/O problem.
+  tryCatch({
+    if(!identical(readRDS(path),mixedgp_pack_artifact(object)))
+      stop("Published artifact did not match read-back; restart files retained")
+    root<-normalizePath(root,mustWork=TRUE)
+    final<-normalizePath(path,mustWork=TRUE)
+    for(ref in candidates) local({
+      dir<-normalizePath(ref$directory,mustWork=FALSE)
+      if(!startsWith(dir,paste0(root,.Platform$file.sep)) ||
+         startsWith(final,paste0(dir,.Platform$file.sep)))return(NULL)
+      manifest<-file.path(dir,"identity.rds")
+      if(!file.exists(manifest)||!identical(unname(tools::md5sum(manifest)),ref$identity_md5))return(NULL)
+      lock<-file.path(dir,"LOCK")
+      if(!dir.create(lock,showWarnings=FALSE))return(NULL)
+      on.exit(unlink(lock,recursive=TRUE),add=TRUE)
+      files<-list.files(dir,pattern="^chain-[0-9]+[.]rds$",full.names=TRUE)
+      if(length(files)!=length(ref$checkpoint$states))return(NULL)
+      for(i in seq_along(files)) {
+        raw<-readRDS(files[i]);terminal<-ref$checkpoint$states[[i]]
+        if(!identical(raw$iteration,ref$checkpoint$iteration) ||
+           !identical(raw$state,terminal$state) || !identical(raw$rng,terminal$rng))return(NULL)
+      }
+      # Receipt and timing logs remain as a small audit trail.
+      mixedgp_checkpoint_write(list(artifact=final,artifact_md5=unname(tools::md5sum(final)),
+        retired_utc=format(Sys.time(),tz="UTC",usetz=TRUE),
+        restart_bytes=sum(file.info(files)$size,na.rm=TRUE)),file.path(dir,"retired.rds"))
+      if(length(files) && unlink(files)!=0L)stop("Some redundant restart files could not be removed")
+      if(!any(file.exists(files)))unlink(manifest)
+    })
+  },error=function(e)warning("Checkpoint cleanup: ",conditionMessage(e),call.=FALSE))
+  invisible(NULL)
 }

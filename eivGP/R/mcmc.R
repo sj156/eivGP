@@ -8658,7 +8658,8 @@ mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
       cp <- readRDS(path)
       if (!identical(cp$schema, 1L) || cp$iteration < start || cp$iteration > n_iter)
         stop("Invalid sampler disk checkpoint: ", path)
-      state <- cp$state; initial <- cp$initial; draws <- cp$draws; saved <- cp$saved
+      state <- cp$state; initial <- cp$initial
+      draws <- mixedgp_checkpoint_restore_draws(cp$draws, draws); saved <- cp$saved
       chain_start <- cp$iteration; elapsed_before <- cp$elapsed_seconds
       list2env(cp$counts, ctx$counts)
       ctx$cache$key <- cp$cache$key; ctx$cache$value <- cp$cache$value
@@ -8675,7 +8676,7 @@ mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
         iteration-last_iteration >= getOption("eivGP.checkpoint_iterations", 1000L)
       if (saving) {
         mixedgp_checkpoint_write(list(schema=1L, iteration=iteration, state=state,
-          initial=initial, draws=draws, saved=saved, counts=as.list(ctx$counts),
+          initial=initial, draws=mixedgp_checkpoint_prefix(draws, saved), saved=saved, counts=as.list(ctx$counts),
           cache=list(key=ctx$cache$key,value=ctx$cache$value), rng=mixedgp_rng_state(),
           elapsed_seconds=elapsed), path)
         last_save <<- proc.time()[["elapsed"]]; last_iteration <<- iteration
@@ -8744,7 +8745,8 @@ mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
   list(chains = chains, priors = priors, control = control,
        iteration = n_iter, burn = burn, sampler_version = "0.3.1",
        time_seconds = unname(timing["elapsed"]),
-       parallel_backend = if (use_fork) "fork" else "serial", parallel_cores = workers)
+       parallel_backend = if (use_fork) "fork" else "serial", parallel_cores = workers,
+       restart_storage = mixedgp_checkpoint_reference(disk))
 }
 
 
@@ -9009,6 +9011,7 @@ mixedgp_v030_fit_object <- function(result, data, engine, kernel, matern_nu,
     fit$diagnostics$rhat_A <- get_rows("^A\\[")
     fit$diagnostics$summary$max_rhat_A <- finite_summary(fit$diagnostics$rhat_A$rhat, max)
   }
+  if (!is.null(result$restart_storage)) attr(fit,"eivgp_restart_storage") <- result$restart_storage
   mixedgp_hmc_attach_diagnostics(fit)
 }
 

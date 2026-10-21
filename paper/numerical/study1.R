@@ -1,3 +1,4 @@
+# Combined compatibility entry point; separate-machine scripts: study1-eivGP.R and study1-competitors.R.
 # Complete Study I paper reproduction: original study and calibrated competitors.
 # Default action is plan; use --action=data, run, or report explicitly.
 # Original (X,C) predictors and complete-case (X,U,C) additions share this entry point.

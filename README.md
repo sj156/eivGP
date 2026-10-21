@@ -122,8 +122,9 @@ Rscript paper/numerical/study2-eivGP.R --action=plan
 Rscript paper/numerical/study2-competitors.R --action=plan
 ```
 
-Study I retains `paper/numerical/study1.R` for the complete paper workflow including
-its calibrated complete-case comparisons. See the
+Study I uses `study1-eivGP.R` and `study1-competitors.R` for the same split,
+including all calibrated comparisons. See [Study I reproduction](paper/numerical/study1-README.md).
+The combined `paper/numerical/study1.R` remains available. See the
 [numerical guide](paper/numerical/README.md). All execution requires an explicit
 run action. Data, fits, and checkpoints belong in external non-synced result
 folders; manuscript sources and figures are exported separately.

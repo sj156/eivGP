@@ -13022,7 +13022,6 @@ run_paper_study <- function(study=c("study1","study2"), args=list(), repo_root=g
   result<-list()
   # Independent original competitors use only frozen data, never joint EIV fits.
   if(component=="core-competitors") {
-    if(study!="study2")stop("core-competitors is a Study II workflow")
     if(action=="fit")stop("Use action=run for original competitors")
     config<-study_config(study,profile,output_root=file.path(root,"core"),data_root=data,cores=as.integer(get("cores","4")))
     methods<-strsplit(get("competitors","UC-GP,LVGP,EzGP"),",",fixed=TRUE)[[1]]

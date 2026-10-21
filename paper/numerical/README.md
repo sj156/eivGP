@@ -1,31 +1,14 @@
 # Numerical paper replication
 
-## Study II
-
-Use [Study II reproduction](study2-README.md). The active files are:
-
-- `study2-eivGP.R`: complete EIV-GP paper workload, including CUT and independent-test scoring.
-- `study2-competitors.R`: all original and complete-case competitors, independently.
-- `study2-common.R`: thin lane selection; inference remains in the package.
-- `study2.R`, `study2.Rmd`, `study2.html`: saved-result reporting.
-
-The combined temporary Study II launcher is retired. No pilot or integration
-sensitivity run is needed merely to reproduce the current paper. Use separate
-machine-local output roots and the same source, settings, and frozen data.
-
 ## Study I
 
-Install with `Rscript tools/setup_numerical.R`. The complete workflow is
-`Rscript paper/numerical/study1.R --action=plan --profile=paper`; select
-`--component=core` for the original study or `--component=complete-case` for the
-published complete-case adaptations. `--action=run` executes deliberately;
-`--action=report` reads saved outputs. Notebook: `study1.Rmd`.
-
-The complete paper workflow includes all 600 calibrated competitor fits with
-four measurement chains, 12000/4000 total/warmup iterations, 16 outer states,
-128 latent draws for means and 64 for response scoring. A separate follow-up
-launcher is unnecessary for fresh replication. Historical saved scores remain
-available for reproducing the current manuscript without new fitting.
+[Study I reproduction](study1-README.md) follows the same separate-machine and
+reporting standards as Study II. `study1-eivGP.R` covers eivGP;
+`study1-competitors.R` covers original and calibrated competitors. Default action
+is plan; use `--action=run` explicitly. The former follow-up comparisons are
+included automatically. `study1.R` remains a combined compatibility entry point.
+`study1.Rmd` is report-only. Both studies use `convergence-report.R` / `.Rmd` for
+failure rates and matched diagnostic-screened accuracy; keep Study I regimes separate.
 
 ## Shared conventions
 

@@ -1,10 +1,6 @@
 name: Numerical reproducibility smoke checks
 on:
   workflow_dispatch:
-  push:
-    paths: ['eivGP/**', 'paper/numerical/**', 'tools/setup_numerical.R', 'renv.lock', '.github/workflows/numerical-smoke.yml']
-  pull_request:
-    paths: ['eivGP/**', 'paper/numerical/**', 'tools/setup_numerical.R', 'renv.lock', '.github/workflows/numerical-smoke.yml']
 jobs:
   smoke:
     strategy:

@@ -2,6 +2,12 @@
 
 Use the same three method-oriented entrypoints as Ocean:
 
+The application file layout matches Ocean: three method entrypoints, `adni.R`,
+`adni-workflow.R`, `adni.Rmd` and `adni.html`. Scientific implementation is in
+the installed package's existing `helpers.R`, exposed by `adni_workflow_api()`
+and `run_adni_application()`. Rebuild and reinstall this checkout before using
+these entrypoints (eivGP 0.4.0.9014 or later with matching module hashes).
+
 ```sh
 Rscript paper/applications/adni-eivGP.R --plan=true --profile=paper --cores=16
 Rscript paper/applications/adni-eivGP.R --profile=paper --cores=16

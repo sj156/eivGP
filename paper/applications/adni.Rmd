@@ -31,7 +31,7 @@ here<-dirname(knitr::current_input(dir=TRUE));repository_dir<-normalizePath(file
 # A local copy may live outside the checkout; the rendering caller supplies its root.
 if(exists('.adni_repository_dir',inherits=TRUE))repository_dir<-get('.adni_repository_dir',inherits=TRUE)
 source(file.path(repository_dir,'paper/applications/adni.R'),local=TRUE)
-source(file.path(repository_dir,'paper/applications/adni-reporting.R'),local=TRUE)
+list2env(as.list(adni_load_api(repository_dir)),envir=environment())
 a<-get0('.adni_precomputed_analysis',inherits=TRUE)
 if(is.null(a)&&params$action=='report') {
   data_dir<-if(nzchar(params$data_dir))params$data_dir else file.path(repository_dir,'data/adni/inputs')

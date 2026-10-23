@@ -1,6 +1,6 @@
 Package: eivGP
 Title: Gaussian Process Regression with Ordinal Mixed Inputs
-Version: 0.4.0.9013
+Version: 0.4.0.9014
 Authors@R: c( person("Penghui", "Fu", role = "aut"), person("Xinye",
         "Chen", role = "aut"), person("Jianhua Z.", "Huang", role =
         "aut"), person("Sheng", "Jiang", , "jiangsheng@cuhk.edu.cn",
@@ -15,7 +15,7 @@ License: MIT + file LICENSE
 Depends: R (>= 4.1.0)
 Imports: Rcpp, graphics, grDevices, dplyr, tidyr, ggplot2, knitr, patchwork, methods, parallel, posterior, stats, tools, TruncatedNormal,
         utils
-Suggests: digest, rmarkdown, EzGP, kergp, LVGP, testthat
+Suggests: digest, jsonlite, rmarkdown, EzGP, kergp, LVGP, testthat
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 8.0.0

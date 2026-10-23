@@ -60,3 +60,6 @@ importFrom(Rcpp,evalCpp)
 export(prune_study_checkpoints)
 
 export(report_numerical_convergence)
+
+export(adni_workflow_api)
+export(run_adni_application)

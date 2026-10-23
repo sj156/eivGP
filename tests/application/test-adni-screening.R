@@ -1,6 +1,7 @@
 # Author: Xinye Chen. Synthetic contract checks; no participant records in tests.
 repo<-Sys.getenv('EIVGP_TEST_REPO');stopifnot(nzchar(repo))
-source(file.path(repo,'paper/applications/adni-workflow.R'))
+source(file.path(repo,'paper/applications/adni.R'))
+list2env(as.list(adni_load_api(repo)),envir=environment())
 a<-adni_screen_api(repo)
 fixture<-function(root,q=4L,plan='Plan1-6-1'){
  set.seed(819L);n<-40L

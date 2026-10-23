@@ -13815,3 +13815,1776 @@ mixedgp_retire_study1_measurement <- function(object,path) {
   },error=function(e)warning("Measurement checkpoint cleanup: ",conditionMessage(e),call.=FALSE))
   invisible(NULL)
 }
+
+
+# ============================================================================
+# ADNI prepared-fold application: adni-data.R
+# ============================================================================
+
+# Author: Xinye Chen. ADNI measurement, validation and scoring adapters.
+# Models, prediction, optimizers and CPU scheduling remain in the unmodified installed upstream package.
+adni_ezgp_mixed_matrix <- function(X, C, m_vec) {
+    X <- as.matrix(X)
+    C <- as.matrix(C)
+    if (!is.numeric(X) || any(!is.finite(X)))
+        stop("X must be a finite numeric matrix.")
+    if (nrow(X) != nrow(C) || ncol(C) != length(m_vec))
+        stop("X/C dimensions do not match.")
+    if (any(!is.finite(C)) || any(C != round(C)))
+        stop("C must contain finite integer codes.")
+    for (j in seq_along(m_vec)) {
+        if (any(C[, j] < 1L | C[, j] > m_vec[j]))
+            stop("C contains an out-of-range category.")
+    }
+    out <- cbind(X, C)
+    storage.mode(out) <- "double"
+    colnames(out) <- c(paste0("x", seq_len(ncol(X))), paste0("c", seq_len(ncol(C))))
+    out
+}
+
+adni_ezgp_cross_collisions <- function(train_x, test_x, digits = 5L) {
+    train_key <- apply(round(as.matrix(train_x), digits), 1L, paste, collapse = "\r")
+    test_key <- apply(round(as.matrix(test_x), digits), 1L, paste, collapse = "\r")
+    sum(test_key %in% train_key)
+}
+
+adni_ezgp_predict_covariance_consistent <- function(X_new, model) {
+    if (!inherits(model, "EzGP model"))
+        stop("model must be an EzGP model.")
+    if (!requireNamespace("EzGP", quietly = TRUE))
+        stop("Package 'EzGP' is not installed.")
+    X_new <- as.matrix(X_new)
+    X_train <- as.matrix(model$data$X)
+    Y <- as.numeric(model$data$Y)
+    p <- as.integer(model$data$p)
+    q <- as.integer(model$data$q)
+    m <- as.integer(model$data$m)
+    n <- nrow(X_train)
+    tau <- as.numeric(model$data$tau)
+    parv <- as.numeric(model$param)
+    if (ncol(X_new) != ncol(X_train))
+        stop("X_new has the wrong number of columns.")
+    if (length(parv) == 0L || any(!is.finite(parv)) || !is.finite(tau) || tau < 0) {
+        stop("EzGP fit has invalid parameters or nugget.")
+    }
+    K <- EzGP:::cov_m(X_train, p, q, m, n, parv, tau)
+    Tm <- try(chol(K), silent = TRUE)
+    if (inherits(Tm, "try-error"))
+        stop("EzGP training covariance is not Cholesky-factorable.")
+    invT <- backsolve(Tm, diag(n))
+    invc <- invT %*% t(invT)
+    one <- matrix(1, nrow = n, ncol = 1L)
+    y <- matrix(Y, ncol = 1L)
+    mu <- as.numeric((t(one) %*% invc %*% y)/sum(invc))
+    npar <- 1L + q + p + p * sum(m)
+    psum <- function(x1, x2, par2) sum(-par2 * (x1 - x2)^2)
+    covx <- function(w1, w2) {
+        par1 <- parv[seq_len(q + 1L)]
+        par2 <- parv[(q + 2L):(q + 1L + p)]
+        par3 <- parv[(q + 2L + p):npar]
+        x1 <- w1[seq_len(p)]
+        z1 <- w1[p + seq_len(q)]
+        x2 <- w2[seq_len(p)]
+        z2 <- w2[p + seq_len(q)]
+        value <- par1[1L] * exp(psum(x1, x2, par2))
+        for (j in seq_len(q)) {
+            if (z1[j] == z2[j]) {
+                level <- as.integer(z1[j])
+                offset <- (sum(m[seq_len(j)]) - m[j] + level - 1L) * p
+                idx <- offset + seq_len(p)
+                value <- value + par1[j + 1L] * exp(psum(x1, x2, par3[idx]))
+            }
+        }
+        value
+    }
+    means <- latent_var <- numeric(nrow(X_new))
+    prior_var <- sum(parv[seq_len(q + 1L)])
+    centered_y <- y - mu * one
+    for (j in seq_len(nrow(X_new))) {
+        gamma <- matrix(vapply(seq_len(n), function(i) covx(X_new[j, ], X_train[i, ]), numeric(1)), ncol = 1L)
+        means[j] <- as.numeric(mu + t(gamma) %*% invc %*% centered_y)
+        latent_var[j] <- as.numeric(prior_var - t(gamma) %*% invc %*% gamma)
+    }
+    predictive_var <- latent_var + tau
+    tolerance <- 100 * (nrow(X_new) + 1L) * .Machine$double.eps * max(1, max(abs(predictive_var)))
+    if (any(!is.finite(means)) || any(!is.finite(predictive_var)) || any(predictive_var < -tolerance)) {
+        stop("Covariance-consistent EzGP prediction returned invalid predictive variances.")
+    }
+    predictive_var <- pmax(predictive_var, 0)
+    list(Y_hat = means, latent_MSE = latent_var, predictive_MSE = predictive_var, tau = tau)
+}
+
+adni_ezgp_select_tau_cv <- function(train_x, y_train, p, q, m_vec, seed, tau_fractions, cv_folds = 3L, maxeval = 100L,
+    progress = NULL, initial_audit = NULL) {
+    n <- nrow(train_x)
+    cv_folds <- max(2L, min(as.integer(cv_folds), n))
+    set.seed(as.integer(seed))
+    fold_id <- sample(rep(seq_len(cv_folds), length.out = n))
+    response_var <- max(stats::var(y_train), .Machine$double.eps)
+    tau_fractions <- unique(as.numeric(tau_fractions))
+    tau_grid <- tau_fractions * response_var
+    audit <- list()
+    index <- 0L
+    for (tt in seq_along(tau_grid)) {
+        for (fold in seq_len(cv_folds)) {
+            index <- index + 1L
+            train_id <- fold_id != fold
+            validation_id <- !train_id
+            prior <- if (is.data.frame(initial_audit)) {
+                initial_audit[initial_audit$tau_index == tt & initial_audit$inner_fold == fold, , drop = FALSE]
+            }
+            else data.frame()
+            if (nrow(prior) == 1L) {
+                audit[[index]] <- prior
+                if (is.function(progress))
+                  progress(do.call(rbind, audit), index, length(tau_grid) * cv_folds)
+                next
+            }
+            started <- proc.time()[["elapsed"]]
+            warnings <- character()
+            ans <- tryCatch(withCallingHandlers({
+                fit <- EzGP::EzGP_fit(X = train_x[train_id, , drop = FALSE], Y = as.numeric(y_train[train_id]),
+                  p = p, q = q, m = m_vec, tau = tau_grid[tt], maxeval = as.integer(maxeval))
+                if (length(fit$param) == 0L || any(!is.finite(fit$param))) {
+                  stop("EzGP returned non-finite fitted parameters.")
+                }
+                pred <- adni_ezgp_predict_covariance_consistent(train_x[validation_id, , drop = FALSE], fit)
+                error <- pred$Y_hat - y_train[validation_id]
+                if (any(pred$predictive_MSE <= 0))
+                  stop("EzGP CV returned zero predictive variance.")
+                list(nlpd = mean(0.5 * log(2 * pi * pred$predictive_MSE) + 0.5 * error^2/pred$predictive_MSE),
+                  mse = mean(error^2), message = "")
+            }, warning = function(w) {
+                warnings <<- c(warnings, conditionMessage(w))
+                invokeRestart("muffleWarning")
+            }), error = function(e) list(nlpd = NA_real_, mse = NA_real_, message = conditionMessage(e)))
+            audit[[index]] <- data.frame(tau_index = tt, tau_fraction = tau_fractions[tt], tau = tau_grid[tt],
+                inner_fold = fold, n_train = sum(train_id), n_validation = sum(validation_id), rounded_cross_collisions = adni_ezgp_cross_collisions(train_x[train_id,
+                  , drop = FALSE], train_x[validation_id, , drop = FALSE]), nlpd = ans$nlpd, mse = ans$mse, elapsed_seconds = unname(proc.time()[["elapsed"]] -
+                  started), message = ans$message, warnings = paste(unique(warnings), collapse = " | "), stringsAsFactors = FALSE)
+            if (is.function(progress))
+                progress(do.call(rbind, audit), index, length(tau_grid) * cv_folds)
+        }
+    }
+    audit <- do.call(rbind, audit)
+    candidate <- do.call(rbind, lapply(seq_along(tau_grid), function(tt) {
+        z <- audit[audit$tau_index == tt, , drop = FALSE]
+        data.frame(tau_index = tt, tau_fraction = tau_fractions[tt], tau = tau_grid[tt], cv_nlpd = if (all(is.finite(z$nlpd)))
+            mean(z$nlpd)
+        else Inf, cv_mse = if (all(is.finite(z$mse)))
+            mean(z$mse)
+        else Inf, successful_folds = sum(is.finite(z$nlpd)), stringsAsFactors = FALSE)
+    }))
+    if (!any(is.finite(candidate$cv_nlpd))) {
+        stop("Covariance-consistent EzGP training-only CV failed for every nugget value.")
+    }
+    best <- which.min(candidate$cv_nlpd)
+    list(tau = candidate$tau[best], selected_index = candidate$tau_index[best], cv_score = "nlpd", fold_id = fold_id,
+        audit = audit, candidates = candidate)
+}
+
+adni_ezgp_draws <- function(mean, variance, n_draw, seed) {
+    if (any(!is.finite(mean)) || any(!is.finite(variance)) || any(variance < 0)) {
+        stop("Invalid predictive mean or variance.")
+    }
+    set.seed(as.integer(seed))
+    matrix(stats::rnorm(n_draw * length(mean), rep(mean, each = n_draw), rep(sqrt(variance), each = n_draw)), nrow = n_draw,
+        ncol = length(mean))
+}
+
+adni_plan_require <- function() {
+    for (p in c("jsonlite", "digest", "kergp", "LVGP", "EzGP")) if (!requireNamespace(p, quietly = TRUE))
+        stop("Required ADNI dependency: ", p)
+}
+
+adni_plan_input_root <- function(path) {
+    path <- path.expand(path)
+    if (dir.exists(file.path(path, "MC")))
+        path <- file.path(path, "MC")
+    normalizePath(path, mustWork = TRUE)
+}
+
+adni_plan_inputs <- function(data_dir) {
+    if (!requireNamespace("jsonlite", quietly = TRUE))
+        stop("Install jsonlite to read ADNI protocols.")
+    root <- adni_plan_input_root(data_dir)
+    all <- list()
+    audit <- list()
+    files <- character()
+    held <- list()
+    reference <- NULL
+    for (f in 1:5) {
+        by_cell <- list()
+        for (cell in c("O0", "O20", "O50")) {
+            dir <- file.path(root, sprintf("fold%02d", f), cell)
+            paths <- file.path(dir, c("PROTOCOL.json", "private/train.csv", "private/test.csv"))
+            if (!all(file.exists(paths)))
+                stop("Missing private fold inputs: ", dir)
+            p <- jsonlite::fromJSON(paths[1], simplifyVector = TRUE)
+            tr <- read.csv(paths[2], stringsAsFactors = FALSE)
+            te <- read.csv(paths[3], stringsAsFactors = FALSE)
+            q <- as.integer(p$q)
+            d <- as.integer(p$d)
+            xc <- grep("^X[0-9]+$", names(tr), value = TRUE)
+            xc <- xc[order(as.integer(sub("X", "", xc)))]
+            cc <- paste0("C", seq_len(q))
+            uc <- paste0("U", seq_len(d))
+            needed <- c("RID", "Y", xc, cc, uc, "calibration")
+            if (!length(xc) || !all(needed %in% names(tr)) || !all(needed %in% names(te)))
+                stop("Invalid fold columns: ", dir)
+            if(length(p$X_order)!=length(xc)||p$p!=length(xc))stop('Continuous-X labels/dimensions differ: ',dir)
+            if(any(vapply(tr[,xc,drop=FALSE],function(v)length(unique(v))<=2L,TRUE)))
+                stop('X must be continuous; fix binary/categorical population attributes before fitting: ',dir)
+            if(any(te$calibration!=0L))stop('Test calibration must be zero: ',dir)
+            if (anyNA(tr[, needed]) || anyNA(te[, needed]) || any(!is.finite(as.matrix(tr[, setdiff(needed, "RID")]))) ||
+                any(!is.finite(as.matrix(te[, setdiff(needed, "RID")]))))
+                stop("Non-finite private inputs: ", dir)
+            if (anyDuplicated(tr$RID) || anyDuplicated(te$RID) || length(intersect(tr$RID, te$RID)))
+                stop("Training/test ID overlap: ", dir)
+            if (nrow(tr) != p$training_N || nrow(te) != p$test_N || p$fold != f || p$O != cell || nrow(tr) + nrow(te) !=
+                p$N)
+                stop("Protocol row counts do not match: ", dir)
+            if (!all(tr$calibration %in% 0:1) || sum(tr$calibration) != p$observed_training_U)
+                stop("Calibration mask differs: ", dir)
+            if (!is.null(p$train_md5) && !identical(tolower(p$train_md5), unname(tools::md5sum(paths[2]))))
+                stop("Training checksum differs: ", dir)
+            if (!is.null(p$test_md5) && !identical(tolower(p$test_md5), unname(tools::md5sum(paths[3]))))
+                stop("Test checksum differs: ", dir)
+            if (length(p$U_order) != d || length(p$C_order) != q || length(p$m_vec) != q)
+                stop("Protocol coordinate labels differ: ", dir)
+            for (j in seq_len(q)) if (!all(tr[[cc[j]]] %in% seq_len(p$m_vec[j])) || !all(te[[cc[j]]] %in% seq_len(p$m_vec[j])) ||
+                !all(seq_len(p$m_vec[j]) %in% tr[[cc[j]]]))
+                stop("Invalid native ordinal levels: ", dir)
+            observed <- tr$calibration == 1L
+            available <- as.character(p$test_U_available_RID)
+            if (cell == "O0") {
+                if (any(observed) || length(available) || p$ident != "lower_triangular" || isTRUE(p$standardize_U))
+                  stop("O0 must use unanchored model coordinates.")
+            }
+            else {
+                if (!any(observed) || !isTRUE(p$standardize_U) || p$ident != "none")
+                  stop("Calibrated U must use the stated raw-coordinate anchoring.")
+                if (!all(available %in% as.character(te$RID)) || anyDuplicated(available))
+                  stop("Invalid fixed test-U mask: ", dir)
+                if (qr(cbind(1, as.matrix(tr[observed, uc, drop = FALSE])))$rank < d + 1L)
+                  stop("Calibration vectors have insufficient affine rank.")
+            }
+            seed_names <- c("production", "posterior", "prediction", "mixed_prediction", "UC_GP", "LVGP", "EzGP",
+                "EzGP_draws")
+            if (!all(seed_names %in% names(p$seeds)))
+                stop("Missing fixed protocol seeds: ", dir)
+            for (n in seed_names) mixedgp_as_integer_strict(p$seeds[[n]], paste("seed", n), 0L, 1L)
+            by_cell[[cell]] <- list(train = tr, test = te, protocol = p, x = xc, c = cc, u = uc, available = te$RID %in%
+                available)
+            files <- c(files, paths)
+            audit[[length(audit) + 1L]] <- data.frame(fold = f, cell = cell, n_train = nrow(tr), n_test = nrow(te),
+                n_calibration = sum(observed), n_test_U = sum(te$RID %in% available), q = q, d = d)
+        }
+        a <- by_cell$O0
+        for (cell in c("O20", "O50")) {
+            b <- by_cell[[cell]]
+            if (!identical(a$train[, setdiff(names(a$train), "calibration")], b$train[, setdiff(names(b$train),
+                "calibration")]) || !identical(a$test, b$test))
+                stop("Cells must share the same frozen fold records.")
+        }
+        if (any(by_cell$O20$train$calibration > by_cell$O50$train$calibration) || any(by_cell$O20$available & !by_cell$O50$available))
+            stop("Calibration/test-U masks must be nested.")
+        ids <- sort(as.character(c(a$train$RID, a$test$RID)))
+        if (is.null(reference))
+            reference <- ids
+        else if (!identical(reference, ids))
+            stop("Fold populations differ.")
+        held[[f]] <- as.character(a$test$RID)
+        for (cell in names(by_cell)) all[[paste(f, cell, sep = "/")]] <- by_cell[[cell]]
+    }
+    if (anyDuplicated(unlist(held)) || !identical(sort(unlist(held)), reference))
+        stop("Each person must be held out exactly once.")
+    list(root = root, cells = all, audit = do.call(rbind, audit), files = files, N = length(reference))
+}
+
+adni_plan_fit_args <- function(z, s) {
+    p <- z$protocol
+    u <- as.matrix(z$train[, z$u, drop = FALSE])
+    colnames(u) <- p$U_order
+    u[z$train$calibration == 0L, ] <- NA_real_
+    cmat <- as.matrix(z$train[, z$c, drop = FALSE])
+    colnames(cmat) <- p$C_order
+    # The input contract encodes each native item as1:m; JSON may simplify nested arrays.
+    levels <- lapply(as.integer(p$m_vec), function(m) as.numeric(seq_len(m)))
+    list(X = as.matrix(z$train[, z$x, drop = FALSE]), y = z$train$Y, C = cmat, U_obs = u, latent_dim = p$d, engine = "multivariate",
+        m_vec = as.integer(p$m_vec), ordinal_levels = levels, ident = p$ident, standardize_U = isTRUE(p$standardize_U),
+        kernel = "se", store_scores = TRUE, thin = 1L,
+        sampler = if (!is.null(s$samplers)) s$samplers[[p$O]] else if (p$O == "O50") "ESS" else "HMC",
+        parallel = s$cores > 1L, n_cores = s$cores,
+        n_chains = s$chains, seed = p$seeds$production, verbose = TRUE)
+}
+
+adni_plan_fit_path <- function(out, task) file.path(out, "fits", sprintf("fold%02d", task$fold), task$cell, "fit.rds")
+
+adni_plan_read_fit <- function(path) mixedgp_read_artifact(path)
+
+adni_plan_save_fit <- function(fit, path) {
+    dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+    tmp <- tempfile(".adni-fit-", tmpdir = dirname(path))
+    on.exit(unlink(tmp), add = TRUE)
+    saveRDS(mixedgp_pack_artifact(fit), tmp)
+    restored <- mixedgp_read_artifact(tmp)
+    if (!identical(restored, fit))
+        stop("ADNI checkpoint read-back differs; previous checkpoint retained.")
+    rm(restored)
+    gc(FALSE)
+    if (!file.rename(tmp, path))
+        stop("Could not publish ADNI checkpoint; previous retained: ", path)
+    invisible(path)
+}
+
+adni_plan_fit_task <- function(task, inputs, out, s, extend = FALSE) {
+    z <- inputs$cells[[paste(task$fold, task$cell, sep = "/")]]
+    path <- adni_plan_fit_path(out, task)
+    old <- options(eivGP.checkpoint_root = NULL)
+    on.exit(options(old), add = TRUE)
+    fit <- if (file.exists(path))
+        adni_plan_read_fit(path)
+    else NULL
+    target <- s$iter
+    request <- file.path(dirname(path), "continuation_request.rds")
+    if (extend) {
+        if (is.null(fit))
+            stop("Missing initial fit: ", path)
+        tab <- adni_plan_diagnostics(fit)
+        if (!file.exists(request)) {
+            if (isTRUE(tab$summary$core_pass))
+                return(invisible("SKIPPED_CONVERGED"))
+            ocean_atomic_rds(list(from = fit$checkpoint$iteration, target = fit$checkpoint$iteration + s$continuation_iter,
+                added = s$continuation_iter), request)
+        }
+        req <- readRDS(request)
+        if (req$added != s$continuation_iter)
+            stop("Saved continuation length differs; use its original --continuation-iter.")
+        target <- req$target
+    }
+    else if (file.exists(request))
+        target <- readRDS(request)$target
+    if (is.null(fit)) {
+        first <- min(target, s$first_checkpoint)
+        fit <- do.call(fit_eivgp, c(adni_plan_fit_args(z, s), list(n_iter = first, burn = s$burn)))
+        adni_plan_save_fit(fit, path)
+    }
+    while (fit$checkpoint$iteration < target) {
+        current <- fit$checkpoint$iteration
+        next_target <- min(target, (floor(current/s$checkpoint_step) + 1L) * s$checkpoint_step)
+        fit <- continue_eivgp(fit, n_iter = next_target - current, parallel = s$cores > 1L, n_cores = s$cores,
+            verbose = TRUE)
+        adni_plan_save_fit(fit, path)
+    }
+    if (fit$checkpoint$burn != s$burn || length(fit$checkpoint$states) != s$chains)
+        stop("Saved fit settings differ.")
+    dg <- adni_plan_diagnostics(fit)
+    ocean_atomic_csv(dg$parameters, file.path(dirname(path), "diagnostic_parameters.csv"))
+    ocean_atomic_csv(dg$summary, file.path(dirname(path), "diagnostic_summary.csv"))
+    invisible("DONE")
+}
+
+adni_plan_diagnostics <- function(fit) {
+    parts <- fit$diagnostics[grep("^rhat_", names(fit$diagnostics))]
+    parts <- Filter(function(z) is.data.frame(z) && all(c("parameter", "rhat", "ess_bulk", "ess_tail") %in% names(z)),
+        parts)
+    d <- do.call(rbind, lapply(names(parts), function(n) {
+        z <- parts[[n]][, c("parameter", "rhat", "ess_bulk", "ess_tail")]
+        z$group <- n
+        z
+    }))
+    core <- d[!grepl("^dictionary_occupancy", d$parameter), , drop = FALSE]
+    pass <- function(z) nrow(z) > 0L && all(is.finite(z$rhat) & is.finite(z$ess_bulk) & is.finite(z$ess_tail) &
+        z$rhat <= 1.01 & z$ess_bulk >= 400 & z$ess_tail >= 400)
+    mx <- function(x) if (any(is.finite(x)))
+        max(x[is.finite(x)])
+    else NA_real_
+    mn <- function(x) if (any(is.finite(x)))
+        min(x[is.finite(x)])
+    else NA_real_
+    list(parameters = d, summary = data.frame(iterations = fit$checkpoint$iteration, burn = fit$checkpoint$burn,
+        chains = length(fit$checkpoint$states), max_rhat = mx(core$rhat), min_bulk_ESS = mn(core$ess_bulk), min_tail_ESS = mn(core$ess_tail),
+        core_nonfinite = sum(!is.finite(core$rhat) | !is.finite(core$ess_bulk) | !is.finite(core$ess_tail)), core_pass = pass(core),
+        strict_all_pass = pass(d)))
+}
+
+adni_plan_score <- function(draws, point, truth, training_sd) {
+    draws <- as.matrix(draws)
+    point <- as.numeric(point)
+    if (ncol(draws) != length(truth) || any(!is.finite(draws)) || any(!is.finite(point)) || !is.finite(training_sd) ||
+        training_sd <= 0)
+        stop("Invalid held-out predictive scores.")
+    qq <- apply(draws, 2, quantile, c(0.025, 0.975))
+    r <- sqrt(mean((point - truth)^2))
+    a <- mean(abs(point - truth))
+    crps <- mean(vapply(seq_along(truth), function(j) {
+        v <- sort(draws[, j])
+        n <- length(v)
+        mean(abs(v - truth[j])) - sum((2 * seq_len(n) - n - 1) * v)/n^2
+    }, 0))
+    width <- mean(qq[2, ] - qq[1, ])
+    interval <- mean(qq[2, ] - qq[1, ] + 40 * pmax(qq[1, ] - truth, 0) + 40 * pmax(truth - qq[2, ], 0))
+    data.frame(n = length(truth), RMSE = r, RMSE_SD = r/training_sd, MAE = a, MAE_SD = a/training_sd, CRPS = crps,
+        CRPS_SD = crps/training_sd, Coverage95 = mean(truth >= qq[1, ] & truth <= qq[2, ]), Width95 = width, Width95_SD = width/training_sd,
+        IntervalScore95 = interval, IntervalScore95_SD = interval/training_sd)
+}
+
+adni_plan_baseline <- function(task, inputs, out, s) {
+    dir <- file.path(out, "baselines", sprintf("fold%02d", task$fold), task$method)
+    path <- file.path(dir, "fit.rds")
+    if (all(file.exists(file.path(dir, c("fit.rds", "prediction_draws.rds")))))
+        return(invisible("DONE"))
+    z <- inputs$cells[[paste(task$fold, "O50", sep = "/")]]
+    tr <- z$train
+    te <- z$test
+    p <- z$protocol
+    mu <- colMeans(tr[, z$x, drop = FALSE])
+    ss <- vapply(tr[, z$x, drop = FALSE], sd, 0)
+    if (any(ss <= 0))
+        stop("Constant ADNI training X.")
+    sx <- function(d) sweep(sweep(as.matrix(d[, z$x, drop = FALSE]), 2, mu, "-"), 2, ss, "/")
+    xc <- sx(tr)
+    xs <- sx(te)
+    yc <- mean(tr$Y)
+    ys <- sd(tr$Y)
+    yt <- (tr$Y - yc)/ys
+    ct <- as.matrix(tr[, z$c, drop = FALSE])
+    cs <- as.matrix(te[, z$c, drop = FALSE])
+    mvec <- as.integer(p$m_vec)
+    if (task$method != "EzGP") {
+        controls <- if (s$profile == "paper") ocean_controls()[[task$method]] else
+            if (task$method == "LVGP") list(n_starts=1L,max_retries=1L,max_iter_ini=10L,max_iter_lat=3L,
+                rescue_iter_ini=10L,rescue_iter_lat=3L,max_elapsed_seconds=120,parallel=TRUE) else
+                list(n_starts=1L,rescue_starts=integer())
+        ans <- do.call(fit_mixedgp_competitor, c(list(method = task$method, X = xc, y = yt, C = ct, new_X = xs,
+            new_C = cs, m_vec = mvec, n_draw = 4L * s$draws_per_chain, seed = p$seeds[[if (task$method == "UC-GP") "UC_GP" else "LVGP"]]),
+            controls))
+        point <- yc + ys * as.numeric(ans$predictive_mean)
+        draws <- yc + ys * as.matrix(ans$draws)
+        model <- ans
+    }
+    else {
+        tx <- adni_ezgp_mixed_matrix(xc, ct, mvec)
+        vx <- adni_ezgp_mixed_matrix(xs, cs, mvec)
+        sel <- adni_ezgp_select_tau_cv(tx, yt, ncol(xc), length(z$c), mvec, p$seeds$EzGP, if (s$profile == "paper")
+            c(1e-06, 0.0025, 0.01, 0.04, 0.16)
+        else c(0.0025, 0.04), cv_folds = if (s$profile == "paper")
+            3L
+        else 2L, maxeval = if (s$profile == "paper")
+            100L
+        else 8L)
+        model <- EzGP::EzGP_fit(tx, yt, p = ncol(xc), q = length(z$c), m = mvec, tau = sel$tau, maxeval = if (s$profile ==
+            "paper")
+            100L
+        else 8L)
+        pp <- adni_ezgp_predict_covariance_consistent(vx, model)
+        point <- yc + ys * pp$Y_hat
+        draws <- yc + ys * adni_ezgp_draws(pp$Y_hat, pp$predictive_MSE, 4L * s$draws_per_chain, p$seeds$EzGP_draws)
+        ocean_atomic_csv(sel$audit, file.path(dir, "tau_cv_audit.csv"))
+        ocean_atomic_csv(sel$candidates, file.path(dir, "tau_cv_candidates.csv"))
+    }
+    ocean_atomic_rds(list(model = model, center = mu, scale = ss, y_center = yc, y_scale = ys), path)
+    mm <- cbind(data.frame(fold = task$fold, cell = "OI", method = task$method, protocol = "OI"), adni_plan_score(draws,
+        point, te$Y, ys))
+    ocean_atomic_csv(mm, file.path(dir, "metrics.csv"))
+    ocean_atomic_rds(list(draws = draws, point = point), file.path(dir, "prediction_draws.rds"))
+    invisible("DONE")
+}
+
+adni_plan_analyze_cell <- function(task, inputs, out, s) {
+    path <- adni_plan_fit_path(out, task)
+    if (!file.exists(path))
+        stop("Missing saved ADNI fit: ", path)
+    fit <- adni_plan_read_fit(path)
+    z <- inputs$cells[[paste(task$fold, task$cell, sep = "/")]]
+    p <- z$protocol
+    tr <- z$train
+    te <- z$test
+    dir <- file.path(out, "analysis", sprintf("fold%02d", task$fold), task$cell)
+    dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+    n <- nrow(fit$mcmc$samples_tau)
+    cn <- n%/%s$chains
+    set.seed(p$seeds$posterior)
+    ids <- sort(unlist(lapply(0:(s$chains - 1L), function(i) i * cn + sample.int(cn, min(s$draws_per_chain, cn)))))
+    ct <- as.matrix(te[, z$c, drop = FALSE])
+    colnames(ct) <- p$C_order
+    yd <- predict_eivgp(fit, new_X = as.matrix(te[, z$x, drop = FALSE]), new_C = ct, target = "response", draw_ids = ids,
+        n_per_draw = 1L, joint = FALSE, seed = p$seeds$prediction)
+    conditional <- attr(yd, "conditional_means", exact = TRUE)
+    point <- if (is.null(conditional))
+        colMeans(as.matrix(yd))
+    else colMeans(conditional)
+    score <- function(draws, point, protocol) cbind(data.frame(fold = task$fold, cell = task$cell, method = "EIV-GP",
+        protocol = protocol), adni_plan_score(draws, point, te$Y, sd(tr$Y)))
+    metrics <- score(yd, point, "OI")
+    predictions <- data.frame(row = seq_len(nrow(te)), observed_Y = te$Y, predicted_Y = point)
+    ocean_atomic_csv(predictions, file.path(dir, "Y_predictions.csv"))
+    if (any(z$available)) {
+        if (!isTRUE(fit$data$latent_scale_anchored))
+            stop("Unanchored fit cannot receive raw test U.")
+        sel <- which(z$available)
+        u <- as.matrix(te[sel, z$u, drop = FALSE])
+        colnames(u) <- p$U_order
+        exact <- predict_eivgp(fit, new_X = as.matrix(te[sel, z$x, drop = FALSE]), new_C = ct[sel, , drop = FALSE],
+            new_U = u, new_U_scale = "raw", target = "response", draw_ids = ids, n_per_draw = 1L, joint = FALSE,
+            seed = p$seeds$mixed_prediction)
+        mixed <- as.matrix(yd)
+        mixed[, sel] <- as.matrix(exact)
+        cm <- attr(exact, "conditional_means", exact = TRUE)
+        mp <- point
+        mp[sel] <- if (is.null(cm))
+            colMeans(as.matrix(exact))
+        else colMeans(cm)
+        metrics <- rbind(metrics, score(mixed, mp, "MI"))
+        ocean_atomic_csv(data.frame(row = seq_len(nrow(te)), observed_Y = te$Y, predicted_Y = mp, U_available = z$available),
+            file.path(dir, "mixed_Y_predictions.csv"))
+    }
+    ocean_atomic_csv(metrics, file.path(dir, "prediction_metrics.csv"))
+    dg <- adni_plan_diagnostics(fit)
+    ocean_atomic_csv(cbind(fold = task$fold, cell = task$cell, dg$summary), file.path(dir, "convergence.csv"))
+    ocean_atomic_csv(dg$parameters, file.path(dir, "diagnostic_parameters.csv"))
+    scale <- if (any(tr$calibration == 1L))
+        "raw"
+    else "model"
+    imp <- impute_eivgp(fit, rows = seq_len(nrow(tr)), draw_ids = ids, scale = scale)
+    ocean_atomic_rds(list(draws = imp, scale = scale, draw_ids = ids, coordinates = p$U_order), file.path(dir,
+        "U_draws.rds"))
+    if (scale == "raw") {
+        plots <- tables <- list()
+        hidden <- which(tr$calibration == 0)
+        cal <- which(tr$calibration == 1)
+        common <- inputs$cells[[paste(task$fold, "O50", sep = "/")]]$train$calibration == 0
+        for (j in seq_along(z$u)) {
+            ud <- matrix(imp[, , j], nrow = length(ids))
+            up <- colMeans(ud)
+            qq <- apply(ud, 2, quantile, c(0.025, 0.975))
+            truth <- tr[[z$u[j]]]
+            sd0 <- sd(truth)
+            tables[[j]] <- cbind(data.frame(fold = task$fold, cell = task$cell, coordinate = p$U_order[j]), adni_plan_score(ud[,
+                hidden, drop = FALSE], up[hidden], truth[hidden], sd0), calibration_mean_RMSE = sqrt(mean((mean(truth[cal]) -
+                truth[hidden])^2)))
+            plots[[j]] <- data.frame(fold = task$fold, cell = task$cell, coordinate = p$U_order[j], row = seq_len(nrow(tr)),
+                calibration = tr$calibration, common_hidden = common, true_U = truth, posterior_mean = up, q025 = qq[1,
+                  ], q975 = qq[2, ])
+        }
+        ocean_atomic_csv(do.call(rbind, tables), file.path(dir, "U_metrics.csv"))
+        ocean_atomic_csv(do.call(rbind, plots), file.path(dir, "U_predictions.csv"))
+    }
+    if (task$fold == s$folds[1]) {
+        series <- mixedgp_v030_raw_series(fit)
+        parameters <- head(grep("^(V$|r$|theta_x|tau|A\\[)", names(series), value = TRUE), 6L)
+        if (length(parameters) && length(fit$checkpoint$states) >= 2L)
+            ggplot2::ggsave(file.path(dir, "mcmc_trace.png"), plot_mcmc(fit, parameters), width = 10, height = 7,
+                dpi = 130)
+        else if (length(fit$checkpoint$states) < 2L)
+            writeLines("Single-chain workflow check: multi-chain trace diagnostics are unavailable; convergence is not established.",
+                file.path(dir, "MCMC_TRACE_UNAVAILABLE.txt"))
+    }
+    invisible("DONE")
+}
+
+
+# ============================================================================
+# ADNI prepared-fold application: adni-evaluation.R
+# ============================================================================
+
+# Author: Xinye Chen. Preserve approved held-out and latent-recovery protocols as package code.
+adni_save_plot <- function(filename, plot, width, height, dpi = 130, ...) {
+    input <- paste0(filename, ".plot.rds")
+    saveRDS(plot, input)
+    code <- "lib<-Sys.getenv('EIVGP_R_LIBRARY','');if(nzchar(lib)).libPaths(c(lib,.libPaths()));eivGP::adni_workflow_api()$adni_render_plot(commandArgs(TRUE))"
+    args <- c('-e', shQuote(code), shQuote(input), shQuote(filename), width, height, dpi)
+    rc <- system2(file.path(R.home("bin"), "Rscript"), args, stdout = paste0(filename, ".render.log"), stderr = paste0(filename,
+        ".render.log"))
+    stopifnot(rc == 0L, file.exists(filename), file.info(filename)$size > 1000)
+    unlink(input)
+    invisible(filename)
+}
+
+adni_replace_plot_device <- function(x) {
+    if (is.call(x) && identical(x, quote(ggplot2::ggsave)))
+        return(as.name("adni_save_plot"))
+    if (is.call(x))
+        for (i in seq_along(x)) x[[i]] <- adni_replace_plot_device(x[[i]])
+    x
+}
+
+adni_reference_points <- function(calibration, targets, c_names, u_name) {
+    global <- rep(mean(calibration[[u_name]]), nrow(targets))
+    c1 <- tapply(calibration[[u_name]], calibration$C1, mean)
+    one <- as.numeric(c1[as.character(targets$C1)])
+    one[!is.finite(one)] <- global[!is.finite(one)]
+    key <- function(d) apply(d[, c_names, drop = FALSE], 1, paste, collapse = "/")
+    joint <- tapply(calibration[[u_name]], key(calibration), mean)
+    jp <- as.numeric(joint[key(targets)])
+    fallback <- !is.finite(jp)
+    jp[fallback] <- one[fallback]
+    list(global = global, C1 = one, joint = jp, fallback = sum(fallback))
+}
+
+adni_analyze_cell <- function(task, inputs, out, s, stage) {
+    z <- inputs$cells[[paste(task$fold, task$cell, sep = "/")]]
+    tr <- z$train
+    te <- z$test
+    p <- z$protocol
+    stageout <- file.path(out, stage)
+    dir <- file.path(stageout, "analysis", sprintf("fold%02d", task$fold), task$cell)
+    dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+    cache <- new.env(parent = emptyenv())
+    env <- new.env(parent = environment(api$adni_plan_analyze_cell))
+    env$adni_plan_fit_path <- function(ignored, task) api$adni_plan_fit_path(out, task)
+    env$adni_plan_read_fit <- function(path) {
+        cache$fit <- api$adni_plan_read_fit(path)
+        stopifnot(cache$fit$checkpoint$iteration == s$iter)
+        cache$fit
+    }
+    env$predict_eivgp <- function(...) {
+        a <- list(...)
+        r <- eivGP::predict_eivgp(...)
+        if (is.null(a$new_U)) {
+            stopifnot(is.null(a$new_y))
+            cache$ids <- a$draw_ids
+            cache$pure <- r
+            atomic_rds(list(draws = r, draw_ids = a$draw_ids), file.path(dir, "Y_draws.rds"))
+        }
+        else {
+            cache$exact <- r
+            atomic_rds(list(draws = r, draw_ids = a$draw_ids), file.path(dir, "known_U_Y_draws.rds"))
+        }
+        r
+    }
+    env$adni_save_plot <- adni_save_plot
+    fun <- api$adni_plan_analyze_cell
+    body(fun) <- adni_replace_plot_device(body(fun))
+    environment(fun) <- env
+    fun(task, inputs, stageout, s)
+    fit <- cache$fit
+    stopifnot(fit$data$p == length(z$x), fit$data$q == p$q, fit$data$d == length(z$u), all(is.na(fit$data$U_obs_raw[tr$calibration ==
+        0, , drop = FALSE])))
+    met <- read.csv(file.path(dir, "prediction_metrics.csv"))
+    met$stage <- stage
+    met$iterations <- s$iter
+    met$sampler <- fit$control$sampler
+    if (exists("exact", cache, inherits = FALSE)) {
+        ids <- which(z$available)
+        cm <- attr(cache$exact, "conditional_means", exact = TRUE)
+        stopifnot(!is.null(cm))
+        extra <- cbind(data.frame(fold = task$fold, cell = task$cell, method = "EIV-GP", protocol = "CC-known"),
+            api$adni_plan_score(cache$exact, colMeans(cm), te$Y[ids], sd(tr$Y)))
+        extra$stage <- stage
+        extra$iterations <- s$iter
+        extra$sampler <- fit$control$sampler
+        met <- rbind(met, extra)
+    }
+    atomic_csv(met, file.path(dir, "prediction_metrics.csv"))
+    dg <- read.csv(file.path(dir, "convergence.csv"))
+    dg$stage <- stage
+    dg$sampler <- fit$control$sampler
+    if (!is.null(fit$diagnostics$hmc))
+        atomic_csv(fit$diagnostics$hmc, file.path(dir, "HMC_DIAGNOSTICS.csv"))
+    atomic_csv(dg, file.path(dir, "convergence.csv"))
+    cm <- attr(cache$pure, "conditional_means", exact = TRUE)
+    per <- nrow(cm)%/%s$chains
+    target_diagnostics <- do.call(rbind, lapply(seq_len(ncol(cm)), function(j) {
+        a <- matrix(cm[, j], per, s$chains)
+        data.frame(RID = te$RID[j], predicted_Y = mean(a), selected_Rhat = posterior::rhat(a), selected_ESS = posterior::ess_bulk(a),
+            selected_MCSE = posterior::mcse_mean(a))
+    }))
+    atomic_csv(target_diagnostics, file.path(dir, "PREDICTION_FUNCTION_DIAGNOSTICS.csv"))
+    if (task$cell != "O0") {
+        cal <- tr[tr$calibration == 1, , drop = FALSE]
+        hidden <- which(tr$calibration == 0)
+        ui <- read.csv(file.path(dir, "U_predictions.csv"))
+        um <- read.csv(file.path(dir, "U_metrics.csv"))
+        for (j in seq_along(z$u)) {
+            truth <- tr[[z$u[j]]]
+            ref <- adni_reference_points(cal, tr[hidden, , drop = FALSE], z$c, z$u[j])
+            row <- which(um$coordinate == p$U_order[j])
+            um$C1_mean_RMSE[row] <- sqrt(mean((ref$C1 - truth[hidden])^2))
+            um$joint_C_mean_RMSE[row] <- sqrt(mean((ref$joint - truth[hidden])^2))
+            um$joint_C_fallback_N[row] <- ref$fallback
+            ui$C1[ui$coordinate == p$U_order[j]] <- tr$C1
+            hit <- ui$coordinate == p$U_order[j]
+            ui$true_std[hit] <- (ui$true_U[hit] - mean(truth))/sd(truth)
+            ui$mean_std[hit] <- (ui$posterior_mean[hit] - mean(truth))/sd(truth)
+            ui$lo_std[hit] <- (ui$q025[hit] - mean(truth))/sd(truth)
+            ui$hi_std[hit] <- (ui$q975[hit] - mean(truth))/sd(truth)
+        }
+        um$stage <- stage
+        atomic_csv(um, file.path(dir, "U_metrics.csv"))
+        atomic_csv(ui, file.path(dir, "U_predictions.csv"))
+        ct <- as.matrix(te[, z$c, drop = FALSE])
+        colnames(ct) <- p$C_order
+        prospective <- impute_eivgp(fit, new_C = ct, draw_ids = cache$ids, scale = "raw", seed = p$seeds$prospective_U)
+        stopifnot(identical(dim(prospective), c(length(cache$ids), nrow(te), length(z$u))))
+        pm <- list()
+        pp <- list()
+        for (j in seq_along(z$u)) {
+            ud <- matrix(prospective[, , j], nrow = length(cache$ids))
+            point <- colMeans(ud)
+            truth <- te[[z$u[j]]]
+            ref <- adni_reference_points(cal, te, z$c, z$u[j])
+            qq <- apply(ud, 2, quantile, c(0.025, 0.975))
+            pm[[j]] <- cbind(data.frame(stage = stage, fold = task$fold, cell = task$cell, coordinate = p$U_order[j]),
+                api$adni_plan_score(ud, point, truth, sd(tr[[z$u[j]]])), calibration_mean_RMSE = sqrt(mean((ref$global -
+                  truth)^2)), C1_mean_RMSE = sqrt(mean((ref$C1 - truth)^2)), joint_C_mean_RMSE = sqrt(mean((ref$joint -
+                  truth)^2)), joint_C_fallback_N = ref$fallback)
+            pp[[j]] <- data.frame(RID = te$RID, coordinate = p$U_order[j], true_U = truth, posterior_mean = point,
+                q025 = qq[1, ], q975 = qq[2, ])
+        }
+        atomic_csv(do.call(rbind, pm), file.path(dir, "PROSPECTIVE_U_metrics.csv"))
+        atomic_csv(do.call(rbind, pp), file.path(dir, "PROSPECTIVE_U_predictions.csv"))
+        ui$role <- factor(ifelse(ui$calibration == 1, "Observed calibration", "Masked training U"), levels = c("Masked training U",
+            "Observed calibration"))
+        plot <- ggplot(ui, aes(true_std, mean_std, colour = factor(C1))) + geom_abline(slope = 1, intercept = 0,
+            linetype = 2, colour = "grey50") + geom_linerange(data = ui[ui$calibration == 0, ], aes(ymin = lo_std,
+            ymax = hi_std), alpha = 0.15, linewidth = 0.3) + geom_point(aes(shape = role), size = 1.2, alpha = 0.65) +
+            scale_shape_manual(values = c(16, 1)) + facet_wrap(~coordinate) + theme_bw(base_size = 11) + theme(legend.position = "bottom") +
+            labs(x = "Reference U (training SD units; evaluation only)", y = "Posterior mean (training SD units)",
+                colour = "MEMORY3", shape = NULL, title = paste(p$plan_id, "fold", task$fold, task$cell, stage),
+                subtitle = paste(fit$control$sampler, "; CORE pass:", dg$core_pass))
+        adni_save_plot(file.path(dir, "training_U_imputation_std.png"), plot, width = 10, height = 5.3, dpi = 140,
+            bg = "white")
+    }
+    else writeLines("O0 is unanchored: no physical-U RMSE or truth-based alignment.", file.path(dir, "O0_SCALE_LIMITATION.txt"))
+    atomic_json(list(state = "PASS", stage = stage, iterations = s$iter, primary_no_test_U_Y = TRUE, hidden_training_U_masked = TRUE,
+        calibration_excluded_from_U_scoring = TRUE, prospective_U_uses_C_not_test_Y = TRUE, sampler = fit$control$sampler),
+        file.path(dir, "EVALUATION_VALIDATION.json"))
+    rm(fit, cache)
+    gc(FALSE)
+    invisible("DONE")
+}
+
+adni_baseline_cell <- function(task, inputs, out, s, cc = FALSE) {
+    source <- inputs$cells[[paste(task$fold, if (cc)
+        task$cell
+    else "O50", sep = "/")]]
+    tr <- source$train
+    te <- source$test
+    root <- if (cc)
+        file.path(out, "CC", task$cell)
+    else out
+    inp <- inputs
+    if (cc) {
+        z <- source
+        z$train <- tr[tr$calibration == 1, , drop = FALSE]
+        z$test <- te
+        for (j in seq_along(z$u)) {
+            name <- paste0("X", length(z$x) + j)
+            z$train[[name]] <- z$train[[z$u[j]]]
+            z$test[[name]] <- z$test[[z$u[j]]]
+        }
+        z$x <- paste0("X", seq_len(length(z$x) + length(z$u)))
+        for (n in c("UC_GP", "LVGP", "EzGP", "EzGP_draws")) z$protocol$seeds[[n]] <- as.integer((as.double(z$protocol$seeds[[n]]) +
+            if (task$cell == "O20") 17041 else 35023)%%(2^30 - 1) + 1)
+        inp$cells[[paste(task$fold, "O50", sep = "/")]] <- z
+    }
+    api$adni_plan_baseline(task, inp, root, s)
+    dir <- file.path(root, "baselines", sprintf("fold%02d", task$fold), task$method)
+    saved <- readRDS(file.path(dir, "prediction_draws.rds"))
+    selected <- if (cc)
+        which(source$available)
+    else seq_len(nrow(te))
+    mm <- cbind(data.frame(stage = "BASELINE", fold = task$fold, cell = if (cc)
+        task$cell
+    else "OI", method = paste0(task$method, if (cc)
+        "-CC"
+    else ""), protocol = if (cc)
+        "CC-known"
+    else "OI"), api$adni_plan_score(saved$draws[, selected, drop = FALSE], saved$point[selected], te$Y[selected],
+        sd(tr$Y)))
+    mm$training_N <- if (cc)
+        sum(tr$calibration == 1)
+    else nrow(tr)
+    atomic_csv(mm, file.path(dir, "metrics.csv"))
+    atomic_csv(data.frame(RID = te$RID, observed_Y = te$Y, predicted_Y = saved$point, scored = seq_len(nrow(te)) %in%
+        selected), file.path(dir, "Y_predictions.csv"))
+    invisible("DONE")
+}
+
+
+# ============================================================================
+# ADNI prepared-fold application: adni-reporting.R
+# ============================================================================
+
+# Author: Xinye Chen. Saved-only ADNI report data, metrics and figures.
+adni_table_html <- function(d,caption='',note='') {
+  if(!is.data.frame(d)||!nrow(d))return('<p>No saved result available for this quantity.</p>')
+  for(j in seq_along(d))if(is.numeric(d[[j]]))d[[j]]<-round(d[[j]],4)
+  # Reuse Ocean's padding, rules, header shading, escaping and bold-mean markup.
+  eivGP::ocean_workflow_api()$ocean_table_html(d,caption,note)
+}
+adni_bind <- function(parts) {
+  parts<-Filter(function(x)is.data.frame(x)&&nrow(x)>0L,parts)
+  if(!length(parts))return(data.frame())
+  cols<-unique(unlist(lapply(parts,names)))
+  do.call(rbind,lapply(parts,function(x){for(n in setdiff(cols,names(x)))x[[n]]<-NA;x[,cols,drop=FALSE]}))
+}
+adni_csv <- function(path,required=TRUE) {
+  if(!file.exists(path)){if(required)stop('Missing saved report prerequisite: ',path);return(data.frame())}
+  read.csv(path,stringsAsFactors=FALSE,check.names=FALSE)
+}
+adni_summary <- function(d,groups,metrics) {
+  if(!nrow(d))return(data.frame())
+  split_key<-interaction(d[,groups,drop=FALSE],drop=TRUE,lex.order=TRUE)
+  adni_bind(lapply(split(d,split_key),function(x){
+    out<-x[1,groups,drop=FALSE];out$folds<-length(unique(x$fold))
+    for(k in metrics){v<-as.numeric(x[[k]]);out[[paste0(k,'_mean')]]<-mean(v);out[[paste0(k,'_SD')]]<-if(length(v)>1)sd(v)else NA_real_}
+    out
+  }))
+}
+adni_C_dictionary <- function(items,levels,labels=NULL) {
+  meanings<-c(MEMORY1='Remembering shopping items without a list',
+    MEMORY2='Remembering recent events',MEMORY3='Recalling conversations a few days later',
+    MEMORY4='Remembering where objects were placed',MEMORY5='Repeating stories or questions',
+    MEMORY6='Remembering the current date or day',MEMORY7='Remembering already having told someone something',
+    MEMORY8='Remembering appointments, meetings or engagements',
+    DIVATT3='Concentrating without distraction from the environment')
+  if(length(labels))for(n in names(labels))meanings[n]<-as.character(labels[[n]])
+  text<-unname(meanings[items]);text[is.na(text)]<-'Description not supplied in dataset metadata'
+  data.frame(Model_column=paste0('C',seq_along(items)),ECog_field=items,
+    Item_meaning=text,Native_grades=vapply(levels,function(n)paste(seq_len(n),collapse='/'),''),check.names=FALSE)
+}
+adni_saved_source <- function(output_dir,source=NULL) {
+  if(!is.null(source)&&nzchar(source)) {
+    m<-jsonlite::fromJSON(source,simplifyVector=FALSE)
+    if(!identical(m$schema,'adni-saved-report-v1'))stop('Unsupported saved-report source')
+    return(m)
+  }
+  p<-file.path(output_dir,'application_manifest.json')
+  if(!file.exists(p))stop('Saved report requires application_manifest.json or --report-source=FILE')
+  m<-jsonlite::fromJSON(p,simplifyVector=FALSE)
+  list(schema='adni-saved-report-v1',output=output_dir,input=m$cases[[1]]$input,
+    stage=paste0('S',tail(unlist(m$stages),1)),fit_package_version=m$package_version,fit_profile=m$profile,
+    fitting_manifest=p,input_sha256=m$frozen_inputs)
+}
+adni_report_prepare <- function(repo,data_dir,output_dir,settings,report_source=NULL,report_dir=output_dir,group='report') {
+  for(p in c('jsonlite','digest','ggplot2','patchwork','posterior'))if(!requireNamespace(p,quietly=TRUE))stop('Report dependency: ',p)
+  api<-adni_load_api(repo);api$application$adni_output_check(report_dir,repo)
+  m<-adni_saved_source(output_dir,report_source)
+  fitting<-if(!is.null(m$fitting_manifest))jsonlite::fromJSON(m$fitting_manifest,simplifyVector=FALSE)else list()
+  for(n in setdiff(c('folds','cells'),attr(settings,'explicit_selection')))if(length(fitting[[n]]))
+    settings[[n]]<-if(n=='folds')as.integer(unlist(fitting[[n]]))else unlist(fitting[[n]],use.names=FALSE)
+  for(n in c('draws_per_chain','baseline_profile'))if(!is.null(fitting[[n]]))settings[[n]]<-fitting[[n]]
+  if(length(fitting$samplers))for(cell in names(fitting$samplers))
+    settings[[paste0('sampler_',tolower(cell))]]<-fitting$samplers[[cell]]
+  if(!is.null(m$fit_profile))settings$profile<-m$fit_profile
+  if(!is.null(m$input))data_dir<-m$input
+  if(!is.null(m$output))output_dir<-m$output
+  input<-api$adni_plan_inputs(data_dir)
+  if(length(m$input_sha256))for(p in names(m$input_sha256))
+    if(digest::digest(file=p,algo='sha256')!=m$input_sha256[[p]])stop('Frozen report input changed: ',p)
+  # Historical fitting identities are read, not rewritten to match reporting code.
+  identity<-file.path(output_dir,'workflow_identity.rds')
+  if(file.exists(identity)) {
+    id<-readRDS(identity)
+    if(!is.null(id$inputs)&&!identical(unname(tools::md5sum(input$files)),id$inputs))stop('Saved fit input identity differs')
+  }
+  if(is.null(m$stage)) {
+    stages<-list.dirs(output_dir,recursive=FALSE,full.names=FALSE)
+    stages<-stages[grepl('^S[0-9]+K?$',stages)]
+    amount<-as.numeric(gsub('K','',sub('^S','',stages)))*ifelse(grepl('K$',stages),1000,1)
+    if(!length(stages))stop('No saved EIV stages')
+    m$stage<-stages[which.max(amount)]
+  }
+  pred<-conv<-up<-um<-pp<-pm<-parameters<-statuses<-paths<-list()
+  final<-m$stage
+  selected<-expand.grid(fold=settings$folds,cell=settings$cells,stringsAsFactors=FALSE)
+  want_eiv<-group!='competitors';want_baseline<-group!='eivGP'
+  for(i in seq_len(nrow(selected))) {
+    f<-selected$fold[i];cell<-selected$cell[i];z<-input$cells[[paste(f,cell,sep='/')]]
+    dir<-file.path(output_dir,final,'analysis',sprintf('fold%02d',f),cell)
+    if(want_eiv) {
+      d<-adni_csv(file.path(dir,'prediction_metrics.csv'));d<-d[d$protocol%in%c('OI','CC-known'),,drop=FALSE]
+      pred[[length(pred)+1L]]<-d
+      cv<-adni_csv(file.path(dir,'convergence.csv'));conv[[length(conv)+1L]]<-cv
+      par<-adni_csv(file.path(dir,'diagnostic_parameters.csv'));par$fold<-f;par$cell<-cell
+      parameters[[length(parameters)+1L]]<-par
+      paths[[paste(f,cell,sep='/')]]<-list(fold=f,cell=cell,dir=dir,
+        fit=file.path(output_dir,'fits',sprintf('fold%02d',f),cell,'fit.rds'))
+      if(!file.exists(paths[[paste(f,cell,sep='/')]]$fit))stop('Missing saved EIV fit; report never fits')
+      if(cell!='O0') {
+        u<-adni_csv(file.path(dir,'U_predictions.csv'));u$fold<-f;u$cell<-cell
+        up[[length(up)+1L]]<-u;um[[length(um)+1L]]<-adni_csv(file.path(dir,'U_metrics.csv'))
+        p<-adni_csv(file.path(dir,'PROSPECTIVE_U_predictions.csv'));p$fold<-f;p$cell<-cell
+        pp[[length(pp)+1L]]<-p;pm[[length(pm)+1L]]<-adni_csv(file.path(dir,'PROSPECTIVE_U_metrics.csv'))
+      }
+    }
+  }
+  if(want_baseline)for(f in settings$folds)for(cell in c('OI',intersect(settings$cells,c('O20','O50'))))for(method in c('UC-GP','LVGP','EzGP')) {
+    dir<-if(cell=='OI')file.path(output_dir,'baselines',sprintf('fold%02d',f),method)else
+      file.path(output_dir,'CC',cell,'baselines',sprintf('fold%02d',f),method)
+    version<-m$fit_package_version
+    if(length(m$baseline_overrides))for(b in m$baseline_overrides)
+      if(b$fold==f&&b$cell==cell&&b$method==method){dir<-b$directory;version<-b$package_version}
+    valid<-all(file.exists(file.path(dir,c('metrics.csv','fit.rds','prediction_draws.rds'))))
+    state<-'MISSING';optimization<-'not_available'
+    if(valid) {
+      d<-adni_csv(file.path(dir,'metrics.csv'));d$method<-paste0(method,if(cell=='OI')''else'-CC');d$cell<-cell
+      d$stage<-'BASELINE';pred[[length(pred)+1L]]<-d
+      a<-readRDS(file.path(dir,'fit.rds'));optimization<-a$model$optimization_status
+      if(is.null(optimization))optimization<-'NOT_EXPOSED'
+      state<-if(grepl('nonconverged',optimization))'OPTIMIZER_FLAGGED'else'AVAILABLE'
+      rm(a)
+    }
+    statuses[[length(statuses)+1L]]<-data.frame(fold=f,cell=cell,method=paste0(method,if(cell=='OI')''else'-CC'),
+      state=state,optimization_status=optimization,fit_package_version=if(is.null(version))'recorded in saved provenance'else version,
+      source_directory=dir)
+  }
+  p<-input$cells[[1]]$protocol
+  z<-input$cells[['1/O50']];cohort<-rbind(z$train,z$test);cohort<-cohort[order(cohort$RID),]
+  metadata_path<-file.path(data_dir,'DATASET.json')
+  meta<-if(file.exists(metadata_path))jsonlite::fromJSON(metadata_path,simplifyVector=FALSE)else list()
+  meta<-modifyList(meta,if(is.null(m$metadata))list()else m$metadata)
+  if(is.null(meta))meta<-list()
+  if(is.null(meta$title))meta$title<-'ADNI memory: partially observed brain imaging'
+  if(is.null(meta$population))meta$population<-if(is.null(p$population))'Population specified in private preparation records'else p$population
+  if(is.null(meta$calibration_design))meta$calibration_design<-if(is.null(p$calibration_design))
+    'C1-proportional stratified sampling, fixed seeded within-stratum order; O20 nested in O50'else
+    paste(p$calibration_design,'; strata:',paste(unlist(p$stratification_columns),collapse=', '))
+  analysis<-list(repo=repo,api=api,source=m,input=input,output_dir=output_dir,report_dir=report_dir,
+    settings=settings,group=group,stage=final,metadata=meta,protocol=p,cohort=cohort,
+    prediction=adni_bind(pred),convergence=adni_bind(conv),parameters=adni_bind(parameters),
+    U_predictions=adni_bind(up),U_metrics=adni_bind(um),prospective_predictions=adni_bind(pp),
+    prospective_metrics=adni_bind(pm),method_status=adni_bind(statuses),paths=paths)
+  if(nrow(analysis$convergence)) {
+    nums<-unique(analysis$convergence[,c('iterations','burn','chains')])
+    if(nrow(nums)!=1L)stop('Selected report stage mixes chain budgets')
+    analysis$numerics<-nums
+    analysis$settings$chains<-as.integer(nums$chains)
+    analysis$settings$iter<-as.integer(nums$iterations)
+    analysis$settings$burn<-as.integer(nums$burn)
+  }else analysis$numerics<-data.frame(iterations=NA,burn=NA,chains=NA)
+  if(!is.null(m$fitting_manifest)) {
+    stages<-paste0('S',unlist(fitting$stages))
+    analysis$settings$stages<-as.integer(unlist(fitting$stages))
+  }else {
+    stages<-paste0('S',unlist(m$evaluation_iterations))
+    if(length(m$evaluation_iterations))analysis$settings$stages<-as.integer(unlist(m$evaluation_iterations))
+  }
+  # Historical folders may use explicit stage labels rather than S<iteration>.
+  if(length(m$stage_directories))stages<-unlist(m$stage_directories)
+  stability<-list()
+  for(st in stages)for(i in seq_len(nrow(selected))) {
+    path<-file.path(output_dir,st,'analysis',sprintf('fold%02d',selected$fold[i]),selected$cell[i],'prediction_metrics.csv')
+    d<-adni_csv(path,FALSE)
+    if(nrow(d)){d<-d[d$protocol=='OI',];d$stage<-st;stability[[length(stability)+1L]]<-d}
+  }
+  analysis$stage_scores<-adni_bind(stability)
+  adni_report_exports(analysis)
+  analysis$plots<-adni_report_plots(analysis)
+  if(want_eiv) {
+    analysis$functionals<-adni_saved_functionals(analysis)
+  }
+  analysis$artifact_manifest<-adni_paper_assets(analysis)
+  analysis
+}
+adni_report_exports <- function(a) {
+  dest<-file.path(a$report_dir,'report-assets');dir.create(dest,recursive=TRUE,showWarnings=FALSE)
+  for(n in c('prediction','convergence','parameters','U_metrics','prospective_metrics','method_status','stage_scores'))
+    if(nrow(a[[n]]))write.csv(a[[n]],file.path(dest,paste0(n,'.csv')),row.names=FALSE)
+  a$api$atomic_json(list(author='Xinye Chen',saved_only=TRUE,new_MCMC=FALSE,new_optimization=FALSE,
+    fitting_source=a$source,stage=a$stage,saved_fitting_numerics=a$numerics,report_settings=a$settings,
+    input_md5=as.list(tools::md5sum(a$input$files)),analysis_modules=a$api$eivgp_module_identity(),
+    reporting_source=as.list(tools::md5sum(c(file.path(a$repo,'paper/applications/adni.Rmd'),file.path(a$repo,'eivGP/R/helpers.R'))))),
+    file.path(dest,'REPORT_PROVENANCE.json'))
+}
+adni_metric_table <- function(a,protocol='OI',full=FALSE) {
+  d<-a$prediction[a$prediction$protocol==protocol,,drop=FALSE]
+  metrics<-c('RMSE','RMSE_SD','MAE_SD','CRPS_SD','Coverage95','Width95_SD','IntervalScore95_SD')
+  tab<-adni_summary(d,c('cell','method'),metrics)
+  if(!nrow(tab))return('<p>No available saved scores for this protocol.</p>')
+  tab$CORE<-vapply(seq_len(nrow(tab)),function(i){
+    if(tab$method[i]!='EIV-GP')return('N/A')
+    q<-a$convergence[a$convergence$cell==tab$cell[i],];paste0(sum(q$core_pass),'/',nrow(q))},'')
+  method<-tab$method
+  for(i in seq_len(nrow(tab))) {
+    flagged<-if(method[i]=='EIV-GP')tab$CORE[i]!=paste0(tab$folds[i],'/',tab$folds[i])else
+      any(a$method_status$cell==tab$cell[i]&a$method_status$method==method[i]&a$method_status$state=='OPTIMIZER_FLAGGED')
+    if(flagged)method[i]<-paste0(method[i],'*')
+  }
+  result<-data.frame(Method=method,Calibration=tab$cell,
+    Test=if(protocol=='OI')'(X,C)'else ifelse(tab$method=='EIV-GP','(X,U)','(X,U,C)'),
+    Folds=tab$folds,check.names=FALSE)
+  shown<-if(full)metrics else c('RMSE','RMSE_SD','CRPS_SD','Coverage95','Width95_SD')
+  labels<-c(RMSE='RMSE',RMSE_SD='RMSE/sY',MAE_SD='MAE/sY',CRPS_SD='CRPS/sY',
+    Coverage95='Coverage (%)',Width95_SD='Width/sY',IntervalScore95_SD='Interval score/sY')
+  best_mask<-matrix(FALSE,nrow(result),length(shown),dimnames=list(NULL,unname(labels[shown])))
+  for(k in shown) {
+    scale<-if(k=='Coverage95')100 else 1
+    values<-sprintf(if(k=='Coverage95')'%.2f (%.2f)'else'%.4f (%.4f)',
+      scale*tab[[paste0(k,'_mean')]],scale*tab[[paste0(k,'_SD')]])
+    if(k%in%c('RMSE','RMSE_SD','MAE_SD','CRPS_SD','IntervalScore95_SD')) {
+      strata<-if(protocol=='OI')rep('shared',nrow(tab))else tab$cell
+      for(g in unique(strata)) {
+        ix<-which(strata==g);best<-min(tab[[paste0(k,'_mean')]][ix])
+        hit<-ix[tab[[paste0(k,'_mean')]][ix]==best]
+        # Unconverged methods remain eligible; the asterisk records their status.
+        best_mask[hit,labels[[k]]]<-TRUE
+      }
+    }
+    result[[labels[[k]]]]<-values
+  }
+  result$CORE<-tab$CORE
+  attr(result,'best')<-best_mask
+  adni_table_html(result,if(protocol=='OI')'Ordinal-input prediction: fold mean (sample SD)'else
+    'Complete-case prediction: fold mean (sample SD)')
+}
+adni_u_table <- function(d) {
+  if(!nrow(d))return(data.frame())
+  tab<-adni_summary(d,c('cell','coordinate'),c('RMSE','RMSE_SD','MAE_SD','CRPS_SD','Coverage95','Width95_SD','IntervalScore95_SD'))
+  tab$gain_vs_C1_percent<-vapply(seq_len(nrow(tab)),function(i){
+    v<-d[d$cell==tab$cell[i]&d$coordinate==tab$coordinate[i],]
+    100*(1-sqrt(mean(v$RMSE^2))/sqrt(mean(v$C1_mean_RMSE^2)))},0)
+  out<-tab[,c('cell','coordinate','folds')]
+  for(k in c('RMSE','RMSE_SD','MAE_SD','CRPS_SD','Coverage95','Width95_SD','IntervalScore95_SD'))
+    out[[k]]<-sprintf('%.4f (%.4f)',tab[[paste0(k,'_mean')]],tab[[paste0(k,'_SD')]])
+  out$gain_vs_C1_percent<-sprintf('%+.2f',tab$gain_vs_C1_percent);out
+}
+adni_target_table <- function(a,all_folds=FALSE) {
+  if(is.null(a$functionals))return(data.frame())
+  d<-a$functionals$precision
+  if(!all_folds)d<-d[d$fold==a$settings$representative_fold,,drop=FALSE]
+  z<-a$input$cells[[1]];target<-rep('m(x,c)',nrow(d))
+  for(j in seq_along(z$u)) {
+    name<-paste0('Mean hidden ',a$protocol$U_order[j]);at<-d$target==name
+    label<-if(grepl('FDG',a$protocol$U_order[j]))'FDG'else if(grepl('HIP',a$protocol$U_order[j]))'HIP1000/ICV'else a$protocol$U_order[j]
+    target[at]<-paste0(label,' mean (',ifelse(d$cell[at]=='O0','model','raw'),')')
+  }
+  d$Target<-target
+  d<-d[order(match(d$target,unique(d$target)),match(d$cell,c('O0','O20','O50')),d$fold),,drop=FALSE]
+  out<-data.frame(Target=d$Target,Calibration=d$cell,`Mean (SD)`=sprintf('%.4f (%.4f)',d$mean,d$posterior_SD),
+    `R-hat`=sprintf('%.3f',d$Rhat),`Bulk ESS`=sprintf('%.1f',d$bulk_ESS),`Tail ESS`=sprintf('%.1f',d$tail_ESS),
+    MCSE=ifelse(abs(d$MCSE)<1e-4,formatC(d$MCSE,format='e',digits=2),sprintf('%.4f',d$MCSE)),check.names=FALSE)
+  if(all_folds)out<-data.frame(Fold=d$fold,out,check.names=FALSE)
+  out
+}
+adni_integration_table <- function(a,all_folds=FALSE) {
+  if(is.null(a$functionals))return(data.frame())
+  d<-a$functionals$integration
+  if(!all_folds)d<-d[d$fold==a$settings$representative_fold,,drop=FALSE]
+  data.frame(Fold=d$fold,Calibration=d$cell,Nodes=d$n_latent,`Check nodes`=d$n_latent_check,
+    `Mean at nodes`=sprintf('%.5f',d$mean),`Mean at check nodes`=sprintf('%.5f',d$mean_check),
+    Difference=sprintf('%+.5f',d$difference),check.names=FALSE)
+}
+adni_report_plots <- function(a) {
+  library(ggplot2);library(patchwork)
+  z<-a$input$cells[['1/O50']];d<-a$cohort;p<-a$protocol;plots<-list()
+  long<-adni_bind(lapply(seq_along(z$u),function(j)data.frame(U=d[[z$u[j]]],Y=d$Y,C1=factor(d$C1),coordinate=p$U_order[j])))
+  plots$cohort<-ggplot(long,aes(U,Y,colour=C1))+geom_point(alpha=.55,size=1.3)+
+    facet_wrap(~coordinate,scales='free_x')+labs(x='Observed imaging reference',y='ADNI memory score',colour=p$C_order[1])+
+    theme_minimal(base_size=11)+theme(legend.position='bottom')
+  xlong<-adni_bind(lapply(seq_along(z$x),function(j)data.frame(X=d[[z$x[j]]],Y=d$Y,C1=factor(d$C1),coordinate=p$X_order[j])))
+  plots$covariates<-ggplot(xlong,aes(X,Y,colour=C1))+geom_point(alpha=.55,size=1.3)+
+    facet_wrap(~coordinate,scales='free_x')+labs(x='Observed covariate',y='ADNI memory score',colour=p$C_order[1])+
+    theme_minimal(base_size=11)+theme(legend.position='bottom')
+  shown<-seq_len(min(2L,length(z$c)))
+  cu<-adni_bind(lapply(shown,function(k)adni_bind(lapply(seq_along(z$u),function(j)
+    data.frame(grade=factor(d[[z$c[k]]],levels=seq_len(p$m_vec[k])),U=d[[z$u[j]]],
+      item=paste0('C',k,': ',p$C_order[k]),coordinate=p$U_order[j])))))
+  plots$C_U<-ggplot(cu,aes(grade,U))+geom_boxplot(width=.55,outlier.shape=NA,fill='grey90',colour='grey35')+
+    geom_point(aes(colour=grade),position=position_jitter(width=.12,height=0,seed=6203L),alpha=.45,size=.9)+
+    facet_wrap(~item+coordinate,ncol=length(z$u),scales='free_y',labeller=label_wrap_gen(36))+
+    labs(x='Native ECog grade (higher = greater functional difficulty)',y='Measured imaging reference (raw units)')+
+    theme_minimal(base_size=11)+theme(legend.position='none')
+  counts<-adni_bind(lapply(seq_along(z$c),function(j){t<-as.data.frame(table(factor(d[[z$c[j]]],levels=seq_len(p$m_vec[j]))));
+    data.frame(item=p$C_order[j],grade=t$Var1,N=t$Freq)}))
+  plots$C_counts<-ggplot(counts,aes(grade,N,fill=grade))+geom_col()+facet_wrap(~item,ncol=3,scales='free_y')+
+    labs(x='Native ECog grade',y='Participants')+theme_bw()+theme(legend.position='none')
+  u<-a$U_predictions
+  if(nrow(u)) {
+    u$role<-ifelse(u$calibration==1,'Observed calibration','Masked training U')
+    u$C1<-factor(u$C1)
+    draw_u<-function(x,all=FALSE){
+      ggplot(x,aes(true_std,mean_std,colour=C1))+geom_abline(slope=1,intercept=0,linetype=2,colour='grey50')+
+        geom_linerange(data=x[x$calibration==0,],aes(ymin=lo_std,ymax=hi_std),alpha=.15)+
+        geom_point(aes(shape=role),size=1,alpha=.6)+scale_shape_manual(values=c('Masked training U'=16,'Observed calibration'=1))+
+        facet_grid(if(all)fold~coordinate else cell~coordinate,scales='free')+
+        labs(x='Reference U (training SD units; evaluation only)',y='Posterior mean (training SD units)',colour=p$C_order[1],shape=NULL)+theme_bw()
+    }
+    plots$imputation<-draw_u(u[u$fold==a$settings$representative_fold,])
+    for(cell in unique(u$cell))plots[[paste0('imputation_',cell)]]<-draw_u(u[u$cell==cell,],TRUE)
+    hidden<-u[u$calibration==0,]
+    density<-adni_bind(list(data.frame(hidden[,c('cell','coordinate')],value=hidden$true_std,distribution='Reference'),
+      data.frame(hidden[,c('cell','coordinate')],value=hidden$mean_std,distribution='Posterior means')))
+    plots$input_distribution<-ggplot(density,aes(value,colour=distribution,fill=distribution))+
+      geom_density(alpha=.12)+facet_grid(cell~coordinate,scales='free')+
+      labs(x='Training SD units',y='Density',colour=NULL,fill=NULL)+theme_bw()
+    class_rows<-adni_bind(lapply(split(hidden,interaction(hidden$fold,hidden$cell,hidden$coordinate,hidden$C1,drop=TRUE)),function(x)
+      data.frame(fold=x$fold[1],cell=x$cell[1],coordinate=x$coordinate[1],C1=as.character(x$C1[1]),N=nrow(x),
+        RMSE_SD=sqrt(mean((x$mean_std-x$true_std)^2)),Coverage95=mean(x$true_U>=x$q025&x$true_U<=x$q975))))
+    plots$class_table<-adni_summary(class_rows,c('cell','coordinate','C1'),c('RMSE_SD','Coverage95'))
+    common<-hidden[as.character(hidden$common_hidden)%in%c('TRUE','True','1'),]
+    common_rows<-adni_bind(lapply(split(common,interaction(common$fold,common$cell,common$coordinate,drop=TRUE)),function(x)
+      data.frame(fold=x$fold[1],cell=x$cell[1],coordinate=x$coordinate[1],N=nrow(x),RMSE_SD=sqrt(mean((x$mean_std-x$true_std)^2)))))
+    plots$common_hidden<-adni_summary(common_rows,c('cell','coordinate'),'RMSE_SD')
+    plots$support<-adni_bind(lapply(split(hidden,interaction(hidden$cell,hidden$coordinate,drop=TRUE)),function(x)
+      data.frame(cell=x$cell[1],coordinate=x$coordinate[1],fold_rows=nrow(x),lower_nonpositive=sum(x$q025<=0),
+        mean_nonpositive=sum(x$posterior_mean<=0),interval_outside_C_grade='Not applicable: C is not an imaging bin')))
+  }
+  if(nrow(u))plots<-modifyList(plots,adni_input_distributions(a))
+  plots
+}
+
+adni_input_distributions <- function(a) {
+  library(ggplot2);parts<-list()
+  for(key in names(a$paths)) {
+    path<-a$paths[[key]];if(path$cell=='O0'||path$fold!=a$settings$representative_fold)next
+    z<-a$input$cells[[key]]
+    hidden<-which(a$input$cells[[paste(path$fold,'O50',sep='/')]]$train$calibration==0L)
+    saved<-readRDS(file.path(path$dir,'U_draws.rds'))
+    if(!identical(saved$scale,'raw'))stop('Raw saved U draws required for physical distribution checks')
+    ids<-unique(round(seq(1,dim(saved$draws)[1],length.out=min(128,dim(saved$draws)[1]))))
+    for(j in seq_along(z$u)) {
+      ref<-z$train[[z$u[j]]];mu<-mean(ref);ss<-sd(ref)
+      draw<-matrix(saved$draws[ids,hidden,j],nrow=length(ids))
+      tag<-data.frame(cell=path$cell,coordinate=z$protocol$U_order[j])
+      parts[[length(parts)+1L]]<-data.frame(tag,C1=rep(as.character(z$train$C1[hidden]),each=length(ids)),
+        value=as.vector((draw-mu)/ss),distribution='Posterior mixture')
+      parts[[length(parts)+1L]]<-data.frame(tag,C1=as.character(z$train$C1[hidden]),value=(ref[hidden]-mu)/ss,distribution='Reference')
+      means<-colMeans(matrix(saved$draws[,hidden,j],ncol=length(hidden)))
+      parts[[length(parts)+1L]]<-data.frame(tag,C1=as.character(z$train$C1[hidden]),value=(means-mu)/ss,distribution='Posterior means')
+    }
+  }
+  d<-adni_bind(parts);if(!nrow(d))return(list())
+  d$C1<-factor(d$C1);reference<-d[d$distribution=='Reference',];post<-d[d$distribution!='Reference',]
+  draw_distribution<-function(class=FALSE) {
+    g<-ggplot()+geom_histogram(data=reference,aes(value,after_stat(density)),bins=15,
+      fill='grey80',colour='white')+geom_rug(data=reference,aes(value),alpha=.3)+
+      geom_density(data=post,aes(value,colour=distribution,linetype=distribution),linewidth=.7)+
+      scale_linetype_manual(values=c('Posterior mixture'='solid','Posterior means'='dashed'))+
+      theme_minimal(base_size=11)+theme(legend.position='bottom')+
+      labs(x='Common-hidden U (training SD units)',y='Density',colour=NULL,linetype=NULL)
+    if(class)g+facet_grid(cell+coordinate~C1,scales='free')else g+facet_grid(cell~coordinate,scales='free')
+  }
+  list(input_distribution=draw_distribution(),class_distribution=draw_distribution(TRUE))
+}
+
+adni_paper_assets <- function(a) {
+  dest<-file.path(a$report_dir,'report-assets','paper');dir.create(dest,recursive=TRUE,showWarnings=FALSE)
+  plots<-list(fig_adni_cohort=a$plots$cohort,fig_adni_C_support=a$plots$C_counts,
+    fig_adni_Y_X=a$plots$covariates,fig_adni_C_U=a$plots$C_U,
+    fig_adni_target_traces=a$functionals$trace_plot,fig_adni_mean_functions=a$functionals$mean_plot,
+    fig_adni_response_surfaces=a$functionals$surface_plot,fig_adni_U_imputation=a$plots$imputation,
+    fig_adni_U_distributions=a$plots$input_distribution,fig_adni_C1_U_distributions=a$plots$class_distribution)
+  manifest<-list()
+  for(name in names(plots)) {
+    file<-paste0(name,'.pdf');available<-!is.null(plots[[name]])
+    if(available)ggplot2::ggsave(file.path(dest,file),plots[[name]],width=12,height=if(grepl('support|traces|C1',name))9 else 6,
+      device=grDevices::pdf,limitsize=FALSE)
+    manifest[[length(manifest)+1L]]<-data.frame(label=name,file=file,status=if(available)'available'else'not_applicable',
+      N=a$input$N,profile=a$settings$profile,MD5=if(available)unname(tools::md5sum(file.path(dest,file)))else'')
+  }
+  oi<-a$prediction[a$prediction$protocol=='OI',,drop=FALSE]
+  cc<-a$prediction[a$prediction$protocol=='CC-known',,drop=FALSE]
+  metrics<-c('RMSE','RMSE_SD','MAE_SD','CRPS_SD','Coverage95','Width95_SD','IntervalScore95_SD')
+  tables<-list(tab_adni_design=a$input$audit,
+    tab_adni_C_definitions=adni_C_dictionary(a$protocol$C_order,a$protocol$m_vec,a$metadata$C_labels),
+    tab_adni_prediction_OI=adni_summary(oi,c('cell','method'),metrics),
+    tab_adni_prediction_CC=adni_summary(cc,c('cell','method'),metrics),tab_adni_training_U=adni_u_table(a$U_metrics),
+    tab_adni_prospective_U=adni_u_table(a$prospective_metrics),tab_adni_convergence=a$convergence)
+  for(name in names(tables)) {
+    d<-tables[[name]];available<-nrow(d)>0L;file<-paste0(name,'.csv')
+    if(available) {
+      write.csv(d,file.path(dest,file),row.names=FALSE)
+      writeLines(adni_table_html(d,name),file.path(dest,paste0(name,'.html')))
+    }
+    manifest[[length(manifest)+1L]]<-data.frame(label=name,file=file,status=if(available)'available'else'unavailable',
+      N=a$input$N,profile=a$settings$profile,MD5=if(available)unname(tools::md5sum(file.path(dest,file)))else'')
+  }
+  out<-adni_bind(manifest);write.csv(out,file.path(dest,'artifact_manifest.csv'),row.names=FALSE);out
+}
+
+
+# ============================================================================
+# ADNI prepared-fold application: adni-functionals.R
+# ============================================================================
+
+# Author: Xinye Chen. Read-only scientific targets and conditional response slices.
+adni_trace_diagnostic <- function(values,chain) {
+  groups<-split(values,chain);n<-min(lengths(groups));x<-do.call(cbind,lapply(groups,head,n))
+  data.frame(states_per_chain=n,chains=ncol(x),mean=mean(values),posterior_SD=sd(values),
+    Rhat=posterior::rhat(x),bulk_ESS=posterior::ess_bulk(x),tail_ESS=posterior::ess_tail(x),MCSE=posterior::mcse_mean(x))
+}
+adni_baseline_mean <- function(api,dir,X,C,mvec,method) {
+  a<-readRDS(file.path(dir,'fit.rds'));x<-sweep(sweep(X,2,a$center,'-'),2,a$scale,'/')
+  if(method=='UC-GP') {
+    nd<-getFromNamespace('make_mixedgp_competitor_data','eivGP')(x,C,mvec)
+    mean<-as.numeric(stats::predict(a$model$fit,newdata=nd,type='UK',seCompute=FALSE,lightReturn=TRUE)$mean)
+  }else if(method=='LVGP')mean<-as.numeric(LVGP::LVGP_predict(cbind(x,C),a$model$fit,MSE_on=0)$Y_hat)
+  else mean<-api$adni_ezgp_predict_covariance_consistent(api$adni_ezgp_mixed_matrix(x,C,mvec),a$model)$Y_hat
+  a$y_center+a$y_scale*mean
+}
+adni_saved_functionals <- function(a) {
+  library(ggplot2)
+  dest<-file.path(a$report_dir,'report-assets','functionals');dir.create(dest,recursive=TRUE,showWarnings=FALSE)
+  traces<-raw_traces<-curves<-surfaces<-precision<-integration<-list()
+  code<-file.path(a$repo,'eivGP/R/helpers.R')
+  summarize_draws<-function(x)data.frame(mean=colMeans(x),lo=apply(x,2,quantile,.025),hi=apply(x,2,quantile,.975))
+  for(key in names(a$paths)) {
+    path<-a$paths[[key]];f<-path$fold;cell<-path$cell;z<-a$input$cells[[key]];p<-z$protocol
+    cache<-file.path(dest,paste0('fold',f,'_',cell,'.rds'))
+    identity<-list(fit=unname(tools::md5sum(path$fit)),inputs=unname(tools::md5sum(a$input$files)),
+      code=unname(tools::md5sum(code)),states=a$settings$functional_draws_per_chain,n_latent=a$settings$n_latent,
+      analysis_modules=a$api$eivgp_module_identity())
+    if(file.exists(cache)) {
+      saved<-readRDS(cache)
+      if(!identical(saved$identity,identity))stop('Derived functional cache differs; choose a fresh report directory: ',cache)
+      result<-saved$result
+    }else {
+      cat('Read-only functionals fold',f,cell,'\n');flush.console()
+      fit<-a$api$adni_plan_read_fit(path$fit)
+      stopifnot(fit$checkpoint$iteration==a$numerics$iterations,fit$checkpoint$burn==a$numerics$burn)
+      info<-fit$mcmc$mcmc_draw_info
+      ids<-unlist(lapply(split(seq_len(nrow(info)),info$chain),function(v)
+        v[unique(round(seq(1,length(v),length.out=min(length(v),a$settings$functional_draws_per_chain))))]),use.names=FALSE)
+      chains<-info$chain[ids]
+      xref<-vapply(z$x,function(n)median(z$train[[n]]),0)
+      patterns<-apply(z$train[,z$c,drop=FALSE],1,paste,collapse='/');mode<-sort(names(table(patterns))[table(patterns)==max(table(patterns))])[1]
+      cref<-as.numeric(strsplit(mode,'/',fixed=TRUE)[[1]])
+      age<-seq(quantile(z$train[[z$x[1]]],.1),quantile(z$train[[z$x[1]]],.9),length.out=7)
+      grid<-expand.grid(x=age,C1=seq_len(p$m_vec[1]))
+      xx<-matrix(rep(xref,each=nrow(grid)),ncol=length(xref));xx[,1]<-grid$x
+      cc<-matrix(rep(cref,each=nrow(grid)),ncol=length(cref));cc[,1]<-grid$C1;colnames(cc)<-p$C_order
+      seed<-as.integer((as.double(p$seeds$posterior)+63001)%%(2^30-1)+1)
+      md<-eivGP::predict_eivgp(fit,new_X=xx,new_C=cc,target='mean',draw_ids=ids,n_latent=a$settings$n_latent,
+        include_process_uncertainty=TRUE,return_components=TRUE,seed=seed)
+      cm<-attr(md,'conditional_means',exact=TRUE);stopifnot(is.matrix(cm))
+      cv<-a$convergence[a$convergence$fold==f&a$convergence$cell==cell,]
+      method_label<-if(nrow(cv)&&all(cv$core_pass))'EIV-GP'else'EIV-GP*'
+      curve<-cbind(data.frame(fold=f,cell=cell,method=method_label,grid),summarize_draws(md))
+      target_grade<-min(2L,p$m_vec[1]);target<-which(grid$C1==target_grade)[4L]
+      mt<-data.frame(fold=f,cell=cell,target='m(X reference, C profile)',chain=chains,
+        iteration=fit$checkpoint$burn+info$draw_within_chain[ids],value=cm[,target])
+      pr<-cbind(data.frame(fold=f,cell=cell,target='m(X reference, C profile)',units='ADNI_MEM'),adni_trace_diagnostic(cm[,target],chains))
+      # Repeat only the fixed target with twice as many integration nodes.
+      md2<-eivGP::predict_eivgp(fit,new_X=xx[target,,drop=FALSE],new_C=cc[target,,drop=FALSE],target='mean',
+        draw_ids=ids,n_latent=2L*a$settings$n_latent,include_process_uncertainty=FALSE,seed=seed)
+      check<-data.frame(fold=f,cell=cell,n_latent=a$settings$n_latent,n_latent_check=2L*a$settings$n_latent,
+        mean=mean(cm[,target]),mean_check=mean(md2),difference=mean(md2)-mean(cm[,target]))
+      refcell<-a$input$cells[[paste(f,'O50',sep='/')]]
+      hidden<-which(refcell$train$calibration==0L&refcell$train$C1==target_grade)
+      if(!length(hidden))hidden<-which(refcell$train$calibration==0L)
+      for(j in seq_along(z$u)) {
+        v<-rowMeans(matrix(fit$mcmc$samples_U[,hidden,j],nrow=nrow(info)))
+        anchored<-isTRUE(fit$data$latent_scale_anchored)
+        if(anchored)v<-fit$data$U_center[j]+fit$data$U_scale[j]*v
+        name<-paste0('Mean hidden ',p$U_order[j])
+        mt<-rbind(mt,data.frame(fold=f,cell=cell,target=name,chain=info$chain,
+          iteration=fit$checkpoint$burn+info$draw_within_chain,value=v))
+        pr<-rbind(pr,cbind(data.frame(fold=f,cell=cell,target=name,
+          units=if(anchored)'physical U'else'unanchored model U'),adni_trace_diagnostic(v,info$chain)))
+      }
+      surface<-data.frame()
+      if(cell!='O0') {
+        cal<-z$train[z$train$calibration==1,,drop=FALSE]
+        ug<-lapply(z$u,function(n)seq(quantile(cal[[n]],.1),quantile(cal[[n]],.9),length.out=11))
+        if(length(z$u)>=2L)uv<-expand.grid(U1=ug[[1]],U2=ug[[2]])else uv<-data.frame(U1=ug[[1]],U2=0)
+        uu<-matrix(rep(vapply(z$u,function(n)median(cal[[n]]),0),each=nrow(uv)),ncol=length(z$u))
+        uu[,1]<-uv$U1;if(length(z$u)>=2L)uu[,2]<-uv$U2;colnames(uu)<-p$U_order
+        x<-matrix(rep(xref,each=nrow(uv)),ncol=length(xref))
+        fd<-eivGP::predict_eivgp(fit,new_X=x,new_U=uu,new_U_scale='raw',target='surface',draw_ids=ids,
+          include_process_uncertainty=TRUE,seed=seed+3000L)
+        surface<-cbind(data.frame(fold=f,cell=cell,uv),summarize_draws(fd))
+      }
+      raw<-adni_bind(lapply(c('V','sigma2','r'),function(n){
+        v<-fit$mcmc[[paste0('samples_',n)]]
+        if(is.null(v))return(data.frame())
+        data.frame(fold=f,cell=cell,target=n,chain=info$chain,iteration=fit$checkpoint$burn+info$draw_within_chain,value=as.numeric(v))
+      }))
+      result<-list(curves=curve,surfaces=surface,traces=mt,raw_traces=raw,precision=pr,integration=check,
+        reference=list(X=xref,C=cref,target_C1=target_grade,common_hidden_N=length(hidden)))
+      saveRDS(list(identity=identity,result=result),cache)
+      rm(fit,md,md2);gc(FALSE)
+    }
+    curves[[key]]<-result$curves;surfaces[[key]]<-result$surfaces;traces[[key]]<-result$traces
+    raw_traces[[key]]<-result$raw_traces;precision[[key]]<-result$precision;integration[[key]]<-result$integration
+  }
+  # Native observable-mean curves on the same fixed training-defined slices.
+  native<-list()
+  for(f in a$settings$folds) {
+    z<-a$input$cells[[paste(f,'O50',sep='/')]];p<-z$protocol
+    grid<-curves[[paste(f,a$settings$cells[1],sep='/')]][,c('x','C1')]
+    xref<-vapply(z$x,function(n)median(z$train[[n]]),0)
+    patterns<-apply(z$train[,z$c,drop=FALSE],1,paste,collapse='/');mode<-sort(names(table(patterns))[table(patterns)==max(table(patterns))])[1]
+    cref<-as.numeric(strsplit(mode,'/',fixed=TRUE)[[1]])
+    xx<-matrix(rep(xref,each=nrow(grid)),ncol=length(xref));xx[,1]<-grid$x
+    cc<-matrix(rep(cref,each=nrow(grid)),ncol=length(cref));cc[,1]<-grid$C1
+    for(method in c('UC-GP','LVGP','EzGP')) {
+      status<-a$method_status[a$method_status$fold==f&a$method_status$cell=='OI'&a$method_status$method==method,]
+      if(!nrow(status)||status$state=='MISSING')next
+      value<-adni_baseline_mean(a$api,status$source_directory,xx,cc,p$m_vec,method)
+      native[[length(native)+1L]]<-data.frame(fold=f,cell='native OI',
+        method=paste0(method,if(status$state=='OPTIMIZER_FLAGGED')'*'else''),grid,mean=value,lo=NA_real_,hi=NA_real_)
+    }
+  }
+  out<-list(curves=adni_bind(c(curves,native)),surfaces=adni_bind(surfaces),traces=adni_bind(traces),
+    raw_traces=adni_bind(raw_traces),precision=adni_bind(precision),integration=adni_bind(integration))
+  for(n in names(out))if(nrow(out[[n]]))write.csv(out[[n]],file.path(dest,paste0(n,'.csv')),row.names=FALSE)
+  reference_fold<-a$settings$representative_fold
+  plot_curve<-function(x)ggplot(x,aes(x,mean,colour=interaction(method,cell),group=interaction(method,cell)))+
+    geom_ribbon(aes(ymin=lo,ymax=hi,fill=interaction(method,cell)),alpha=.06,colour=NA,na.rm=TRUE)+
+    geom_line(linewidth=.65)+facet_wrap(~C1,ncol=2)+theme_bw()+
+    labs(x=a$protocol$X_order[1],y='m(x,c): ADNI_MEM',colour='Method / calibration',fill='Method / calibration')
+  out$mean_plot<-plot_curve(out$curves[out$curves$fold==reference_fold,])
+  out$mean_all_plot<-plot_curve(out$curves)+facet_grid(fold~C1)
+  if(nrow(out$surfaces)) {
+    out$surface_plot<-ggplot(out$surfaces[out$surfaces$fold==reference_fold,],aes(U1,U2,fill=mean))+
+      geom_raster()+geom_contour(aes(z=mean),colour='white',alpha=.6)+facet_wrap(~cell)+
+      scale_fill_viridis_c()+theme_bw()+labs(x=a$protocol$U_order[1],y=a$protocol$U_order[min(2,a$protocol$d)],fill='f(x,u)')
+    out$surface_all_plot<-ggplot(out$surfaces,aes(U1,U2,fill=mean))+geom_raster()+
+      facet_grid(fold~cell)+scale_fill_viridis_c()+theme_bw()+labs(x=a$protocol$U_order[1],y=a$protocol$U_order[min(2,a$protocol$d)],fill='f(x,u)')
+  }
+  traceplot<-function(d)ggplot(d[d$fold==reference_fold,],aes(iteration,value,colour=factor(chain)))+
+    geom_line(alpha=.6,linewidth=.25)+facet_grid(target~cell,scales='free_y')+theme_bw()+
+    labs(x='Saved iteration',y=NULL,colour='Chain')
+  out$trace_plot<-traceplot(out$traces);out$raw_trace_plot<-traceplot(out$raw_traces)
+  out
+}
+
+
+# ============================================================================
+# ADNI prepared-fold application: adni-render.R
+# ============================================================================
+
+# Author: Xinye Chen. Fresh-process plotting avoids macOS font initialization after fork.
+adni_render_plot <- function(args=commandArgs(TRUE)) {
+  stopifnot(length(args)==5L)
+  plot<-readRDS(args[1])
+  ggplot2::ggsave(args[2],plot,width=as.numeric(args[3]),height=as.numeric(args[4]),
+    dpi=as.numeric(args[5]),bg='white')
+  stopifnot(file.exists(args[2]),file.info(args[2])$size>1000)
+  invisible(args[2])
+}
+
+
+# ============================================================================
+# ADNI prepared-fold application: adni.R
+# ============================================================================
+
+# Author: Xinye Chen. Application settings and routing; scientific kernels are eivGP APIs.
+adni_resolve_path <- function(path,repo) {
+  path<-path.expand(path)
+  if(!grepl('^(/|[A-Za-z]:[/\\\\])',path))path<-file.path(repo,path)
+  base<-path;suffix<-character()
+  while(!file.exists(base)&&dirname(base)!=base) {
+    suffix<-c(basename(base),suffix);base<-dirname(base)
+  }
+  resolved<-normalizePath(base,mustWork=TRUE)
+  if(length(suffix))file.path(resolved,paste(suffix,collapse='/'))else resolved
+}
+adni_cli_params <- function(args) {
+  allowed<-c('cores','profile','dataset','data_root','data_dir','output','output_dir','config','manifest',
+    'chains','iter','burn','stages','folds','cells','draws_per_chain','first_checkpoint','checkpoint_step',
+    'baseline_profile','sampler_o0','sampler_o20','sampler_o50','representative_fold','appendix',
+    'plan','reuse_only','report_source','report_dir','functional_draws_per_chain','n_latent','run_id')
+  p<-list()
+  for(a in args) {
+    if(!grepl('^--[^=]+=.+$',a))stop('Use --name=value: ',a)
+    k<-gsub('-','_',sub('^--([^=]+)=.*$','\\1',a));v<-sub('^[^=]+=','',a)
+    if(!k%in%allowed)stop('Unknown ADNI option: ',k)
+    if(k%in%names(p))stop('Repeated option: ',k)
+    if(k%in%c('plan','reuse_only','appendix')) {
+      if(!v%in%c('true','false'))stop(k,' must be true or false')
+      v<-v=='true'
+    }
+    p[[k]]<-v
+  }
+  p
+}
+adni_integer <- function(value,name,minimum=1L) {
+  n<-suppressWarnings(as.numeric(value))
+  if(length(n)!=1L||!is.finite(n)||n<minimum||n!=floor(n)||n>.Machine$integer.max)
+    stop(name,' must be an integer >= ',minimum)
+  as.integer(n)
+}
+adni_integer_list <- function(value,name) {
+  if(is.character(value)&&length(value)==1L) {
+    if(grepl('^[0-9]+:[0-9]+$',value)) {
+      z<-as.integer(strsplit(value,':',fixed=TRUE)[[1]]);value<-seq.int(z[1],z[2])
+    }else value<-strsplit(value,',',fixed=TRUE)[[1]]
+  }
+  unname(vapply(unlist(value),adni_integer,1L,name=name))
+}
+adni_settings <- function(profile='pilot',cores=4L,...) {
+  overrides<-list(...);profile<-match.arg(profile,c('pilot','paper','quick'))
+  defaults<-switch(profile,paper=list(chains=4L,iter=50000L,burn=5000L,stages=50000L),
+    pilot=list(chains=4L,iter=1500L,burn=500L,stages=c(1000L,1500L)),
+    quick=list(chains=1L,iter=80L,burn=30L,stages=80L))
+  s<-modifyList(c(defaults,list(profile=profile,cores=cores,folds=if(profile=='quick')1L else 1:5,
+    cells=c('O50','O20','O0'),draws_per_chain=if(profile=='quick')10L else 250L,
+    checkpoint_step=1000L,baseline_profile=if(profile=='quick')'quick'else'paper',
+    sampler_o0='HMC',sampler_o20='HMC',sampler_o50='ESS',representative_fold=1L,
+    appendix=TRUE,functional_draws_per_chain=64L,n_latent=256L,run_id='local')),overrides)
+  for(n in c('cores','chains','iter','draws_per_chain','checkpoint_step','representative_fold',
+             'functional_draws_per_chain','n_latent'))s[[n]]<-adni_integer(s[[n]],n)
+  s$burn<-adni_integer(s$burn,'burn',0L);s$folds<-adni_integer_list(s$folds,'folds')
+  if(any(!s$folds%in%1:5)||anyDuplicated(s$folds))stop('folds must be distinct members of1:5')
+  s$cells<-if(length(s$cells)==1L)strsplit(s$cells,',',fixed=TRUE)[[1]]else unlist(s$cells)
+  if(!length(s$cells)||any(!s$cells%in%c('O0','O20','O50'))||anyDuplicated(s$cells))stop('Invalid cells')
+  if(!is.null(overrides$stages)) {
+    s$stages<-adni_integer_list(overrides$stages,'stages')
+    if(!is.null(overrides$iter)&&tail(s$stages,1)!=s$iter)stop('iter must equal the last stage')
+    s$iter<-tail(s$stages,1)
+  }else if(!is.null(overrides$iter))s$stages<-s$iter
+  if(any(diff(s$stages)<=0)||min(s$stages)<=s$burn)stop('Stages must increase and exceed burn')
+  s$first_checkpoint<-adni_integer(if(is.null(s$first_checkpoint))min(s$stages[1],s$burn+250L)else s$first_checkpoint,'first_checkpoint')
+  if(s$first_checkpoint<=s$burn||s$first_checkpoint>min(s$stages))stop('first-checkpoint must exceed burn and not exceed first stage')
+  if(!s$baseline_profile%in%c('paper','quick'))stop('baseline-profile must be paper or quick')
+  for(n in c('sampler_o0','sampler_o20','sampler_o50'))if(!s[[n]]%in%c('HMC','ESS'))stop('Unknown sampler')
+  attr(s,'explicit_selection')<-intersect(names(overrides),c('folds','cells'))
+  s
+}
+adni_load_api <- function(repo) adni_workflow_api(repo)
+adni_method_run <- function(repo,params,group) {
+  if(!is.null(params$config)) {
+    config<-jsonlite::fromJSON(adni_resolve_path(params$config,repo),simplifyVector=TRUE)
+    params<-modifyList(config,params)
+  }
+  get<-function(n,default)if(is.null(params[[n]]))default else params[[n]]
+  if(!is.null(params$manifest)) {
+    env<-adni_load_api(repo)
+    return(env$adni_screen_run(repo,list(manifest=adni_resolve_path(params$manifest,repo),
+      cores=adni_integer(get('cores',4L),'cores'),plan=isTRUE(params$plan),reuse_only=isTRUE(params$reuse_only)),group))
+  }
+  fields<-c('chains','iter','burn','stages','folds','cells','draws_per_chain','first_checkpoint','checkpoint_step',
+    'baseline_profile','sampler_o0','sampler_o20','sampler_o50','representative_fold','appendix',
+    'functional_draws_per_chain','n_latent','run_id')
+  s<-do.call(adni_settings,c(list(profile=get('profile','pilot'),cores=get('cores',4L)),params[intersect(names(params),fields)]))
+  dataset<-get('dataset','adni')
+  if(!grepl('^[A-Za-z0-9][A-Za-z0-9_-]*$',dataset))stop('Invalid dataset name')
+  default_input<-if(dataset=='adni')file.path('data','adni','inputs')else file.path('data','adni',dataset,'inputs')
+  input<-adni_resolve_path(get('data_root',get('data_dir',default_input)),repo)
+  out<-adni_resolve_path(get('output',get('output_dir',file.path('results',paste(dataset,s$profile,sep='_')))),repo)
+  if(isTRUE(params$plan)&&!dir.exists(file.path(input,'MC'))) {
+    cat('Dataset:',dataset,'; data:',input,'\n');print(s[c('profile','chains','iter','burn','cores')])
+    cat('Supply private inputs before fitting. No computation started.\n');return(invisible(s))
+  }
+  report_source<-if(!is.null(params$report_source))adni_resolve_path(params$report_source,repo)else NULL
+  saved_only<-group=='report'||isTRUE(params$reuse_only)
+  if(saved_only&&!isTRUE(params$plan))return(adni_render_report(repo,input,out,s,report_source,
+    report_dir=adni_resolve_path(get('report_dir',out),repo),group=group))
+  api<-adni_load_api(repo);inp<-api$adni_plan_inputs(input);p<-inp$cells[[1]]$protocol
+  api$application$adni_output_check(out,repo)
+  files<-setNames(lapply(inp$files,function(x)digest::digest(file=x,algo='sha256')),inp$files)
+  m<-list(schema='adni-application-v1',author='Xinye Chen',profile=s$profile,
+    package_version=as.character(packageVersion('eivGP')),
+    baseline_profile=s$baseline_profile,trial_id=dataset,smoke=s$profile=='quick',
+    output_root=file.path(out,'workflow'),cores=s$cores,chains=s$chains,stages=s$stages,burn=s$burn,
+    first_checkpoint=s$first_checkpoint,checkpoint_step=s$checkpoint_step,draws_per_chain=s$draws_per_chain,
+    samplers=list(O0=s$sampler_o0,O20=s$sampler_o20,O50=s$sampler_o50),folds=s$folds,cells=s$cells,
+    cases=list(list(id=p$plan_id,input=input,output=out,C=p$C_order,N=inp$N,q=p$q)),frozen_inputs=files)
+  if(isTRUE(params$plan)) {
+    e<-adni_load_api(repo)
+    print(e$adni_screen_tasks(m,group),row.names=FALSE);print(s[c('profile','chains','iter','burn','cores')]);return(invisible(m))
+  }
+  dir.create(out,recursive=TRUE,showWarnings=FALSE);manifest<-file.path(out,'application_manifest.json')
+  if(file.exists(manifest)) {
+    prior<-jsonlite::fromJSON(manifest,simplifyVector=FALSE);a<-m;b<-prior;a$cores<-b$cores<-NULL
+    canonical<-function(x)jsonlite::fromJSON(jsonlite::toJSON(x,auto_unbox=TRUE,null='null'),simplifyVector=FALSE)
+    if(!identical(canonical(a),canonical(b)))
+      stop('Saved ADNI settings/inputs differ; select a new output directory. ',
+        paste(all.equal(canonical(a),canonical(b)),collapse='; '))
+  }else api$atomic_json(m,manifest)
+  e<-adni_load_api(repo)
+  result<-e$adni_screen_run(repo,list(manifest=manifest,cores=s$cores,plan=FALSE,reuse_only=FALSE),group)
+  adni_render_report(repo,input,out,s,report_dir=file.path(out,'reports',group),group=group)
+  invisible(result)
+}
+adni_render_report <- function(repo,data_dir,output_dir,settings,report_source=NULL,
+                              report_dir=output_dir,group='report',rmd=NULL,filename='adni.html') {
+  if(!requireNamespace('rmarkdown',quietly=TRUE)||!rmarkdown::pandoc_available())
+    stop('HTML requires rmarkdown and Pandoc on PATH or RSTUDIO_PANDOC')
+  env<-adni_load_api(repo)
+  analysis<-env$adni_report_prepare(repo,data_dir,output_dir,settings,report_source,report_dir,group)
+  render_env<-new.env(parent=globalenv());render_env$.adni_precomputed_analysis<-analysis
+  render_env$.adni_repository_dir<-repo
+  if(is.null(rmd))rmd<-file.path(repo,'paper/applications/adni.Rmd')
+  rmarkdown::render(rmd,output_file=filename,output_dir=report_dir,
+    params=list(profile=settings$profile,action='report',cores=settings$cores,data_dir=data_dir,
+      output_dir=output_dir,report_source=if(is.null(report_source))''else report_source,
+      representative_fold=settings$representative_fold,appendix=settings$appendix),envir=render_env,quiet=TRUE)
+  cat('Saved ADNI HTML: ',file.path(report_dir,filename),'\n',sep='')
+  invisible(list(html=file.path(report_dir,filename),analysis=analysis))
+}
+
+
+# ============================================================================
+# ADNI prepared-fold application: adni-workflow.R
+# ============================================================================
+
+# Author: Xinye Chen. ADNI screening orchestration on the unchanged public package.
+adni_output_check <- function(path,repo) {
+  path<-normalizePath(path.expand(path),mustWork=FALSE);repo<-normalizePath(repo)
+  if(startsWith(paste0(path,'/'),paste0(repo,'/'))&&
+     !startsWith(paste0(path,'/'),paste0(repo,'/results/')))
+    stop('Choose ignored results/ or an external output directory; never write to versioned source/data.')
+  invisible(path)
+}
+adni_screen_api <- function(repo) adni_workflow_api(repo)
+
+adni_screen_args <- function(args) {
+  p<-list(cores=5L,plan=FALSE,reuse_only=FALSE)
+  for(a in args){
+    if(!grepl('^--[^=]+=.+$',a))stop('Use --name=value: ',a)
+    k<-gsub('-','_',sub('^--([^=]+)=.*$','\\1',a));v<-sub('^[^=]+=','',a)
+    if(!k%in%c('manifest','cores','plan','reuse_only'))stop('Unknown screening option: ',k)
+    if(k%in%c('plan','reuse_only')){if(!v%in%c('true','false'))stop(k,' must be true or false');v<-v=='true'}
+    if(k=='cores'){n<-suppressWarnings(as.numeric(v));if(!is.finite(n)||n<1||n!=floor(n)||n>.Machine$integer.max)stop('cores must be a positive integer');v<-as.integer(n)}
+    if(k%in%names(p)&&!k%in%c('cores','plan','reuse_only'))stop('Repeated option: ',k)
+    p[[k]]<-v
+  }
+  if(is.null(p$manifest))stop('Supply --manifest=/external/SCREENING.json')
+  p
+}
+adni_screen_settings <- function(m,iter,cores) {
+  smoke<-isTRUE(m$smoke)
+  get<-function(n,default)if(is.null(m[[n]]))default else m[[n]]
+  list(profile=get('baseline_profile',if(smoke)'pilot'else'paper'),run_profile=get('profile',if(smoke)'quick'else'pilot'),
+    action='fit',folds=as.integer(unlist(m$folds)),cells=unlist(m$cells),
+    cores=as.integer(cores),chains=as.integer(get('chains',4L)),iter=as.integer(iter),burn=as.integer(m$burn),
+    first_checkpoint=as.integer(min(iter,get('first_checkpoint',if(smoke)iter else m$burn+250L))),
+    checkpoint_step=as.integer(get('checkpoint_step',1000L)),
+    draws_per_chain=as.integer(get('draws_per_chain',if(smoke)5L else 250L)),protocol=m$trial_id,
+    samplers=get('samplers',list(O0='HMC',O20='HMC',O50='ESS')))
+}
+adni_screen_manifest <- function(path,api) {
+  m<-jsonlite::fromJSON(normalizePath(path),simplifyVector=FALSE)
+  if(!m$schema%in%c('adni-screening-v2','adni-application-v1')||!length(m$cases))stop('Unsupported ADNI manifest')
+  if(m$schema=='adni-screening-v2'&&!isTRUE(m$smoke)&&
+    (m$burn!=500L||!identical(as.integer(unlist(m$folds)),1:5)))stop('Production screening requires all five folds and burn500')
+  stages<-unlist(m$stages)
+  if(!length(stages)||any(!is.finite(stages))||any(stages!=as.integer(stages))||any(diff(stages)<=0)||
+    length(m$burn)!=1L||!is.finite(m$burn)||m$burn<0||m$burn!=as.integer(m$burn)||min(stages)<=m$burn)stop('Invalid stage budgets')
+  if(!length(m$folds)||any(!unlist(m$folds)%in%1:5)||anyDuplicated(unlist(m$folds)))stop('Invalid folds')
+  if(!is.null(m$chains)&&(length(m$chains)!=1L||m$chains<1||m$chains!=as.integer(m$chains)))stop('Invalid chain count')
+  if(!all(unlist(m$cells)%in%c('O0','O20','O50')))stop('Invalid calibration cells')
+  if(anyDuplicated(vapply(m$cases,`[[`,'','id')))stop('Repeated Plan identity')
+  for(k in names(m$frozen_inputs))if(!identical(digest::digest(file=k,algo='sha256'),m$frozen_inputs[[k]]))stop('Frozen input changed: ',k)
+  inputs<-list()
+  for(z in m$cases){
+    if(!grepl('^[A-Za-z0-9][A-Za-z0-9_-]*$',z$id))stop('Invalid dataset identity')
+    adni_output_check(z$output,api$repository_dir)
+    inp<-api$adni_plan_inputs(z$input)
+    for(cell in inp$cells)if(cell$protocol$plan_id!=z$id||any(cell$test$calibration!=0L))stop('Dataset identity or test mask differs')
+    inputs[[z$id]]<-inp
+  }
+  if(length(inputs)>1L)for(i in 2:length(inputs))for(key in names(inputs[[1]]$cells)){
+    a<-inputs[[1]]$cells[[key]];b<-inputs[[i]]$cells[[key]]
+    if(!identical(a$train$RID,b$train$RID)||!identical(a$test$RID,b$test$RID)||
+       !identical(a$train[,c('Y','X1','X2','U1','U2','calibration')],b$train[,c('Y','X1','X2','U1','U2','calibration')])||
+       !identical(a$available,b$available))stop('Paired people, anchors or masks differ')
+  }
+  list(manifest=m,inputs=inputs)
+}
+adni_screen_tasks <- function(m,group,stage='') {
+  rows<-list();add<-function(plan,fold,cell,method,kind)rows[[length(rows)+1L]]<<-data.frame(plan=plan,fold=as.integer(fold),cell=cell,method=method,kind=kind,stage=stage)
+  for(z in m$cases)for(f in unlist(m$folds)){
+    if(group=='eivGP')for(cell in unlist(m$cells))add(z$id,f,cell,'EIV-GP','eiv')
+    if(group=='competitors'){
+      add(z$id,f,'OI','UC-GP+LVGP+EzGP','baseline_group')
+      for(cell in intersect(unlist(m$cells),c('O20','O50')))for(method in c('UC-GP','LVGP','EzGP'))add(z$id,f,cell,method,'cc')
+    }
+  }
+  if(!length(rows))return(data.frame())
+  x<-do.call(rbind,rows);x$id<-paste(x$plan,x$stage,x$kind,x$fold,x$cell,gsub('[+]','_',x$method),sep='__');x
+}
+adni_screen_receipt <- function(out,task,phase)file.path(out,'receipts',paste0(phase,'_',task$id,'.rds'))
+adni_screen_verified <- function(path,identity) {
+  if(!file.exists(path))return(FALSE)
+  r<-readRDS(path);if(!identical(r$identity,identity))stop('Receipt identity differs: ',path)
+  if(length(r$files)&&(!all(file.exists(r$files))||!identical(unname(tools::md5sum(r$files)),r$md5)))stop('Completed output changed: ',path)
+  TRUE
+}
+adni_screen_phase <- function(tasks,phase,cores,api,FUN,status_dir,chains=4L) {
+  dir.create(status_dir,recursive=TRUE,showWarnings=FALSE)
+  status<-tasks;status$state<-'PENDING';status$detail<-'';status$worker_pid<-NA_integer_;status$seconds<-NA_real_
+  outer<-api$queue$ocean_stage_workers(cores,if(phase=='fit')'fit'else'analyze',nrow(tasks),chains)
+  publish<-function()api$atomic_csv(status,file.path(status_dir,paste0(phase,'_status.csv')))
+  publish()
+  # Match the public Ocean executor: resident jobs share the full active-worker pool.
+  api$mixedgp_budget_yield(function()api$queue$ocean_schedule(seq_len(nrow(tasks)),rep(1L,nrow(tasks)),outer,
+    function(i,allocated)api$mixedgp_budget_worker(function(){
+      logpath<-file.path(status_dir,paste0(phase,'_',make.names(tasks$id[i]),'.log'));con<-file(logpath,'at')
+      old_message<-getConnection(sink.number(type='message'));sink(con);sink(con,type='message')
+      on.exit({sink(old_message,type='message');sink();close(con)},add=TRUE);t<-proc.time()[3]
+      err<-tryCatch({FUN(tasks[i,,drop=FALSE],cores);NULL},error=function(e)conditionMessage(e))
+      if(!is.null(err))cat('FAILED:',err,'\n')
+      list(state=if(is.null(err))'DONE'else'FAILED',detail=if(is.null(err))''else err,seconds=as.numeric(proc.time()[3]-t))
+    }),
+    function(i,n,pid,active){status$state[i]<<-'RUNNING';status$worker_pid[i]<<-pid;publish()},
+    function(i,r,active){if(!is.list(r)||is.null(r$state))r<-list(state='FAILED',detail='Worker exited without a result',seconds=NA_real_)
+      status$state[i]<<-r$state;status$detail[i]<<-r$detail;status$seconds[i]<<-r$seconds;publish()}))
+  status
+}
+adni_screen_collect <- function(m,api) {
+  pred<-conv<-u<-pros<-list()
+  for(z in m$cases){
+    for(mark in list.files(z$output,'^EVALUATION_VALIDATION[.]json$',recursive=TRUE,full.names=TRUE)){
+      dir<-dirname(mark)
+      for(pair in list(c('prediction_metrics.csv','pred'),c('convergence.csv','conv'),c('U_metrics.csv','u'),c('PROSPECTIVE_U_metrics.csv','pros'))){
+        p<-file.path(dir,pair[1]);if(!file.exists(p))next
+        val<-cbind(plan=z$id,read.csv(p));dest<-get(pair[2]);dest[[length(dest)+1L]]<-val;assign(pair[2],dest)
+      }
+    }
+    files<-list.files(z$output,'^metrics[.]csv$',recursive=TRUE,full.names=TRUE)
+    for(p in files){x<-read.csv(p);if('stage'%in%names(x)&&all(x$stage=='BASELINE'))pred[[length(pred)+1L]]<-cbind(plan=z$id,x)}
+  }
+  bind<-function(x)if(length(x))api$queue$ocean_bind(x)else data.frame()
+  tables<-list(prediction=bind(pred),convergence=bind(conv),training_U=bind(u),prospective_U=bind(pros))
+  dest<-file.path(m$output_root,'reports');dir.create(dest,recursive=TRUE,showWarnings=FALSE)
+  for(k in names(tables))if(nrow(tables[[k]]))api$atomic_csv(tables[[k]],file.path(dest,paste0(k,'_fold_metrics.csv')))
+  p<-tables$prediction;summary<-list()
+  if(nrow(p))for(ix in split(seq_len(nrow(p)),interaction(p$plan,p$stage,p$cell,p$method,p$protocol,drop=TRUE))){
+    x<-p[ix,,drop=FALSE];v<-x$RMSE_SD
+    summary[[length(summary)+1L]]<-data.frame(x[1,c('plan','stage','cell','method','protocol')],completed_folds=length(unique(x$fold)),
+       RMSE_SD_mean=mean(v),RMSE_SD_SD=if(length(v)>1)sd(v)else NA_real_)
+  }
+  five<-bind(summary);if(nrow(five))api$atomic_csv(five,file.path(dest,'fivefold_prediction.csv'))
+  stability<-list()
+  for(kind in names(tables)[names(tables)%in%c('prediction','training_U','prospective_U')]){
+    tab<-tables[[kind]];if(!nrow(tab)||!'stage'%in%names(tab))next
+    stage_names<-paste0('S',unlist(m$stages));if(length(stage_names)<2L)next
+    x<-tab[tab$stage==stage_names[1],,drop=FALSE];y<-tab[tab$stage==tail(stage_names,1),,drop=FALSE]
+    keys<-if(kind=='prediction')c('plan','fold','cell','method','protocol')else c('plan','fold','cell','coordinate')
+    if(nrow(x)&&nrow(y)){
+      z<-merge(x[,c(keys,'RMSE_SD'),drop=FALSE],y[,c(keys,'RMSE_SD'),drop=FALSE],by=keys,suffixes=c('_first','_last'))
+      z$first_stage<-stage_names[1];z$last_stage<-tail(stage_names,1)
+      z$target<-kind;z$delta_last_minus_first<-z$RMSE_SD_last-z$RMSE_SD_first;stability[[kind]]<-z
+    }
+  }
+  stable<-bind(stability);if(nrow(stable))api$atomic_csv(stable,file.path(dest,'stage_stability.csv'))
+  lines<-c('# ADNI screening: saved results',paste('Author: Xinye Chen. Trial',m$trial_id),
+    'Partial fold counts and CORE failures remain explicit. Budget completion does not establish convergence.',
+    if(nrow(five))capture.output(print(five,row.names=FALSE))else'No completed scores yet.')
+  writeLines(lines,file.path(dest,'REPORT.md'))
+  html<-c('<!doctype html><meta charset="utf-8"><title>ADNI screening</title>',
+    '<h1>ADNI screening: saved results</h1><p>Author: Xinye Chen. Partial folds and CORE failures remain explicit; completing a budget does not establish convergence.</p>',
+    api$queue$ocean_table_html(five,'Response prediction: fold means and sample SD'),
+    api$queue$ocean_table_html(tables$convergence,'Full-chain CORE diagnostics'),
+    api$queue$ocean_table_html(stable,'Paired stage stability; descriptive screening only'))
+  writeLines(html,file.path(dest,'index.html'));invisible(tables)
+}
+adni_screen_run <- function(repo,p,group) {
+  api<-adni_screen_api(repo);bundle<-adni_screen_manifest(p$manifest,api);m<-bundle$manifest;inputs<-bundle$inputs
+  cases<-setNames(m$cases,vapply(m$cases,`[[`,'','id'));api$B<-dirname(normalizePath(p$manifest))
+  if(p$plan){
+    for(g in if(group=='report')c('eivGP','competitors')else group){x<-adni_screen_tasks(m,g);print(x,row.names=FALSE)}
+    cat('Public shared CPU pool:',p$cores,'; fit resident limit:',api$queue$ocean_stage_workers(p$cores,'fit',100L,4L),
+      '; full-chain reservations/backfill disabled.\n');return(invisible(bundle))
+  }
+  root<-m$output_root
+  adni_output_check(root,repo)
+  dir.create(root,recursive=TRUE,showWarnings=FALSE);lock<-file.path(root,'.adni-application.lock')
+  if(!dir.create(lock,showWarnings=FALSE))stop('ADNI workflow already active: ',lock)
+  writeLines(as.character(Sys.getpid()),file.path(lock,'pid'));on.exit(unlink(lock,recursive=TRUE),add=TRUE)
+  code<-file.path(repo,'eivGP/R/helpers.R')
+  base_id<-list(schema='adni-upstream-screening-v2',trial=m$trial_id,modules=api$eivgp_module_identity(),
+    application=unname(tools::md5sum(code)),burn=m$burn,stages=unlist(m$stages),smoke=isTRUE(m$smoke),
+    chains=if(is.null(m$chains))4L else as.integer(m$chains),
+    samplers=if(is.null(m$samplers))list(O0='HMC',O20='HMC',O50='ESS')else m$samplers,
+    baseline_profile=if(is.null(m$baseline_profile))if(isTRUE(m$smoke))'pilot'else'paper'else m$baseline_profile,
+    draws_per_chain=if(is.null(m$draws_per_chain))if(isTRUE(m$smoke))5L else 250L else m$draws_per_chain)
+  identities<-list()
+  for(z in m$cases){
+    id<-c(base_id,list(plan=z$id,inputs=unname(tools::md5sum(inputs[[z$id]]$files))))
+    identities[[z$id]]<-id;path<-file.path(z$output,'workflow_identity.rds')
+    if(file.exists(path)){if(!identical(readRDS(path),id))stop('Saved workflow identity differs; use a new output root')}else if(group!='report'&&!p$reuse_only)api$atomic_rds(id,path)
+  }
+  required<-list()
+  for(g in if(group=='report')c('eivGP','competitors')else group){
+    for(st in if(g=='eivGP')paste0('S',unlist(m$stages))else'BASELINE'){
+      tasks<-adni_screen_tasks(m,g,st)
+      for(i in seq_len(nrow(tasks))){t<-tasks[i,];out<-cases[[t$plan]]$output
+        required[[length(required)+1L]]<-list(path=adni_screen_receipt(out,t,if(g=='eivGP')'evaluate'else'fit'),identity=identities[[t$plan]])}
+    }
+  }
+  if(group=='report'||p$reuse_only){
+    if(!all(vapply(required,function(r)adni_screen_verified(r$path,r$identity),logical(1))))stop('Saved-only prerequisites incomplete; no fitting or continuation started')
+    return(adni_screen_collect(m,api))
+  }
+  api$adni_plan_require();job<-file.path(root,'logs',paste0(group,'_',format(Sys.time(),'%Y%m%d_%H%M%S')))
+  old<-options(eivGP.core_events=file.path(job,'core-events'));on.exit(options(old),add=TRUE)
+  close<-api$mixedgp_budget_enter(p$cores);on.exit(close(),add=TRUE,after=FALSE);cores<-api$mixedgp_budget_cores()
+  writeLines(paste('Effective shared worker budget',cores,'; public resident-fit scheduling.'),file.path(root,paste0(group,'_budget.txt')))
+  stages<-if(group=='eivGP')unlist(m$stages)else 0L
+  for(iter in stages){
+    stage<-if(group=='eivGP')paste0('S',iter)else'BASELINE';tasks<-adni_screen_tasks(m,group,stage)
+    work<-function(t,n,evaluate=FALSE){
+      out<-cases[[t$plan]]$output;inp<-inputs[[t$plan]];id<-identities[[t$plan]];s<-adni_screen_settings(m,if(iter)iter else max(unlist(m$stages)),n)
+      phase<-if(evaluate)'evaluate'else'fit';receipt<-adni_screen_receipt(out,t,phase)
+      if(adni_screen_verified(receipt,id))return(invisible(NULL))
+      if(t$kind=='eiv'){
+        path<-api$adni_plan_fit_path(out,t)
+        if(evaluate){
+          if(!file.exists(path)||api$adni_plan_read_fit(path)$checkpoint$iteration!=iter)stop('Exact stage checkpoint unavailable for evaluation')
+          api$analyze_cell(t,inp,out,s,stage);folder<-file.path(out,stage,'analysis',sprintf('fold%02d',t$fold),t$cell)
+        }else{
+          if(file.exists(path)){
+            fit<-api$adni_plan_read_fit(path)
+            if(fit$checkpoint$iteration>iter)stop('Cannot refit an earlier stage after continuation; restore its completed evaluation receipt')
+            if(fit$checkpoint$burn!=s$burn||fit$control$sampler!=s$samplers[[t$cell]])stop('Checkpoint sampler/burn differs')
+          }
+          api$adni_plan_fit_task(t,inp,out,s,extend=FALSE);folder<-NULL
+        }
+      }else{
+        methods<-if(t$kind=='baseline_group')c('UC-GP','LVGP','EzGP')else t$method
+        failures<-character()
+        for(method in methods){one<-t;one$method<-method;tryCatch(api$baseline_cell(one,inp,out,s,cc=t$kind=='cc'),error=function(e)failures<<-c(failures,paste(method,conditionMessage(e))))}
+        if(length(failures))stop(paste(failures,collapse='; '))
+        folder<-if(t$kind=='cc')file.path(out,'CC',t$cell,'baselines',sprintf('fold%02d',t$fold),t$method)else file.path(out,'baselines',sprintf('fold%02d',t$fold))
+      }
+      files<-if(is.null(folder))character()else sort(list.files(folder,recursive=TRUE,full.names=TRUE))
+      api$atomic_rds(list(identity=id,task=t,files=files,md5=unname(tools::md5sum(files)),finished=as.character(Sys.time())),receipt)
+    }
+    nchains<-if(is.null(m$chains))4L else as.integer(m$chains)
+    status<-adni_screen_phase(tasks,'fit',cores,api,function(t,n)work(t,n),file.path(job,stage),nchains)
+    if(group=='eivGP'&&any(status$state=='FAILED'))stop('EIV stage incomplete; checkpoints retained. Inspect ',job)
+    if(group=='eivGP'){
+      status<-adni_screen_phase(tasks,'evaluate',cores,api,function(t,n)work(t,n,TRUE),file.path(job,stage),nchains)
+      if(any(status$state=='FAILED'))stop('EIV evaluation incomplete; continuation not started. Inspect ',job)
+    }else if(any(status$state=='FAILED'))warning('Comparator failures retained; saved results remain available.')
+    adni_screen_collect(m,api)
+  }
+  invisible(adni_screen_collect(m,api))
+}
+
+# Author: Xinye Chen. Prepared-fold ADNI package API; legacy run_adni_analysis remains available.
+adni_workflow_api <- function(repository_dir=NULL) {
+  ns<-asNamespace('eivGP')
+  if(!is.null(repository_dir)) {
+    repository_dir<-normalizePath(repository_dir)
+    manifest<-utils::read.csv(system.file('module-manifest.csv',package='eivGP'))
+    native<-grepl('[.]cpp$|^Makevars',manifest$module)
+    paths<-file.path(repository_dir,'eivGP',ifelse(native,'src','R'),manifest$module)
+    if(!identical(unname(tools::md5sum(paths)),manifest$md5))
+      stop('Installed eivGP differs from this checkout; rebuild and reinstall it first.')
+  }
+  e<-new.env(parent=ns)
+  names<-setdiff(grep('^adni_',ls(ns,all.names=TRUE),value=TRUE),'adni_workflow_api')
+  for(n in names) {
+    value<-get(n,ns,inherits=FALSE)
+    if(is.function(value))environment(value)<-e
+    e[[n]]<-value
+  }
+  e$repository_dir<-repository_dir;e$api<-e;e$application<-e
+  e$queue<-ocean_workflow_api()
+  for(n in c('mixedgp_budget_yield','mixedgp_budget_worker','mixedgp_budget_enter',
+             'mixedgp_budget_cores','eivgp_module_identity'))e[[n]]<-get(n,ns)
+  e$atomic_json<-function(value,path) {
+    dir.create(dirname(path),recursive=TRUE,showWarnings=FALSE)
+    p<-tempfile(tmpdir=dirname(path));on.exit(unlink(p))
+    jsonlite::write_json(value,p,auto_unbox=TRUE,pretty=TRUE,null='null',na='null')
+    stopifnot(file.rename(p,path))
+  }
+  e$atomic_csv<-ocean_atomic_csv;e$atomic_rds<-ocean_atomic_rds
+  e$analyze_cell<-e$adni_analyze_cell;e$baseline_cell<-e$adni_baseline_cell
+  e$adni_load_api<-e$adni_screen_api<-function(repo)e
+  e
+}
+run_adni_application <- function(repository_dir,params=list(),group=c('report','eivGP','competitors')) {
+  group<-match.arg(group)
+  api<-adni_workflow_api(repository_dir)
+  api$adni_method_run(repository_dir,params,group)
+}

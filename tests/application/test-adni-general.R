@@ -1,8 +1,20 @@
 # Author: Xinye Chen. Synthetic configuration, privacy and observation-design contracts.
 repo<-Sys.getenv('EIVGP_TEST_REPO');stopifnot(nzchar(repo))
 source(file.path(repo,'paper/applications/adni.R'))
-source(file.path(repo,'paper/applications/adni-workflow.R'))
+list2env(as.list(adni_load_api(repo)),envir=environment())
 source(file.path(repo,'data/adni/prepare_folds.R'))
+
+testthat::test_that('application files correspond to Ocean and implementation is installed',{
+ app<-file.path(repo,'paper/applications')
+ ocean<-list.files(app,'^ocean([.-].*)?[.](R|Rmd|html)$')
+ adni<-list.files(app,'^adni([.-].*)?[.](R|Rmd|html)$')
+ testthat::expect_setequal(adni,sub('^ocean','adni',ocean))
+ testthat::expect_equal(sum(grepl('[.]R$',adni)),5L)
+ testthat::expect_true(all(c('adni_workflow_api','run_adni_application')%in%getNamespaceExports('eivGP')))
+ api<-eivGP::adni_workflow_api(repo)
+ for(n in c('adni_method_run','adni_plan_fit_task','adni_analyze_cell','adni_report_prepare','adni_saved_functionals'))
+  testthat::expect_identical(body(api[[n]]),body(getFromNamespace(n,'eivGP')))
+})
 
 testthat::test_that('ADNI pilot matches screening and paper accepts explicit budgets',{
  p<-adni_settings('pilot',cores=5L)
@@ -69,7 +81,7 @@ testthat::test_that('general entrypoint freezes custom settings and resumes with
    U_order=c('FDG','HIP'),fold_seed=9L,calibration_seed=10L,test_seed=11L,model_seed=12L)
  write.csv(d,file.path(root,'cohort.csv'),row.names=FALSE);jsonlite::write_json(meta,file.path(root,'meta.json'),auto_unbox=TRUE)
  input<-file.path(root,'inputs');out<-file.path(root,'results');adni_prepare_folds(file.path(root,'cohort.csv'),file.path(root,'meta.json'),input)
- e<-new.env(parent=globalenv());sys.source(file.path(repo,'paper/applications/adni.R'),e)
+ e<-eivGP::adni_workflow_api(repo)
  # The runner is exercised; expensive HTML functionals are tested separately from saved files.
  e$adni_render_report<-function(...)invisible(NULL)
  args<-list(profile='quick',cores=2L,data_root=input,output=out,iter=32L,burn=8L,stages=c(24L,32L),
@@ -81,7 +93,6 @@ testthat::test_that('general entrypoint freezes custom settings and resumes with
  args$cores<-1L;testthat::expect_error(e$adni_method_run(repo,args,'eivGP'),NA)
  testthat::expect_identical(tools::md5sum(fit),before)
  args$burn<-9L;testthat::expect_error(e$adni_method_run(repo,args,'eivGP'),'settings/inputs differ')
- source(file.path(repo,'paper/applications/adni-reporting.R'),local=e)
  saved<-e$adni_saved_source(out)
  testthat::expect_identical(saved$stage,'S32');testthat::expect_identical(saved$fit_profile,'quick')
  testthat::expect_error(e$adni_report_prepare(repo,input,out,adni_settings('pilot'),report_dir=file.path(repo,'paper/invalid')),'ignored results')

@@ -60,3 +60,21 @@ replication/**/*.utf8.md
 /eivGP/src/*.so
 /eivGP/src/*.dll
 /eivGP/src/*.dylib
+
+# Private ADNI execution records remain external.
+/data/adni*/
+/data/ADNI*/
+__pycache__/
+*.py[cod]
+
+# ADNI code/contract only; participant records and empirical reports stay local.
+!/data/adni/
+/data/adni/*
+!/data/adni/README.md
+!/data/adni/DATASET.example.json
+!/data/adni/prepare_folds.R
+!/data/adni/inputs/
+/data/adni/inputs/**
+!/data/adni/inputs/.gitkeep
+/paper/applications/adni-plan*.Rmd
+/paper/applications/adni-plan*.html

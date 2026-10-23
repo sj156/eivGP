@@ -1,0 +1,14 @@
+{
+  "dataset_id": "adni",
+  "population": "All eligible women; one quality-controlled matched record per participant",
+  "Y": "ADNI_MEM",
+  "X_order": ["age", "education"],
+  "U_order": ["FDG_MetaROI_Top50PonsVermis_SUVR", "HIP1000_ICV"],
+  "C_order": ["MEMORY3", "MEMORY8", "DIVATT3", "MEMORY2", "MEMORY1", "MEMORY4", "MEMORY5", "MEMORY6", "MEMORY7"],
+  "m_vec": [4, 4, 4, 4, 4, 4, 4, 4, 4],
+  "fold_seed": 1067359045,
+  "calibration_seed": 522349566,
+  "test_seed": 498870501,
+  "model_seed": 615290710,
+  "stratification_columns": ["C1"]
+}

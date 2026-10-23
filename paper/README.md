@@ -10,7 +10,7 @@ Study I and application workflows are unchanged.
 | Study I | [R](numerical/study1.R) | [Rmd](numerical/study1.Rmd) | [HTML](numerical/study1.html) |
 | Study II | [EIV-GP](numerical/study2-eivGP.R), [competitors](numerical/study2-competitors.R), [report](numerical/study2.R) | [Rmd](numerical/study2.Rmd) | [HTML](numerical/study2.html) |
 | Ocean | [R](applications/ocean.R) | [Rmd](applications/ocean.Rmd) | [HTML](applications/ocean.html) |
-| ADNI | [R](applications/adni.R) | [Rmd](applications/adni.Rmd) | [HTML](applications/adni.html) |
+| ADNI | [EIV-GP](applications/adni-eivGP.R), [competitors](applications/adni-competitors.R), [report](applications/adni-report.R) | [Rmd](applications/adni.Rmd) | [HTML plan](applications/adni.html) |
 
 ## Read the selected historical results (optional)
 
@@ -63,11 +63,26 @@ it. The Rmd defaults to `action="report"` and does not fit models. Prepare the
 1000-profile folds separately with `data/ocean_silicate/prepare_folds.R`.
 Only `ocean.html` is versioned as the short-chain example report.
 
-ADNI continues to use its existing workflow and separately supplied collaborator cohort:
+ADNI uses the same three method-oriented entrypoints with separately supplied
+private prepared folds; see [ADNI instructions](applications/README_adni.md):
 
 ```sh
-Rscript paper/applications/adni.R /external/adni-data /external/new-adni-run plan
+Rscript paper/applications/adni-eivGP.R --plan=true --profile=paper --cores=16
+Rscript paper/applications/adni-eivGP.R --profile=paper --cores=16
+Rscript paper/applications/adni-competitors.R --profile=paper --cores=16
+Rscript paper/applications/adni-report.R --profile=paper --cores=16
 ```
+
+ADNI inputs default to repository-relative `data/adni/inputs/`, while results go
+to ignored `results/adni_paper/` for these commands. Participant data and empirical
+HTML are not versioned. The paper budget is four chains, 50,000 total iterations
+per chain including 5,000 burn-in, and permits recorded overrides. The separate
+pilot budget uses 1,000 then 1,500 total iterations per chain with burn 500.
+See [ADNI result locations](../README.md#where-adni-results-are-saved) for fits,
+scores, task logs and exported figures/tables.
+For the separately supplied three-item cohort, add `--dataset=3C` to all three
+entrypoints, place inputs in `data/adni/3C/inputs/`, and read paper results from
+`results/3C_paper/`.
 
 Use separate output roots for changed package/input identities. Fits retain chain histories and terminal states for diagnostics and continuation. Existing archives are not automatically migrated or deleted.
 

@@ -2,6 +2,10 @@
 
 Ocean workflows and the 200/500/1000-profile inputs follow the shared package and paper-analysis structure. See [Ocean instructions](paper/applications/README_ocean.md) for data preparation, fitting and reporting.
 
+The ADNI application uses the same three method-oriented entrypoints with
+privately supplied prepared data. See [ADNI instructions](paper/applications/README_adni.md)
+for the input contract, pilot/paper settings and saved-result HTML.
+
 Gaussian process regression with ordinal measurements and potentially available
 continuous measurements associated with those inputs. The package provides
 fitting, prediction, imputation, diagnostics, continuation, and reporting.
@@ -20,6 +24,9 @@ data/ocean_silicate/
   n500/         # updated 500-profile data and five-fold inputs
   n1000/        # raw selected 1000-profile cohort
   prepare_folds.R # standalone fold preparation entrypoint
+data/adni/
+  inputs/       # local prepared ADNI folds; only .gitkeep is versioned
+  prepare_folds.R # preparation from an already matched private cohort
 paper/
   numerical/    # study1 and study2: one .R, .Rmd, and .html each
   applications/ # ocean and adni: one .R, .Rmd, and .html each
@@ -39,7 +46,7 @@ and `EzGP`. Reporting functions also live in the package.
 Use R >= 4.1. Install dependencies once, then install this checkout:
 
 ```r
-install.packages(c("dplyr", "tidyr", "ggplot2", "knitr", "patchwork", "posterior",
+install.packages(c("dplyr", "tidyr", "ggplot2", "knitr", "patchwork", "posterior", "jsonlite",
                    "TruncatedNormal", "digest", "rmarkdown", "testthat", "Rcpp", "RcppArmadillo"))
 # Needed when fitting the competitor methods:
 install.packages(c("kergp", "LVGP", "EzGP"))
@@ -106,6 +113,7 @@ entrypoints for computation and `.Rmd` notebooks for reader-facing HTML reports.
 
 - [Synthetic experiments: Studies I and II](#synthetic-experiments-studies-i-and-ii)
 - [Ocean application: 500-profile cohort](#ocean-application-500-profile-cohort)
+- [ADNI application: memory and partially observed imaging](#adni-application-memory-and-partially-observed-imaging)
 
 <a id="numerical-studies-mac-mini-or-linux"></a>
 
@@ -243,6 +251,84 @@ The `.R` script calls separate fitting and analysis stages in sequence; the `.Rm
 HTML. The notebook rejects `action="run"`. See the
 [Ocean guide](paper/applications/README_ocean.md) for installation, optional task
 selectors, output imports and dataset preparation.
+
+### ADNI application: memory and partially observed imaging
+
+The default metadata example uses ADNI composite memory (ADNI_MEM), two imaging
+coordinates (FDG-PET SUVR and hippocampal volume normalized by intracranial
+volume), nine native study-partner ECog items (MEMORY1--8 and DIVATT3), and
+continuous age/education within women. Coordinate labels, dimensions, folds,
+observation masks and seeds are read from the supplied protocol; other compatible
+C sets use the same code. No participant data are included in this repository.
+
+#### Fit and analyze the ADNI experiment
+
+After obtaining the prepared data separately, place its `MC/` directory and
+`DATASET.json` under `data/adni/inputs/`. See the [data contract](data/adni/README.md).
+Run from the repository root:
+
+```sh
+Rscript paper/applications/adni-eivGP.R --plan=true --profile=paper --cores=16
+
+# Fit and analyze each method group, then assemble manuscript comparisons.
+Rscript paper/applications/adni-eivGP.R --profile=paper --cores=16
+Rscript paper/applications/adni-competitors.R --profile=paper --cores=16
+Rscript paper/applications/adni-report.R --profile=paper --cores=16
+```
+
+ADNI `paper` uses five folds, four chains and 50,000 total iterations per chain
+including 5,000 burn-in. It uses HMC at O0/O20, ESS at O50, 250 prediction states
+per chain and full public competitor controls. Explicit numerical overrides are
+supported and frozen in the run identity. Use `--profile=paper` consistently
+for fitting and reporting. Cores are independently configurable through the shared
+public CPU pool; choose `--cores` for the available machine and use the
+single-thread numerical-library settings described above. O20 calibration is
+nested in O50 under the supplied C-stratified sampling design.
+
+#### Where ADNI results are saved
+
+| Path | Contents |
+| --- | --- |
+| `data/adni/inputs/` | Privately supplied cohort metadata, five-fold inputs and masks |
+| `results/adni_paper/` (or supplied output folder) | Formal-budget fits, predictions, receipts, diagnostics and `adni.html` |
+| `paper/applications/adni.html` | Versioned data-free plan page generated from the Rmd |
+
+`--output` overrides the result root; `--data-root` overrides the prepared input
+directory. Use the same flags for fitting and reporting. For the three-item
+cohort, add `--dataset=3C` to all three entrypoints: inputs go in
+`data/adni/3C/inputs/` and paper results in `results/3C_paper/`.
+
+Participant inputs and empirical results stay outside Git; the versioned HTML
+contains only the data-free plan. Check task completion and convergence
+separately. Detailed output locations are in the
+[ADNI guide](paper/applications/README_adni.md#where-adni-results-are-saved).
+
+#### Rebuild the ADNI report without fitting
+
+```sh
+# Analyze completed saved fits and scores; fail rather than fit missing models.
+Rscript paper/applications/adni-eivGP.R --reuse-only=true --profile=paper --cores=16
+Rscript paper/applications/adni-competitors.R --reuse-only=true --profile=paper --cores=16
+Rscript paper/applications/adni-report.R --profile=paper --cores=16
+```
+
+The report is generated through `paper/applications/adni.Rmd`. It includes the
+complete C definition table, Y/U/X and C/U illustrations, response prediction,
+matched complete-case comparisons, numerical diagnostics, response functions and
+imputation. `adni-report.R` always reads saved results. See the
+[ADNI guide](paper/applications/README_adni.md) for input preparation, profiles,
+numerical overrides and report settings.
+
+#### Quick workflow check without ADNI data
+
+```sh
+Rscript tests/application/check-adni.R --cores=2
+```
+
+This creates a small synthetic fixture under ignored `results/`, exercises the
+three command-line entrypoints with reduced settings, checks reports and
+core-count-only reuse, and writes `CHECK.json`. It does not fit participant data.
+Completion is checked separately from convergence.
 
 ## Develop and test
 

@@ -30,7 +30,6 @@ export(plot_comparison)
 export(report_table)
 export(read_fit)
 export(save_fit)
-export(run_ocean_analysis)
 
 import(dplyr)
 import(tidyr)
@@ -44,8 +43,6 @@ import(utils)
 import(graphics)
 import(grDevices)
 
-export(ocean_settings)
-export(ocean_workflow_api)
 
 export(run_paper_study)
 

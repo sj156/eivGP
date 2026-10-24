@@ -3239,7 +3239,7 @@ ocean_render_report <- function(repository_dir,output_dir,settings,dataset,data_
     output_dir=normalizePath(output_dir),data_dir=normalizePath(data_dir),
     profile=settings$profile,folds=settings$folds,cells=settings$cells,analysis=analysis)
   rmarkdown::render(file.path(repository_dir,"paper/applications/ocean.Rmd"),
-    output_file="ocean.html",output_dir=output_dir,
+    output_file="ocean.html",output_dir=output_dir,intermediates_dir=output_dir,
     params=list(dataset=dataset,profile=settings$profile,action="report",folds=settings$folds,
       cells=settings$cells,modules=settings$modules,task_ids=settings$task_ids,
       cores=settings$cores,run_id=paste0(settings$run_id,"_report"),data_dir=data_dir,output_dir=output_dir,

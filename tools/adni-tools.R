@@ -2767,7 +2767,7 @@ adni_render_report <- function(repo,data_dir,output_dir,settings,report_source=N
   render_env<-new.env(parent=globalenv());render_env$.adni_precomputed_analysis<-analysis
   render_env$.adni_repository_dir<-repo
   if(is.null(rmd))rmd<-file.path(repo,'paper/applications/adni.Rmd')
-  rmarkdown::render(rmd,output_file=filename,output_dir=report_dir,
+  rmarkdown::render(rmd,output_file=filename,output_dir=report_dir,intermediates_dir=report_dir,
     params=list(profile=settings$profile,action='report',cores=settings$cores,data_dir=data_dir,
       output_dir=output_dir,report_source=if(is.null(report_source))''else report_source,
       representative_fold=settings$representative_fold,appendix=settings$appendix),envir=render_env,quiet=TRUE)

@@ -23,6 +23,8 @@ fit_eivgp(
   priors = list(),
   sampler_control = list(),
   sampler = c("ESS", "HMC", "HYBRID"),
+  ess_min = NULL,
+  ess_panel = NULL,
   ...
 )
 }
@@ -98,6 +100,10 @@ Set \code{sampler_control$hybrid_every} to a positive integer to change that
 fixed schedule; it cannot change during continuation.
 All retain measurement and dictionary updates. HMC and HYBRID support
 conditional dictionary updates with SE or Matern 3/2 and 5/2 kernels.}
+
+\item{ess_min}{NULL retains the fixed budget. A finite positive number enables adaptive continuation until scientific-target bulk and tail ESS both strictly exceed it; requires four chains. This is a precision condition, not proof of convergence.}
+
+\item{ess_panel}{List containing X, C and optional U in original units, n_latent and seed. Defaults to observable targets at five evenly spaced training rows. Supply a fixed scientific panel for applications.}
 
 \item{...}{Additional sampler arguments such as \code{n_iter}, \code{burn}, and
 \code{n_chains}. Every post-warm-up draw is retained: \code{thin}, if supplied, must

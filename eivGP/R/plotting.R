@@ -3646,6 +3646,10 @@ save_mixing_plots <- function(path, output_dir=file.path(path,"mixing-plots"),
                               formats=c("pdf","png")) {
   if(length(path)!=1L || !dir.exists(path)) stop("path must be an existing results directory.")
   if(!length(formats) || any(!formats %in% c("pdf","png"))) stop("formats must contain pdf and/or png.")
+  trace_index <- list.files(path,pattern="^scientific-trace-.*[.]csv$",recursive=TRUE,full.names=TRUE)
+  if(length(trace_index) && all(grepl("^scientific-trace-cut-",basename(trace_index))))
+    return(mixedgp_cut_trace_report(path,output_dir,formats))
+  if(length(trace_index))return(mixedgp_save_scientific_trace_plots(trace_index,output_dir,formats))
   files <- list.files(path,pattern="[.]csv$",recursive=TRUE,full.names=TRUE)
   files <- files[!grepl("/\\._",files)]
   names <- basename(files)
@@ -3679,7 +3683,7 @@ save_mixing_plots <- function(path, output_dir=file.path(path,"mixing-plots"),
     dest <- file.path(output_dir,paste0("mixing_",jobs$type[i],".",jobs$ext[i]))
     ggplot2::ggsave(dest,plot_mixing(z,jobs$type[i]),width=11,height=7,dpi=160,bg="white")
     dest
-  }),use.names=FALSE)
+  },workers=1L),use.names=FALSE)
   utils::write.csv(data.frame(path=normalizePath(files),md5=unname(tools::md5sum(files))),
     file.path(output_dir,"diagnostic_sources.csv"),row.names=FALSE)
   invisible(paths)
@@ -3811,6 +3815,11 @@ ocean_export_application <- function(output_dir,analysis,settings,data_dir,
     review<-ocean_refinement_review(output_dir,inputs,diagnostics,dest=file.path(diagnostics_dir,"refinement"))
     mcmc<-review$mcmc
     mcmc$iterations_per_chain<-settings$iter+vapply(seq_len(nrow(mcmc)),function(i)if(mcmc$stage[i]=="Initial")0L else ocean_continuation_iterations(output_dir,settings$profile,mcmc$fold[i],mcmc$cell[i]),integer(1))
+    for(i in seq_len(nrow(mcmc))) {
+      path<-ocean_path(output_dir,if(mcmc$stage[i]=="Initial")"full5_class4"else"continuation_plus20k",
+        sprintf("fold%02d",mcmc$fold[i]),mcmc$cell[i],"convergence_summary.csv")
+      if(file.exists(path)) {z<-utils::read.csv(path);if("iterations" %in% names(z))mcmc$iterations_per_chain[i]<-z$iterations[1]}
+    }
     table(mcmc,"tab_ocean_mcmc","MCMC diagnostics for selected saved fits")
     mapping<-c(fig_ocean_f_m_slice="fm_main",fig_ocean_u_imputation_all_training_fold1="u_main",fig_ocean_u_imputation_all_training_all_folds="u_all_folds",fig_ocean_m_pressure_fold1="m_main",fig_ocean_m_pressure_all_folds="m_all_folds",fig_ocean_f_m_slice_all_folds="fm_all_folds")
     jobs<-lapply(mapping,function(n)diagnostics$plots[[n]])
@@ -4219,4 +4228,290 @@ report_numerical_convergence <- function(roots, output) {
     "Equal design labels assert verified matching data, masks, targets and protocols across roots.",
     "This snapshot reads saved artifacts only; source folders were not modified."),file.path(output,"README.txt"))
   invisible(tables)
+}
+
+# Study I saved-result reporting. Numerical inference is never invoked here.
+mixedgp_study1_report_run_dir <- function(path) {
+  path <- normalizePath(path,mustWork=TRUE)
+  if(file.exists(file.path(path,'config/resolved_config.rds')))return(path)
+  candidates <- unique(c(list.dirs(path,recursive=FALSE,full.names=TRUE),
+    if(dir.exists(file.path(path,'core')))list.dirs(file.path(path,'core'),recursive=FALSE,full.names=TRUE)))
+  candidates <- candidates[file.exists(file.path(candidates,'config/resolved_config.rds'))]
+  if(length(candidates)!=1L)stop('Supply one exact Study I run directory; found ',length(candidates),' runs under ',path)
+  candidates
+}
+
+mixedgp_study1_score_summary <- function(x,metrics) {
+  if(!nrow(x))return(data.frame())
+  keys<-intersect(c('cell_id','n_calib','method'),names(x))
+  x[keys]<-lapply(x[keys],function(v)ifelse(is.na(v),'Not applicable',as.character(v)))
+  groups<-interaction(x[keys],drop=TRUE,lex.order=TRUE)
+  do.call(rbind,lapply(split(x,groups),function(z) {
+    row<-z[1,keys,drop=FALSE]
+    for(m in intersect(metrics,names(z))) {
+      v<-z[[m]][is.finite(z[[m]])];row[[m]]<-if(length(v))mean(v)else NA_real_
+      row[[paste0(m,'_MCSE')]]<-if(length(v)>1)stats::sd(v)/sqrt(length(v))else NA_real_
+      row[[paste0(m,'_n')]]<-length(v)
+    };row
+  }))
+}
+
+mixedgp_study1_target_ess_summary <- function(z,ess_min=100) {
+  stopifnot(is.finite(ess_min),ess_min>0)
+  do.call(rbind,lapply(split(z,interaction(z$cell_id,z$n_calib,z$family,drop=TRUE)),function(x) {
+    finite_summary<-function(v,fun)if(any(is.finite(v)))fun(v[is.finite(v)])else NA_real_
+    unavailable<-!is.finite(x$ess_bulk)|!is.finite(x$ess_tail)
+    low<-!unavailable & (x$ess_bulk<=ess_min|x$ess_tail<=ess_min)
+    data.frame(cell_id=x$cell_id[1],n_calib=x$n_calib[1],family=x$family[1],n_quantities=nrow(x),
+      median_bulk_ess=finite_summary(x$ess_bulk,median),min_bulk_ess=finite_summary(x$ess_bulk,min),
+      min_tail_ess=finite_summary(x$ess_tail,min),max_rhat=finite_summary(x$rhat,max),
+      max_mcse_sd_ratio=finite_summary(x$mcse_sd_ratio,max),below_ess= sum(low),unavailable=sum(unavailable),
+      affected_fits=length(unique(x$rep[low|unavailable])))
+  }))
+}
+
+mixedgp_study1_trace_selection <- function(z,run_dir) {
+  rows<-list()
+  for(cell in unique(z$cell_id))for(ca in sort(unique(z$n_calib[z$cell_id==cell]))) {
+    a<-z[z$cell_id==cell & z$n_calib==ca,]
+    folder<-file.path(run_dir,'cells',cell,'results/study1_publication')
+    a$trace_file<-file.path(folder,sprintf('target_traces_rep%03d_cal%03d.rds',a$rep,ca))
+    a$fit_file<-file.path(folder,sprintf('mcmc_failure_rep%03d_cal%03d.rds',a$rep,ca))
+    current<-file.path(folder,sprintf('fit_rep%03d_cal%03d.rds',a$rep,ca))
+    a$fit_file[!file.exists(a$fit_file)]<-current[!file.exists(a$fit_file)]
+    a$trace_available<-file.exists(a$trace_file)|file.exists(a$fit_file)
+    m<-a[a$family=='m_conditional_mean',]
+    mins<-aggregate(ess_bulk~rep,m,min);mid<-stats::median(mins$ess_bulk)
+    mins<-mins[order(abs(log(mins$ess_bulk/mid)),mins$rep),]
+    eligible<-mins$rep[mins$rep %in% m$rep[m$trace_available]]
+    b<-if(length(eligible))m[m$rep==eligible[1],]else m[m$rep==mins$rep[1],]
+    b<-b[which.min(b$ess_bulk),];b$selection<-'Typical mean';rows[[length(rows)+1L]]<-b
+    for(kind in c('Weakest mean','Weakest uncertainty')) {
+      families<-if(kind=='Weakest mean')c('m_conditional_mean','f_conditional_mean')else
+        c('m_conditional_variance','f_conditional_variance','predictive_second_moment')
+      b<-a[a$family %in% families,];b<-b[order(pmin(b$ess_bulk,b$ess_tail),-b$rhat),][1,,drop=FALSE]
+      b$selection<-kind;rows[[length(rows)+1L]]<-b
+    }
+  }
+  selected<-do.call(rbind,rows)
+  sampling_file<-file.path(run_dir,'combined/mcmc_diagnostics.csv')
+  if(file.exists(sampling_file)) {
+    sampling<-utils::read.csv(sampling_file)
+    continued<-sampling[is.finite(sampling$n_iter)&sampling$n_iter>20000L,,drop=FALSE]
+    extra<-list()
+    if(nrow(continued))for(i in seq_len(nrow(continued))) {
+      key<-continued[i,];a<-z[z$cell_id==key$cell_id & z$rep==key$rep & z$n_calib==key$n_calib,]
+      folder<-file.path(run_dir,'cells',key$cell_id,'results/study1_publication')
+      for(family in c('m_conditional_mean','predictive_second_moment')) {
+        b<-a[a$family==family,];if(!nrow(b))next
+        b<-b[which.min(pmin(b$ess_bulk,b$ess_tail)),,drop=FALSE]
+        b$trace_file<-file.path(folder,sprintf('target_traces_rep%03d_cal%03d.rds',key$rep,key$n_calib))
+        b$fit_file<-file.path(folder,sprintf('mcmc_failure_rep%03d_cal%03d.rds',key$rep,key$n_calib))
+        if(!file.exists(b$fit_file))b$fit_file<-file.path(folder,sprintf('fit_rep%03d_cal%03d.rds',key$rep,key$n_calib))
+        b$trace_available<-file.exists(b$trace_file)|file.exists(b$fit_file)
+        b$selection<-'Continued scientific targets';extra[[length(extra)+1L]]<-b
+      }
+    }
+    if(length(extra))selected<-bind_rows(selected[selected$selection!='Weakest mean',],bind_rows(extra))
+  }
+  selected
+}
+
+mixedgp_study1_trace_data <- function(row,run_dir,data_root,cache_dir,max_points=751L) {
+  cache<-file.path(cache_dir,sprintf('%s_rep%03d_cal%03d.rds',row$cell_id,row$rep,row$n_calib))
+  # Small direct target traces are saved for all new fits, including diagnostically strong fits.
+  if(file.exists(row$trace_file))return(mixedgp_read_artifact(row$trace_file))
+  if(!file.exists(row$fit_file))stop('Retained chains unavailable for ',row$cell_id,' rep ',row$rep,' calibration ',row$n_calib)
+  source_md5<-unname(tools::md5sum(row$fit_file))
+  data_file<-file.path(data_root,row$cell_id,sprintf('study1_heterogeneity_continuum_n100_ntest100_m6_rep%03d.rds',row$rep))
+  if(!file.exists(data_file))stop('Frozen dataset missing: ',data_file)
+  manifest<-utils::read.csv(file.path(run_dir,'config/input_manifest.csv'))
+  expected<-manifest[manifest$cell_id==row$cell_id & manifest$rep==row$rep,]
+  data_md5<-unname(tools::md5sum(data_file))
+  if(nrow(expected)!=1L || !identical(data_md5,expected$md5))stop('Frozen input checksum mismatch: ',data_file)
+  identity<-list(schema=1L,fit=source_md5,data=data_md5,max_points=max_points,
+    mcmc=unname(eivgp_module_identity()['mcmc.R']))
+  if(file.exists(cache)) {
+    old<-readRDS(cache);if(identical(old$identity,identity))return(old)
+  }
+  message('Reading retained target chains: ',row$cell_id,' rep ',row$rep,' calibration ',row$n_calib)
+  saved<-mixedgp_read_artifact(row$fit_file);fit<-saved$fit
+  test<-readRDS(data_file)$data$test;panel<-saved$diagnostic_panel_rows
+  n<-nrow(fit$mcmc$samples_by_chain$u[[1]])
+  keep<-unique(c(seq.int(1L,n,by=max(1L,ceiling(n/(max_points-1L)))),n))
+  fit$mcmc$samples_by_chain<-lapply(fit$mcmc$samples_by_chain,function(chains)lapply(chains,function(v) {
+    if(is.null(dim(v)))v[keep]else v[keep,,drop=FALSE]
+  }))
+  eta<-saved$cache_spec$heterogeneity_eta
+  series<-mixedgp_study1_target_series(fit,X=matrix(test$x[panel],ncol=1),C=test$c[panel],
+    U=if(eta==1)test$u[panel]else NULL,n_latent=saved$cache_spec$diagnostic_panel$n_latent,
+    seed=380000L+1000L*row$rep+row$n_calib)
+  # These thinned series are for display only; ESS comes from the full-window CSV.
+  series<-mixedgp_mark_diagnostic_window(series,FALSE)
+  burn<-saved$cache_spec$mcmc$burn;thin<-fit$diagnostics$summary$thin
+  if(is.null(thin))thin<-1L
+  result<-list(identity=identity,series=series,iteration=burn+keep*thin,
+    retained_index=keep,panel_rows=panel,test_panel=test[panel,],source=row$fit_file)
+  saveRDS(result,cache);result
+}
+
+mixedgp_study1_save_trace_figures <- function(selection,run_dir,data_root,output_dir,ess_min) {
+  dir.create(output_dir,recursive=TRUE,showWarnings=FALSE)
+  cache_dir<-file.path(output_dir,'trace-data');dir.create(cache_dir,showWarnings=FALSE)
+  all_rows<-list();status<-list();chain_summary<-list()
+  for(i in seq_len(nrow(selection))) {
+    row<-selection[i,]
+    tryCatch({
+      trace<-mixedgp_study1_trace_data(row,run_dir,data_root,cache_dir)
+      s<-trace$series[[row$parameter]]
+      if(is.null(s)||length(s)!=4L||any(!is.finite(unlist(s))))stop('Missing or invalid target chain series')
+      label<-paste0(row$cell_id,'; |O|=',row$n_calib,'; rep ',row$rep,'\n',
+        row$parameter,'\nBulk ESS ',round(row$ess_bulk),'; tail ESS ',round(row$ess_tail),
+        '; R-hat ',sprintf('%.3f',row$rhat))
+      all_rows[[i]]<-do.call(rbind,lapply(seq_along(s),function(ch)data.frame(
+        selection=row$selection,panel=label,iteration=trace$iteration,value=s[[ch]],chain=factor(ch))))
+      chain_summary[[i]]<-do.call(rbind,lapply(seq_along(s),function(ch) {
+        v<-s[[ch]];half<-floor(length(v)/2)
+        data.frame(cell_id=row$cell_id,n_calib=row$n_calib,rep=row$rep,parameter=row$parameter,
+          selection=row$selection,chain=ch,display_mean=mean(v),first_half_mean=mean(v[seq_len(half)]),
+          second_half_mean=mean(v[(half+1):length(v)]),display_sd=stats::sd(v))
+      }))
+      status[[i]]<-data.frame(row[,c('cell_id','n_calib','rep','parameter','selection')],status='written',message='')
+    },error=function(e)status[[i]]<<-data.frame(row[,c('cell_id','n_calib','rep','parameter','selection')],
+      status='unavailable',message=conditionMessage(e)))
+  }
+  status<-do.call(rbind,status);utils::write.csv(status,file.path(output_dir,'trace_status.csv'),row.names=FALSE)
+  if(length(chain_summary))utils::write.csv(do.call(rbind,chain_summary),file.path(output_dir,'display_chain_summaries.csv'),row.names=FALSE)
+  z<-do.call(rbind,all_rows);paths<-character()
+  if(!is.null(z))for(kind in unique(selection$selection)) {
+    d<-z[z$selection==kind,];if(!nrow(d))next
+    d$panel<-factor(d$panel,levels=unique(d$panel))
+    p<-ggplot2::ggplot(d,ggplot2::aes(iteration,value,color=chain))+
+      ggplot2::geom_line(linewidth=.25,alpha=.65)+ggplot2::facet_wrap(~panel,ncol=2,scales=if(kind=='Continued scientific targets')'free'else'free_y')+
+      ggplot2::scale_color_manual(values=c('#0072B2','#D55E00','#009E73','#CC79A7'))+
+      ggplot2::theme_minimal(base_size=11)+ggplot2::theme(legend.position='bottom',panel.grid.minor=ggplot2::element_blank())+
+      ggplot2::labs(title=paste('Study I:',tolower(kind),'target traces'),x='MCMC iteration (after warmup)',y='Target value',color='Chain',
+        subtitle='Four retained chains; target values reconstructed without refitting',
+        caption=paste0('Traces display evenly spaced retained states across the full window. ESS and R-hat use all saved draws.\nESS criterion: bulk and tail ESS > ',ess_min,'. Panel y-scales differ. Selection is documented in trace_selection.csv.'))
+    if(kind=='Continued scientific targets')p<-p+ggplot2::geom_vline(xintercept=20000,linetype=2,color='gray45')
+    base<-file.path(output_dir,paste0('mixing_',gsub(' ','_',tolower(kind))))
+    # Never fork graphics: on macOS even PDF font initialization may enter Objective-C.
+    for(ext in c('pdf','png')) {
+      dest<-paste0(base,'.',ext)
+      device<-if(ext=='pdf')grDevices::pdf else function(filename,width,height,bg,...) {
+        grDevices::png(filename,width=width,height=height,units='in',res=150,bg=bg,
+          type=if(capabilities('cairo'))'cairo'else getOption('bitmapType'))
+      }
+      ggplot2::ggsave(dest,p,device=device,width=11,height=3*ceiling(length(unique(d$panel))/2)+1.6,bg='white')
+      paths<-c(paths,dest)
+    }
+  }
+  if(length(paths) && all(status$status=='written')) {
+    known<-as.vector(outer(c('mixing_typical_mean','mixing_weakest_mean','mixing_weakest_uncertainty','mixing_continued_scientific_targets'),c('.pdf','.png'),paste0))
+    stale<-setdiff(file.path(output_dir,known),paths)
+    unlink(stale[file.exists(stale)])
+  }
+  list(paths=paths,status=status)
+}
+
+#' Report saved Study I EIV-GP results and scientific-target mixing
+#' @export
+report_study1_eivgp <- function(path,output_dir=NULL,data_root=NULL,ess_min=100,mixing_plots=TRUE) {
+  run_dir<-mixedgp_study1_report_run_dir(path)
+  config<-readRDS(file.path(run_dir,'config/resolved_config.rds'))
+  if(!identical(config$study,'study1'))stop('Expected a Study I run')
+  if(is.null(output_dir))output_dir<-file.path(dirname(run_dir),'study1-report')
+  dir.create(output_dir,recursive=TRUE,showWarnings=FALSE);output_dir<-normalizePath(output_dir)
+  if(identical(output_dir,run_dir)||startsWith(output_dir,paste0(run_dir,'/')))stop('Use a report directory outside the saved run')
+  if(is.null(data_root))data_root<-config$data_root
+  read<-function(name) {
+    f<-file.path(run_dir,name);if(!file.exists(f))return(data.frame())
+    utils::read.csv(f,stringsAsFactors=FALSE)
+  }
+  files<-list.files(file.path(run_dir,'cells'),pattern='^study1_mcmc_target_diagnostics[.]csv$',recursive=TRUE,full.names=TRUE)
+  if(!length(files))stop('No saved scientific-target diagnostics')
+  targets<-do.call(rbind,lapply(files,function(f) {
+    z<-utils::read.csv(f);z$cell_id<-basename(dirname(dirname(f)));z$family<-sub('\\[.*','',z$parameter);z
+  }))
+  targets$ess_acceptable<-is.finite(targets$ess_bulk)&is.finite(targets$ess_tail)&targets$ess_bulk>ess_min&targets$ess_tail>ess_min
+  ess_summary<-mixedgp_study1_target_ess_summary(targets,ess_min)
+  review<-targets[!targets$ess_acceptable,];review<-review[order(pmin(review$ess_bulk,review$ess_tail)),]
+  summaries<-list(
+    prediction=mixedgp_study1_score_summary(read('combined/predictive_metrics.csv'),c('RMSE','CRPS','NLPD','Coverage95','Width95','IntervalScore95')),
+    observed_mean=mixedgp_study1_score_summary(read('combined/mean_recovery.csv'),c('RMSE','Bias','Coverage95','Width95')),
+    latent_surface=mixedgp_study1_score_summary(read('combined/surface_recovery.csv'),c('ISE','Bias','Coverage95','Width95')),
+    latent_imputation=mixedgp_study1_score_summary(read('combined/latent_imputation.csv'),c('RMSE','Bias','Coverage95','Width95')),
+    predictive_controls=mixedgp_study1_score_summary(read('combined/ablation_predictive_metrics.csv'),c('RMSE','CRPS','Coverage95','Width95')),
+    surface_controls=mixedgp_study1_score_summary(read('combined/ablation_surface_recovery.csv'),c('ISE','Coverage95','Width95')))
+  selection<-mixedgp_study1_trace_selection(targets,run_dir)
+  utils::write.csv(selection,file.path(output_dir,'trace_selection.csv'),row.names=FALSE)
+  figures<-if(isTRUE(mixing_plots))mixedgp_study1_save_trace_figures(selection,run_dir,data_root,file.path(output_dir,'mixing-plots'),ess_min)else list(paths=character(),status=data.frame())
+  source_files<-c(files,list.files(file.path(run_dir,'combined'),pattern='[.]csv$',full.names=TRUE))
+  provenance<-data.frame(path=normalizePath(source_files),md5=unname(tools::md5sum(source_files)))
+  inspection<-NULL;review_file<-file.path(output_dir,'trace_review.rds')
+  if(file.exists(review_file)) { reviewed<-readRDS(review_file);if(identical(reviewed$provenance,provenance))inspection<-reviewed$text }
+  result<-list(run_dir=run_dir,output_dir=output_dir,config=config,ess_min=ess_min,
+    completion=read('config/cell_status.csv'),completeness=read('config/diagnostic_gates.csv'),
+    sampling=read('combined/mcmc_diagnostics.csv'),
+    summaries=summaries,target_summary=ess_summary,targets=targets,review=review,
+    selection=selection,figures=figures,provenance=provenance,
+    ablation_status=read('combined/ablation_status.csv'),created_at=format(Sys.time(),tz='UTC'),
+    reporting_module_identity=eivgp_module_identity(),inspection=inspection)
+  utils::write.csv(ess_summary,file.path(output_dir,'target_ess_summary.csv'),row.names=FALSE)
+  utils::write.csv(review,file.path(output_dir,'targets_needing_review.csv'),row.names=FALSE)
+  utils::write.csv(provenance,file.path(output_dir,'source_manifest.csv'),row.names=FALSE)
+  for(name in names(summaries))utils::write.csv(summaries[[name]],file.path(output_dir,paste0(name,'_summary.csv')),row.names=FALSE)
+  saveRDS(result,file.path(output_dir,'report.rds'))
+  result
+}
+
+
+mixedgp_save_scientific_trace <- function(fit, prefix, label) {
+  z<-fit$scientific_ess;tab<-z$diagnostics
+  groups<-list(means=grep("^(m|f)_conditional_mean",tab$parameter),
+    uncertainty=grep("variance|second_moment",tab$parameter))
+  selected<-vapply(groups,function(rows) {
+    score<-pmin(tab$ess_bulk[rows],tab$ess_tail[rows]);
+    if(!any(is.finite(score)))rows[1L]else rows[which.min(replace(score,!is.finite(score),Inf))]
+  },integer(1))
+  tab<-tab[selected,,drop=FALSE];tab$figure<-names(groups);tab$label<-label
+  tab$scope<-if(is.null(z$scope))"full_history"else z$scope
+  mixedgp_atomic_save_rds(list(table=tab,series=z$target_series[tab$parameter],
+    iteration=seq.int(fit$checkpoint$burn+1L,fit$checkpoint$iteration)),paste0(prefix,".rds"))
+  utils::write.csv(tab,paste0(prefix,".csv"),row.names=FALSE)
+}
+
+mixedgp_save_scientific_trace_plots <- function(index,output_dir,formats=c("png","pdf")) {
+  tab<-do.call(rbind,lapply(index,function(p){z<-utils::read.csv(p);z$file<-sub("[.]csv$",".rds",p);z}))
+  dir.create(output_dir,recursive=TRUE,showWarnings=FALSE)
+  paths<-character()
+  for(kind in unique(tab$figure)) {
+    z<-tab[tab$figure==kind,,drop=FALSE]
+    z<-head(z[order(pmin(z$ess_bulk,z$ess_tail)),,drop=FALSE],4L)
+    dat<-do.call(rbind,lapply(seq_len(nrow(z)),function(i) {
+      row<-z[i,];a<-readRDS(row$file);keep<-unique(as.integer(round(seq(1,length(a$iteration),length.out=min(1500,length(a$iteration))))))
+      title<-sprintf("%s\n%s | bulk %.1f | tail %.1f | R-hat %.3f",row$label,row$parameter,row$ess_bulk,row$ess_tail,row$rhat)
+      do.call(rbind,lapply(seq_along(a$series[[row$parameter]]),function(ch)
+        data.frame(iteration=a$iteration[keep],value=a$series[[row$parameter]][[ch]][keep],chain=factor(ch),panel=title)))
+    }))
+    outer<-"scope" %in% names(z) && any(z$scope=="outer_integration")
+    conditional<-"scope" %in% names(z) && any(z$scope=="conditional_gp")
+    caption<-if(outer)"All retained outer integration states; ESS includes finite inner Monte Carlo error. No ESS stopping requirement." else if(conditional)
+      "Full retained conditional-GP history, with the outer measurement state fixed. ESS is descriptive; no stopping requirement." else
+      "Display spans the full retained history; ESS uses every retained draw. Panel y-scales differ."
+    p<-ggplot2::ggplot(dat,ggplot2::aes(x=iteration,y=value,color=chain))+
+      ggplot2::geom_line(linewidth=.25,alpha=.7)+ggplot2::facet_wrap(~panel,ncol=2,scales="free")+
+      ggplot2::theme_minimal(base_size=10)+ggplot2::theme(legend.position="bottom")+
+      ggplot2::labs(title=paste("Scientific-target traces:",kind),x="Iteration (warmup excluded)",y="Target value",
+        caption=caption)
+    for(ext in formats) {
+      dest<-file.path(output_dir,paste0("scientific_traces_",kind,".",ext))
+      device<-if(ext=="png")function(filename,width,height,bg,...) {
+        grDevices::png(filename,width=width,height=height,units="in",res=150,bg=bg,
+          type=if(capabilities("cairo"))"cairo"else getOption("bitmapType"))
+      }else grDevices::pdf
+      ggplot2::ggsave(dest,p,device=device,width=13,height=7.5,dpi=150);paths<-c(paths,dest)
+    }
+  }
+  invisible(paths)
 }

@@ -225,6 +225,18 @@ if(!is.null(a$artifact_manifest))table_html(a$artifact_manifest[,c('label','file
 
 ### Scientific-target traceplots and Monte Carlo precision
 
+The optional `--ess-min=100` setting extends the final planned fit until monitored
+scientific bulk and tail ESS both exceed 100. The default is `NULL`. Actual
+per-fit iterations appear in the convergence tables; nominal stage names retain
+the initially requested budget. This precision rule does not certify convergence.
+
+```{r full-history-scientific-traces, eval=has_results, echo=FALSE, out.width='100%'}
+full_history <- getFromNamespace('mixedgp_application_trace_report','eivGP')(
+  a$output_dir, file.path(a$report_dir,'scientific-traces'))
+if(length(full_history))knitr::include_graphics(full_history[grepl('[.]png$',full_history)])
+```
+
+
 The same representative fold is selected by configuration, never by prediction
 performance. The observable-mean target uses training-defined median X, the modal
 joint C profile for the other items and C1 grade 2. Imaging traces use the mean

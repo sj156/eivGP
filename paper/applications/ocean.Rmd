@@ -537,3 +537,17 @@ sessionInfo()
 ```
 
 </details>
+
+
+## Full-history scientific targets
+
+Optional `--ess-min=100` in the fitting script continues saved chains until the
+monitored scientific bulk and tail ESS exceed 100. The default is `NULL`.
+These figures span the entire retained history; ESS uses all retained draws.
+The stopping condition is a precision requirement, not proof of convergence.
+
+```{r scientific-full-history, eval=settings$action!="plan", echo=FALSE, out.width='100%'}
+full_history <- getFromNamespace('mixedgp_application_trace_report','eivGP')(
+  output_dir, ocean_path(output_dir,'reports','scientific-traces'))
+if(length(full_history))knitr::include_graphics(full_history[grepl('[.]png$',full_history)])
+```

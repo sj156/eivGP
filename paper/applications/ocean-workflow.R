@@ -84,7 +84,10 @@ ocean_method_run <- function(repository_dir,params,group) {
     prediction$fold_metrics_SD_Y<-keep(prediction$fold_metrics_SD_Y)
     prediction$summary<-prediction$summary[(prediction$summary$variant=='EIV')==(group=='eivGP'),,drop=FALSE]
     F('ocean_export_prediction_report')(prediction,dest)
+    full_traces<-if(group=='eivGP')F('mixedgp_application_trace_report')(out,file.path(dest,'scientific-traces'))else character()
     sections<-F('ocean_table_html')(prediction$summary,paste(group,'predictive performance'))
+    for(p in full_traces[grepl('[.]png$',full_traces)])sections<-paste0(sections,
+      "<h2>Full-history scientific targets</h2><img style='width:100%' src='scientific-traces/",basename(p),"'>")
     if(group=='competitors') {
       cc<-F('ocean_cc_prediction_tables')(out,a$inputs,a$prediction,
         cc_output_dir=if(nzchar(getp('cc_output_dir','')))api$ocean_resolve_path(params$cc_output_dir,repository_dir) else out,

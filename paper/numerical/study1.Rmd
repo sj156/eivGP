@@ -1,125 +1,150 @@
 ---
-title: "Study 1: numerical comparisons"
+title: "Study I: EIV-GP results and mixing assessment"
 output:
   html_document:
     toc: true
+    toc_float: true
     code_folding: hide
+    self_contained: true
 params:
   results_root: ""
+  run_dir: ""
+  report_output: ""
+  data_root: ""
+  report_rds: ""
   action: "report"
   profile: "paper"
-  cores: 4
+  cores: 1
   mixing_plots: true
   tables_dir: ""
   competitor_dir: ""
-  lane: "historical"
+  lane: "eivGP"
   component: ""
   options: !r list()
 ---
 
-This notebook reads saved results only. Use `study1-eivGP.R` and
-`study1-competitors.R` for complete workloads on separate machines. The historical
-view reads the selected merged original-grid export; it is not a merged report
-of all calibrated comparisons. See [Study I reproduction](study1-README.md).
-
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo=FALSE,message=FALSE,warning=TRUE)
-if(params$action!="report")stop("This notebook is report-only")
-if(!is.null(params$options$action)&&params$options$action!="report")stop("options cannot enable fitting")
+if(params$action!='report' || (!is.null(params$options$action)&&params$options$action!='report'))
+  stop('This notebook reads saved results only; fitting is not allowed')
 here<-dirname(knitr::current_input(dir=TRUE))
-source(file.path(here,"study1.R"),local=TRUE)
-root<-if(nzchar(params$results_root)) params$results_root else Sys.getenv("EIVGP_RESULTS_ROOT")
-if(!nzchar(root))stop("Set results_root or EIVGP_RESULTS_ROOT.")
-modern<-params$lane!="historical" || nzchar(params$component)
-if(modern) {
-  repo<-normalizePath(file.path(here,"../.."))
-  controls<-modifyList(list(action=params$action,profile=params$profile,
-    `mixing-plots`=params$mixing_plots,cores=as.character(params$cores),component=params$component,output=root),params$options)
-  if(params$lane!="historical") {
-    source(file.path(here,"common.R"),local=TRUE);numerical_package_check()
-    source(file.path(here,"study1-common.R"),local=TRUE)
-    controls$component<-NULL
-    result<-study1_paper_workflow(params$lane,controls,repo)
-  } else result<-study1_workflow(controls,repo)
-} else result<-study1_analysis(root,params$action,params$profile,params$cores,
-  tables_dir=if(nzchar(params$tables_dir))params$tables_dir else NULL,
-  competitor_dir=if(nzchar(params$competitor_dir))params$competitor_dir else NULL,
-  mixing_plots=params$mixing_plots)
+source(file.path(here,'common.R'),local=TRUE)
+if(!requireNamespace('eivGP',quietly=TRUE))stop('Install the matching eivGP package')
+is_eiv<-identical(params$lane,'eivGP')
+if(is_eiv) {
+  if(nzchar(params$report_rds))report<-readRDS(params$report_rds) else {
+    root<-if(nzchar(params$run_dir))params$run_dir else if(nzchar(params$results_root))params$results_root else Sys.getenv('EIVGP_RESULTS_ROOT')
+    if(!nzchar(root))stop('Set run_dir or results_root to the saved Study I results')
+    report<-eivGP::report_study1_eivgp(root,
+      output_dir=if(nzchar(params$report_output))params$report_output else NULL,
+      data_root=if(nzchar(params$data_root))params$data_root else NULL,
+      ess_min=100,mixing_plots=params$mixing_plots)
+  }
+}
+show_table<-function(x,caption,digits=3) {
+  if(!nrow(x))cat('No saved rows are available.\n\n') else
+    { names(x)<-gsub('_',' ',names(x)); cat('<div class="table-responsive">'); print(knitr::kable(x,format='html',table.attr='class="table table-striped table-condensed"',caption=caption,digits=digits,row.names=FALSE));cat('</div>\n\n') }
+}
+score_table<-function(x,metrics) {
+  if(!nrow(x))return(x)
+  out<-x[intersect(c('cell_id','n_calib','method'),names(x))]
+  for(m in intersect(metrics,names(x)))out[[m]]<-
+    ifelse(is.finite(x[[m]]),sprintf('%.3f [%.3f; %d]',x[[m]],x[[paste0(m,'_MCSE')]],x[[paste0(m,'_n')]]),'Not scored')
+  out
+}
 ```
 
-## Method comparison
-
-EIV-GP is fitted by our package. UC-GP, LVGP, and EzGP use their respective
-packages through the package's comparison adapters. Original published predictors fit all `(X,C)` records and ignore calibration. Their `-CC` versions fit only calibrated records with continuous `(X,U)` and categorical `C`, integrating response-free test-input draws. PI-GP and CC-GP are supplementary diagnostics. MCSEs describe variation across replications, not within-fit MCMC error.
-
-```{r scores, results='asis'}
-if(params$action=="report" && !modern) {
-  cat("Historical original-grid snapshot; calibrated comparisons are reported separately.\n\n")
-  if(!nrow(result$diagnostics))cat("No diagnostic table was supplied with this export.\n\n")
-  cat("Selected source:",result$source,"\n\n")
-  print(eivGP::report_table(result$summary,caption="Scores and replication MCSEs"))
-} else if(modern && (!is.null(result$complete_case)||!is.null(result$calibrated$complete_case))) {
-  cc<-if(!is.null(result$calibrated))result$calibrated$complete_case else result$complete_case
-  for(cell in names(cc)) if(is.data.frame(cc[[cell]]))
-    print(eivGP::report_table(cc[[cell]],caption=paste(cell,"complete-case comparisons")))
-} else print(result)
+```{r study-results, results='asis'}
+if(is_eiv) {
+cat('# Scope and completion\n\n')
+cat('This report reads the saved **EIV-GP lane** of Study I. It includes the oracle and supplementary controls present in this run. External UC-GP, LVGP and EzGP comparisons belong to the competitor lane and are not claimed here.\n\n')
+cat('Selected run: `',report$run_dir,'`.\n\n',sep='')
+show_table(report$completion,'Saved execution status (historical gate warnings are not execution failures).')
+show_table(do.call(rbind,lapply(report$config$cells,function(x)data.frame(cell=x$id,replications=x$n_rep,training=x$n,test=x$n_test,classes=x$m,calibration=paste(x$calibration_grid,collapse=', ')))), 'Saved study design.')
+cat('\nScores below retain every completed replication. **No results are excluded because of a diagnostic flag.** Values are replication means; brackets contain the between-replication Monte Carlo standard error and the finite replication count. Those MCSEs differ from within-fit MCMC error.\n\n')
+cat('# Prediction of a new response\n\nLower RMSE, CRPS, NLPD and interval score are better. Coverage95 and Width95 must be read together; nominal coverage is 0.95. Oracle rows have no calibration size because they are a reference shared across calibration settings.\n\n')
+show_table(score_table(report$summaries$prediction,c('RMSE','CRPS','NLPD','Coverage95','Width95','IntervalScore95')),'Predictive performance.')
+cat('\n# Observed-input mean m(x,c)\n\nThese summaries evaluate the mean conditional on the observed covariates and ordinal class, integrating the unobserved input.\n\n')
+show_table(score_table(report$summaries$observed_mean,c('RMSE','Bias','Coverage95','Width95')),'Recovery of m(x,c).')
+cat('\n# Latent response surface f(x,u)\n\nSurface recovery is assessed for eta=1 with calibration. It is not scored on an unanchored latent-input scale.\n\n')
+show_table(score_table(report$summaries$latent_surface,c('ISE','Bias','Coverage95','Width95')),'Recovery of f(x,u).')
+cat('\n# Training latent-input imputation\n\nWithout calibration, the physical location and scale of U are unanchored; those rows are explicitly not scored.\n\n')
+show_table(score_table(report$summaries$latent_imputation,c('RMSE','Bias','Coverage95','Width95')),'Imputation of unobserved training inputs.')
+cat('\n# Supplementary controls\n\nThese controls diagnose the role of input uncertainty and available calibration; they are not substitutes for the separately fitted published competitors.\n\n')
+show_table(score_table(report$summaries$predictive_controls,c('RMSE','CRPS','Coverage95','Width95')),'Predictive controls.')
+show_table(score_table(report$summaries$surface_controls,c('ISE','Coverage95','Width95')),'Surface-recovery controls.')
+cat('\n# Scientific-target ESS and mixing\n\nThe requested criterion is **bulk ESS > ',report$ess_min,' and tail ESS > ',report$ess_min,'**, across the retained chains. R-hat and mean MCSE relative to posterior SD are supporting diagnostics, not additional pass/fail gates in this report. Missing ESS is listed as unavailable. Raw-coordinate and historical overall gate counts do not decide acceptability.\n\n',sep='')
+if(!is.null(report$sampling) && nrow(report$sampling)) {
+  extensions<-report$sampling[report$sampling$n_iter>20000L,,drop=FALSE]
+  if(nrow(extensions)) {
+    cat('The fits listed below were continued from their saved terminal states until every monitored scientific target exceeded the ESS requirement. All original post-warmup draws were retained; their scores were recomputed from the combined chains. Other fits were reused.\n\n')
+    show_table(extensions[,c('cell_id','rep','n_calib','n_iter','burn','saved_per_chain')],'Saved-state continuations (iterations per chain).',digits=0)
+  }
+}
+cat('Diagnostics use the complete retained chain windows recorded in the saved run. Scientific targets are monitored at five test locations per fit; this is not an exhaustive check over the whole prediction domain. Conditional-mean and second-moment diagnostics address different estimands. Target integrations use the saved finite integration design; their ESS does not measure integration approximation error.\n\n')
+ess<-report$target_summary[,c('cell_id','n_calib','family','median_bulk_ess','min_bulk_ess','min_tail_ess','max_rhat','max_mcse_sd_ratio','below_ess')]
+ess$cell_id<-sub('eta([01])_balanced','\\1',ess$cell_id)
+labels<-c(m_conditional_mean='m mean',m_conditional_variance='m variance',f_conditional_mean='f mean',f_conditional_variance='f variance',predictive_second_moment='Predictive second moment',prospective_U_mean='Prospective U mean',prospective_U_second_moment='Prospective U second moment')
+ess$family<-unname(labels[ess$family])
+for(n in c('median_bulk_ess','min_bulk_ess','min_tail_ess'))ess[[n]]<-round(ess[[n]])
+names(ess)<-c('eta','|O|','Target','Median bulk','Min bulk','Min tail','Max R-hat','Max MCSE/SD','ESS <= 100')
+show_table(ess,'Scientific-target diagnostics across all replications. Full summaries and counts are retained in target_ess_summary.csv.',digits=3)
+if(any(report$target_summary$unavailable>0))cat('**Some ESS values are unavailable; see the review table below.**\n\n')
+cat('\n## Targets requiring closer inspection\n\n')
+if(!nrow(report$review))cat('All saved monitored targets have finite bulk and tail ESS above the requested threshold. Trace inspection remains necessary.\n\n') else {
+  cat(nrow(report$review),'monitored quantities in ',length(unique(paste(report$review$cell_id,report$review$n_calib,report$review$rep))),'fits have unavailable ESS or ESS at/below ',report$ess_min,'. The table identifies the affected quantities; a low ESS is not an execution failure.\n\n',sep='')
+  show_table(report$review[,c('cell_id','n_calib','rep','parameter','ess_bulk','ess_tail','rhat','mcse_sd_ratio')], 'Low-ESS scientific targets.')
+}
+if(!is.null(report$inspection)) {cat('\n## Inspection of the saved traces\n\n');cat(paste(report$inspection,collapse='\n\n'));cat('\n\n')}
+cat('\n# A few chain trace plots\n\nThree figures show typical observable-mean targets, the weakest uncertainty targets, and the continued scientific targets when extensions are present (otherwise, the weakest mean targets). The continued-target figure follows the weakest observable mean and predictive second moment in each extended fit; its dashed line marks the original 20,000-iteration endpoint. Typical replications are chosen near the median of the per-fit minimum m-mean bulk ESS; among historical archives only available retained fits can be traced. Weak cases are selected by the smallest bulk/tail ESS. The selection table and unavailable traces are retained.\n\nTraces use evenly spaced states across the entire post-warmup window, with four chains overlaid. ESS labels use the full-window diagnostic tables, never the displayed subset. No new MCMC is run.\n\n')
+}
 ```
 
-```{r comparison, fig.width=10, fig.height=5}
-if(params$action=="report" && !modern) print(eivGP::plot_comparison(result$summary,"RMSE"))
+```{r trace-plots, out.width='100%'}
+if(is_eiv) {
+  pngs<-report$figures$paths[grepl('[.]png$',report$figures$paths)]
+  if(length(pngs))knitr::include_graphics(normalizePath(pngs),rel_path=FALSE)
+}
 ```
 
-## Diagnostics
-
-Passing one diagnostic does not establish convergence for every estimand.
-The unfiltered summaries retain all completed scores. The shared
-`convergence-report.R` / `.Rmd` separately reports optimizer and measurement
-failures, unknown checks and pending jobs, with explicit denominators. Its paired
-accuracy comparisons require documented passes for every applicable diagnostic.
-Regimes remain separate; matched sample sizes and replication MCSE are reported.
-See the reproduction guide for read-only snapshots of running experiments.
-
-```{r diagnostics, results='asis'}
-if(params$action=="report" && !modern) print(eivGP::report_table(eivGP::summarize_diagnostics(result$diagnostics)))
+```{r status, results='asis'}
+if(is_eiv) {
+  if(nrow(report$figures$status)&&any(report$figures$status$status!='written')) {
+    cat('\n**Some selected traces could not be produced.**\n\n')
+    show_table(subset(report$figures$status,status!='written'),'Trace availability; missing traces are not evidence of good mixing.')
+  }
+  cat('\n# Output completeness and provenance\n\n')
+  g<-report$completeness;g<-g[grepl('completeness',g$gate),]
+  show_table(g[,intersect(c('cell_id','gate','expected','attempted','success','pass'),names(g))],'Saved output-completeness checks.')
+  if(nrow(report$ablation_status))show_table(as.data.frame(table(report$ablation_status$cell_id,report$ablation_status$method,report$ablation_status$status)), 'Supplementary method execution statuses.')
+  cat('\nReport data and CSV summaries: `',report$output_dir,'`. The source manifest records input file checksums. Saved results include verified continuations where requested; rendering this report does not alter fits or scores.\n\n',sep='')
+  cat('To regenerate without fitting, run `study1-eivGP.R --action=report --run-dir=... --data-root=... --report-output=...`. For a new simulation use `--action=run`; the same script prepares and renders this HTML report. Rendering this notebook never fits or continues chains.\n\n')
+}
 ```
 
-## Mixing plots
-
-The package saves three mixing figures (PDF and PNG) by default after `report`
-or `run`: R-hat versus bulk ESS, mean MCSE relative to posterior SD, and
-unavailable diagnostic counts. These use saved parameter-level CSVs only;
-no chains are refitted or target integrations recomputed. Raw and scientific
-quantities stay separate. Missing diagnostics are not treated as passes.
-Set `mixing_plots: false` (batch: `--mixing-plots=false`) to skip them.
-
-```{r mixing-figures, echo=FALSE, out.width="100%"}
-plots<-if(modern) attr(result,"mixing_plots") else result$mixing_plots
-pngs<-plots[grepl("[.]png$",plots)]
-if(length(pngs)) knitr::include_graphics(normalizePath(pngs))
+```{r other-lanes, results='asis'}
+if(!is_eiv) {
+  root<-if(nzchar(params$results_root))params$results_root else Sys.getenv('EIVGP_RESULTS_ROOT')
+  if(!nzchar(root))stop('Set results_root')
+  source(file.path(here,'study1.R'),local=TRUE)
+  if(params$lane=='historical') {
+    result<-study1_analysis(root,'report',params$profile,params$cores,
+      tables_dir=if(nzchar(params$tables_dir))params$tables_dir else NULL,
+      competitor_dir=if(nzchar(params$competitor_dir))params$competitor_dir else NULL,
+      mixing_plots=FALSE)
+    cat('# Historical merged original-grid snapshot\n\n')
+    show_table(result$summary,'Historical method comparison.')
+    show_table(result$diagnostics,'Saved diagnostics.')
+  } else {
+    source(file.path(here,'study1-common.R'),local=TRUE)
+    controls<-modifyList(list(action='report',profile=params$profile,output=root,cores=as.character(params$cores)),params$options)
+    result<-study1_paper_workflow(params$lane,controls,NUMERICAL_REPO_ROOT)
+    cat('# Saved competitor results\n\n');print(result)
+  }
+}
 ```
 
-For chain-level inspection, `eivGP::plot_mcmc(fit, parameters=c("V","r"))`
-returns a customizable ggplot. Use `type="rank"`, `"acf"`, or `"running_mean"`
-for complementary views. Supply named lists of chain vectors for scientific
-functionals already computed on every retained draw. The package does not
-silently recompute those expensive functionals for plotting.
-
-## Workflow status
-
-```{r workflow-status, results='asis'}
-if(modern) for(p in list.files(file.path(root,"complete-case"),pattern="status.csv",recursive=TRUE,full.names=TRUE))
-  print(eivGP::report_table(read.csv(p)))
-```
-
-## Reproduction
-
-Use `study1-eivGP.R` and `study1-competitors.R` for separate-machine execution.
-Each covers its complete paper workload. This notebook rejects fitting actions.
-Use the shared `convergence-report.R` to inspect saved or running experiments
-without their resume gates, with a separate reporting library and output directory.
-Never rename old caches to bypass source/protocol identity checks.
-
-```{r session, echo=FALSE}
-packageVersion("eivGP")
+```{r session}
+packageVersion('eivGP')
 sessionInfo()
 ```

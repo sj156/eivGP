@@ -72,7 +72,7 @@ ocean_cli_params <- function(args=character()) {
   aliases<-c("data-root"="data_dir","output"="output_dir")
   allowed<-c("action","profile","dataset","cores","data_dir","output_dir",
     "folds","cells","modules","task_ids","run_id","import_dirs","cc_output_dir",
-    "diagnostics_dir","representative_fold","continuation_iter")
+    "diagnostics_dir","representative_fold","continuation_iter","ess_min")
   p<-list()
   for(arg in args) {
     if(!grepl("^--[^=]+=.+$",arg))stop("Use --name=value: ",arg)
@@ -113,7 +113,7 @@ ocean_restore_fit_settings <- function(params,output_dir) {
   if(params$action=="continue" && identical(params$profile,"paper") &&
      !identical(as.integer(unlist(saved[c("chains","iter","burn")])),c(4L,50000L,5000L)))
     stop("This saved run does not use the fixed paper sampling settings; use analyze/report to inspect it or start a new paper fit.")
-  for(key in c("chains","iter","burn"))params[[key]]<-saved[[key]]
+  for(key in c("chains","iter","burn","ess_min"))params[[key]]<-saved[[key]]
   params
 }
 

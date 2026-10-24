@@ -309,3 +309,34 @@ OI/CC/MI protocols and scoring scopes are defined in the report. Masks, counts
 and eligible best-score emphasis are computed from inputs/results. Keep fitted
 objects and chains in external output roots. Input hashes and validation scope
 are recorded in `paper/manifests/ocean/`.
+
+
+## Optional scientific-target ESS and full-history traces
+
+`--ess-min=100` on `ocean-eivGP.R` enables saved-state continuation after the
+initial sampling budget until every monitored scientific bulk and tail ESS is
+strictly greater than 100. The default is `NULL`; `--ess-min=NULL` keeps the
+fixed budget. Four chains are required, so this option is unavailable with the
+one-chain quick profile. No new warmup or thinning is introduced. Checks use a
+fixed five-point test-input panel (without test responses), 64 fixed latent
+integration samples, and all retained MCMC draws. Calibrated cells additionally
+monitor physical-surface targets. ESS is a precision criterion, not a proof of
+convergence; R-hat and the traceplots remain visible.
+
+The final fit retains `scientific_ess` diagnostics and history. Atomic temporary
+continuation states permit resuming an interrupted extension; the final fit is
+saved before redundant temporary states are removed. Reporting alone never
+starts continuation. With four-chain fits, full-history scientific traces are
+also saved when `ess_min` is NULL, without changing the fixed sampling budget.
+Two figures show up to four weak mean/uncertainty targets. Display subsampling
+spans the complete retained history; reported ESS uses every draw.
+
+Figures appear in the EIV-GP HTML report under `reports/eivGP/scientific-traces`.
+The initial-fit phase includes any ESS extensions before predictive scoring.
+The separate explicit `--action=continue` workflow retains its existing fixed
+additional-budget semantics.
+
+Install source changes only after active runs have finished. Do not change a
+running process or overwrite its installed library. New runs record the ESS
+setting in their workflow identity; incompatible historical roots are not
+silently relabeled.

@@ -79,3 +79,65 @@ Render `convergence-report.Rmd` with `manifest` and `output` parameters for the
 same HTML report. `study1.Rmd` accepts `lane: eivGP`, `competitors`, or
 `historical`; `options` cannot override its report-only action. Historical views
 are labeled snapshots, not the final merged manuscript results.
+
+## EIV-GP report and trace plots
+
+`study1-eivGP.R --action=run` now finishes by preparing the saved-result report
+and rendering the existing `study1.Rmd` to `study1.html`. The HTML and CSVs are
+written to `core/study1-report/`, or the explicit `--report-output` directory.
+The report covers prediction, observed-input means, latent surfaces, imputation,
+supplementary controls, completeness, and scientific-target mixing. It retains
+all completed scores. Scientific-target bulk and tail ESS must both be **greater
+than 100**; R-hat and MCSE remain supporting diagnostics. Historical overall gate
+flags are preserved in the source but do not screen the reported accuracy.
+
+To repair reporting after a completed simulation, use `report`, not `run`:
+
+```sh
+Rscript paper/numerical/study1-eivGP.R --action=report \
+  --run-dir=/path/to/core/study1-publication-v2-RUNID \
+  --data-root=/path/to/data/study1 \
+  --report-output=/path/to/local/study1-report
+```
+
+This route reads the selected run without fitting, resuming, or rewriting it.
+An ambiguous parent directory requires an explicit `--run-dir`. It does not
+require the historical configuration to match current fitting code. Provenance
+records the original saved inputs and the separate reporting implementation.
+
+Three compact trace figures replace diagnostic scatterplots in the EIV-GP lane:
+typical mean targets, weakest mean targets, and weakest uncertainty targets.
+Graphics run serially, avoiding macOS Objective-C/fork crashes. New fits retain
+small chain-resolved scientific-target traces for every replication; full-window
+ESS is computed before display thinning. For older archives, selected traces
+are reconstructed from retained fits and checksum-verified frozen inputs using
+the original target-integration settings. Missing traces are explicitly listed.
+The chosen fits and scientific targets are recorded in `trace_selection.csv`.
+
+`study1.Rmd` now defaults to `lane: eivGP`. It accepts `run_dir`, `data_root` and
+`report_output`, or an already prepared `report_rds`. Explicit `lane: historical`
+and `lane: competitors` remain available. `--mixing-plots=false` skips trace
+reconstruction while retaining the numerical report. Rendering requires
+`rmarkdown` and Pandoc. No new MCMC is performed during rendering.
+
+### Scientific-target continuation
+
+Production Study I fitting continues saved chains in 5,000-transition increments
+until every monitored scientific target has **both bulk and tail ESS >100**.
+All original retained draws count. R-hat and traces remain supporting diagnostics;
+this precision criterion is not a claim of convergence. Quick runs remain smoke tests.
+Final fits retain terminal RNG states. Checkpoint files are removed only after the
+complete expected results, final fit histories, and reporting outputs are verified.
+
+To repair an existing run without rerunning acceptable fits or competitors:
+
+```r
+eivGP::continue_study1_results(run_dir, data_root = frozen_study1_data,
+                              chunk_iter = 5000L, n_cores = 4L)
+```
+
+Then use the normal `--action=report --run-dir=...` command to regenerate
+`study1.html`. Rendering never continues chains. A single compatible fit can use
+`continue_eivgp_until_ess(fit, X, C, U, checkpoint_file = "continuation.rds")`.
+The default has no extension-count limit; an explicit `max_extensions` is an
+operational limit and returns `success=FALSE` if the requirement is unmet.

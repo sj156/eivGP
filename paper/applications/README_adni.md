@@ -198,3 +198,37 @@ macOS/Linux use the public fork/shared-budget implementation. Windows follows
 the package's serial fallback. Use the same input and output flags on all three
 entrypoints. Logs, receipts and source provenance stay beside the local results;
 failures and nonconvergence are disclosed, not silently reclassified.
+
+
+## Optional scientific-target ESS and full-history traces
+
+`--ess-min=100` on `adni-eivGP.R` enables saved-state continuation after the
+initial sampling budget until every monitored scientific bulk and tail ESS is
+strictly greater than 100. The default is `NULL`; `--ess-min=NULL` keeps the
+fixed budget. Four chains are required, so this option is unavailable with the
+one-chain quick profile. No new warmup or thinning is introduced. Checks use a
+fixed five-point test-input panel (without test responses), 64 fixed latent
+integration samples, and all retained MCMC draws. Calibrated cells additionally
+monitor physical-surface targets. ESS is a precision criterion, not a proof of
+convergence; R-hat and the traceplots remain visible.
+
+The final fit retains `scientific_ess` diagnostics and history. Atomic temporary
+continuation states permit resuming an interrupted extension; the final fit is
+saved before redundant temporary states are removed. Reporting alone never
+starts continuation. With four-chain fits, full-history scientific traces are
+also saved when `ess_min` is NULL, without changing the fixed sampling budget.
+Two figures show up to four weak mean/uncertainty targets. Display subsampling
+spans the complete retained history; reported ESS uses every draw.
+
+ADNI applies the rule only after the final planned stage. Stage directory names
+retain the nominal requested budget; convergence tables record actual per-fit
+iterations, and the report permits different final iteration counts with the
+same warmup and chain count. Figures appear in the saved-results Rmd/HTML.
+
+Install source changes only after active runs have finished. Do not change a
+running process or overwrite its installed library. New runs record the ESS
+setting in their workflow identity; incompatible historical roots are not
+silently relabeled.
+
+For `--manifest=...`, declare `ess_min` in the manifest; any CLI `--ess-min`
+value must match it. This avoids silently changing a frozen workflow identity.

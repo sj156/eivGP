@@ -10174,6 +10174,14 @@ mixedgp_resolve_latent_scale <- function(object,
 #'   The default dictionary update is conditional;
 #'   `dictionary_mode = "marginal"` integrates the finite dictionary in the
 #'   continuous latent-input updates.
+#' @param ess_min Optional strict minimum scientific-target bulk and tail ESS.
+#'   NULL keeps the fixed iteration budget. A positive number enables adaptive
+#'   saved-state extensions after the initial budget, without new warmup.
+#' @param ess_panel Optional list with X, C, and optional U in original units,
+#'   plus n_latent and seed. Supply a fixed scientific evaluation panel. If
+#'   omitted, five evenly spaced training rows monitor observable targets.
+#'   At least four chains are required. ESS is a precision rule, not proof of
+#'   convergence; inspect the full-history scientific traces.
 #' @param ... Additional sampler arguments such as `n_iter`, `burn`, and
 #'   `n_chains`. Every post-warm-up draw is retained: `thin`, if supplied, must
 #'   equal one. Defaults are 1750 transitions, 500 warm-up transitions, and
@@ -10222,7 +10230,9 @@ fit_eivgp <- function(X,
                       priors = list(),
                       sampler_control = list(),
                       sampler = c("ESS", "HMC", "HYBRID"),
+                      ess_min = NULL, ess_panel = NULL,
                       ...) {
+  mixedgp_validate_ess_request(ess_min, ess_panel)
   fit_call <- match.call()
   sampler <- match.arg(sampler)
   if (!is.null(sampler_control$sampler) && sampler_control$sampler != sampler) stop("Conflicting sampler options.")
@@ -10282,6 +10292,8 @@ fit_eivgp <- function(X,
     latent_dim <- ncol(U_checked)
   }
   dots <- list(...)
+  if(!is.null(ess_min) && !is.null(dots$n_chains) && dots$n_chains<4L)
+    stop("Scientific ESS requires at least four chains.")
   mixedgp_validate_named_dots(dots)
   if ("thin" %in% names(dots) &&
       !identical(mixedgp_as_integer_strict(dots$thin, "thin", 1L, 1L), 1L)) {
@@ -10430,7 +10442,7 @@ fit_eivgp <- function(X,
   )
   class(fit) <- unique(c("eivgp_fit", class(fit)))
   fit$checkpoint$signature <- mixedgp_v030_checkpoint_hash(fit)
-  fit
+  mixedgp_finish_ess(fit, ess_min, ess_panel, parallel, n_cores)
 }
 
 
@@ -11577,3 +11589,185 @@ print.eivgp_diagnostics <- function(x, ...) {
   invisible(x)
 }
 
+# Extend the internal Study I format without manufacturing a public-fit signature.
+mixedgp_continue_study1_fit <- function(object, n_iter, parallel=FALSE, n_cores=1L) {
+  if (inherits(object,"eivgp_fit")) return(continue_eivgp(object,n_iter,parallel,n_cores))
+  cp <- object$checkpoint
+  if (!identical(object$sampler_version,"0.3.1") || !identical(cp$version,2L) ||
+      !identical(cp$sampler_version,"0.3.1") || !identical(cp$thin,1L) ||
+      !identical(cp$control,object$control) || mixedgp_fit_engine(object)!="univariate")
+    stop("Unsupported or modified Study I continuation state.")
+  n_iter <- mixedgp_as_integer_strict(n_iter,"n_iter",1L,1L)
+  by <- object$mcmc$samples_by_chain
+  expected <- cp$iteration-cp$burn
+  nc <- length(cp$states)
+  if (nc<1L || any(vapply(by$u,nrow,integer(1))!=expected) || length(by$u)!=nc ||
+      nrow(object$mcmc$chain_stats)!=nc || any(vapply(cp$states,function(s)is.null(s$rng)||is.null(s$state),logical(1))))
+    stop("Incomplete retained history or terminal chain states.")
+  cp$old_chains <- lapply(seq_len(nc),function(i) {
+    out<-lapply(by,`[[`,i);names(out)<-paste0("samples_",names(out))
+    out$stats<-object$mcmc$chain_stats[i,,drop=FALSE]
+    out$initial_state<-object$mcmc$chain_initial[[i]];out
+  })
+  rng<-mixedgp_rng_state();on.exit(mixedgp_restore_rng_state(rng),add=TRUE)
+  pr<-object$priors;pr$dictionary_type<-NULL
+  d<-object$data
+  result<-mixedgp_v030_fit(X=d$x,y=d$y,C=matrix(d$c_ord,ncol=1L),
+    U_obs=matrix(d$u_obs,ncol=1L),m_vec=d$m,measurement="threshold",ident="none",
+    kernel=object$kernel$name,matern_nu=object$kernel$matern_nu,
+    n_iter=cp$iteration+n_iter,burn=cp$burn,n_chains=nc,
+    seed=as.integer(object$mcmc$chain_stats$seed[1]-10000L),
+    parallel_chains=parallel,n_cores=n_cores,priors=pr,sampler_control=object$control,.resume=cp)
+  updated<-mixedgp_v030_fit_object(result,d,"univariate",object$kernel$name,object$kernel$matern_nu,cp)
+  updated$diagnostics$summary$time_seconds<-object$diagnostics$summary$time_seconds+updated$diagnostics$summary$time_seconds
+  updated$continuation_history<-rbind(object$continuation_history,data.frame(
+    from_iteration=cp$iteration,to_iteration=cp$iteration+n_iter,added_draws_per_chain=n_iter))
+  updated
+}
+
+mixedgp_scientific_ess_pass <- function(tab,ess_min=100) {
+  is.data.frame(tab) && nrow(tab)>0L && all(c("ess_bulk","ess_tail","n_chains","draw_window_complete") %in% names(tab)) &&
+    isTRUE(all(is.finite(tab$ess_bulk) & is.finite(tab$ess_tail) & tab$ess_bulk>ess_min &
+          tab$ess_tail>ess_min & tab$n_chains>=4L & tab$draw_window_complete))
+}
+
+#' Continue saved chains until scientific-target ESS exceeds a threshold
+#'
+#' @param object A public eivgp_fit or supported internal Study I or Study II fit.
+#' @param X,C,U Fixed scientific diagnostic panel, in original units.
+#' @param ess_min Strict lower bound for both bulk and tail ESS (default 100).
+#' @param chunk_iter Additional transitions per chain between checks.
+#' @param adaptive Estimate the next extension from the weakest ESS, bounded
+#'   between chunk_iter and four times chunk_iter; always reassess afterwards.
+#' @param max_extensions Optional operational limit; Inf continues until success.
+#' @param n_latent,seed Fixed integration settings for target functionals.
+#' @param parallel,n_cores Chain execution controls.
+#' @param checkpoint_file Optional RDS path, atomically saved after each extension
+#'   and diagnostic check. Contains the fit and full target series; pass its fit
+#'   back to resume after interruption. Terminal states remain in successful fits.
+#' @return A list with fit, target_series, diagnostics, history, and success.
+#' @details All retained draws count, including the original warm-up exclusion.
+#'   No fresh warm-up, thinning or chain restart is performed. R-hat and MCSE
+#'   remain reported but do not control this precision stopping rule. Success is
+#'   not proof of convergence. Undefined ESS never passes. Inspect the traces.
+#' @export
+continue_eivgp_until_ess <- function(object,X,C,U=NULL,ess_min=100,chunk_iter=5000L,
+    max_extensions=Inf,n_latent=64L,seed=481517L,parallel=FALSE,n_cores=1L,
+    checkpoint_file=NULL, adaptive=FALSE) {
+  if(length(ess_min)!=1L || !is.finite(ess_min) || ess_min<=0)stop("ess_min must be positive and finite.")
+  chunk_iter<-mixedgp_as_integer_strict(chunk_iter,"chunk_iter",1L,1L)
+  if(length(max_extensions)!=1L || is.na(max_extensions) || max_extensions<0 ||
+     (is.finite(max_extensions)&&max_extensions!=floor(max_extensions)))stop("Invalid max_extensions.")
+  if(length(object$mcmc$samples_by_chain$logtheta)<4L)stop("Scientific ESS requires at least four chains.")
+  rng<-mixedgp_rng_state();on.exit(mixedgp_restore_rng_state(rng),add=TRUE)
+  state<-list(fit=object,target_series=NULL,diagnostics=NULL,history=data.frame(),success=FALSE)
+  save_state<-function()if(!is.null(checkpoint_file))mixedgp_checkpoint_write(mixedgp_pack_artifact(state),checkpoint_file)
+  state$settings<-list(ess_min=ess_min,chunk_iter=chunk_iter,n_latent=n_latent,seed=seed,X=X,C=C,U=U)
+  save_state()
+  for(k in seq_len(.Machine$integer.max)) {
+    state$target_series<-mixedgp_continuation_target_series(state$fit,X,C,U,n_latent,seed,parallel,n_cores)
+    state$diagnostics<-mixedgp_summarize_diagnostic_series(state$target_series)
+    state$success<-mixedgp_scientific_ess_pass(state$diagnostics,ess_min)
+    state$settings<-list(ess_min=ess_min,chunk_iter=chunk_iter,n_latent=n_latent,seed=seed,X=X,C=C,U=U)
+    state$history<-rbind(state$history,data.frame(iteration=state$fit$checkpoint$iteration,
+      min_bulk_ess=min(state$diagnostics$ess_bulk),min_tail_ess=min(state$diagnostics$ess_tail),
+      max_rhat=max(state$diagnostics$rhat),success=state$success))
+    save_state()
+    message("Scientific targets at iteration ",state$fit$checkpoint$iteration,": min bulk ESS=",
+      signif(tail(state$history$min_bulk_ess,1),5),", min tail ESS=",signif(tail(state$history$min_tail_ess,1),5))
+    if(state$success || k>max_extensions)break
+    extra <- if(isTRUE(adaptive)) mixedgp_ess_extension_size(state$diagnostics,
+      state$fit$checkpoint$iteration-state$fit$checkpoint$burn,ess_min,chunk_iter) else chunk_iter
+    state$fit<-if(inherits(state$fit,"eivgp_fit"))continue_eivgp(state$fit,extra,parallel,n_cores) else
+      if(mixedgp_fit_engine(state$fit)=="multivariate")mixedgp_continue_study2_fit(state$fit,extra,parallel,n_cores) else
+      mixedgp_continue_study1_fit(state$fit,extra,parallel,n_cores)
+    state$target_series<-NULL;state$diagnostics<-NULL;state$success<-FALSE
+    save_state()
+  }
+  state
+}
+
+mixedgp_continuation_target_series <- function(fit,X,C,U,n_latent,seed,parallel,n_cores) {
+  fun<-if(mixedgp_fit_engine(fit)=="univariate")mixedgp_study1_target_series else mixedgp_study2_target_series
+  if(!isTRUE(parallel)||is.null(n_cores)||n_cores<=1L)
+    return(fun(fit,X=X,C=C,U=U,n_latent=n_latent,seed=seed,max_draws_per_chain=Inf))
+  nc<-length(fit$mcmc$samples_by_chain$logtheta)
+  parts<-mixedgp_parallel_lapply(seq_len(nc),function(i) {
+    one<-fit
+    one$mcmc$samples_by_chain<-lapply(fit$mcmc$samples_by_chain,function(chains)chains[i])
+    fun(one,X=X,C=C,U=U,n_latent=n_latent,seed=seed,max_draws_per_chain=Inf)
+  },n_cores=min(nc,n_cores),mc.preschedule=FALSE)
+  series<-setNames(lapply(names(parts[[1]]),function(name)lapply(parts,function(p)p[[name]][[1]])),names(parts[[1]]))
+  mixedgp_mark_diagnostic_window(series,TRUE)
+}
+
+mixedgp_continue_study2_fit <- function(object, n_iter, parallel=FALSE, n_cores=1L) {
+  if (inherits(object,"eivgp_fit")) return(continue_eivgp(object,n_iter,parallel,n_cores))
+  cp <- object$checkpoint
+  if (!identical(object$sampler_version,"0.3.1") || !identical(cp$version,2L) ||
+      !identical(cp$sampler_version,"0.3.1") || !identical(cp$thin,1L) ||
+      !identical(cp$control,object$control) || mixedgp_fit_engine(object)!="multivariate")
+    stop("Unsupported or modified Study II continuation state.")
+  n_iter <- mixedgp_as_integer_strict(n_iter,"n_iter",1L,1L)
+  by <- object$mcmc$samples_by_chain
+  expected <- cp$iteration-cp$burn
+  nc <- length(cp$states)
+  if (nc<1L || any(vapply(by$U,function(x)dim(x)[1L],integer(1))!=expected) || length(by$U)!=nc ||
+      nrow(object$mcmc$chain_stats)!=nc || any(vapply(cp$states,function(s)is.null(s$rng)||is.null(s$state),logical(1))))
+    stop("Incomplete retained history or terminal chain states.")
+  cp$old_chains <- lapply(seq_len(nc),function(i) {
+    out<-lapply(by,`[[`,i);names(out)<-paste0("samples_",names(out))
+    out$stats<-object$mcmc$chain_stats[i,,drop=FALSE]
+    out$initial_state<-object$mcmc$chain_initial[[i]];out
+  })
+  rng<-mixedgp_rng_state();on.exit(mixedgp_restore_rng_state(rng),add=TRUE)
+  pr<-object$priors;pr$dictionary_type<-NULL
+  d<-object$data
+  result<-mixedgp_v030_fit(X=d$X,y=d$y,C=d$C_ord,
+    U_obs=d$U_obs,m_vec=d$m_vec,measurement="probit",ident=d$ident,
+    kernel=object$kernel$name,matern_nu=object$kernel$matern_nu,
+    n_iter=cp$iteration+n_iter,burn=cp$burn,n_chains=nc,
+    seed=as.integer(object$mcmc$chain_stats$seed[1]-10000L),
+    parallel_chains=parallel,n_cores=n_cores,priors=pr,sampler_control=object$control,.resume=cp)
+  updated<-mixedgp_v030_fit_object(result,d,"multivariate",object$kernel$name,object$kernel$matern_nu,cp)
+  updated$diagnostics$summary$time_seconds<-object$diagnostics$summary$time_seconds+updated$diagnostics$summary$time_seconds
+  updated$continuation_history<-rbind(object$continuation_history,data.frame(
+    from_iteration=cp$iteration,to_iteration=cp$iteration+n_iter,added_draws_per_chain=n_iter))
+  updated
+}
+
+
+mixedgp_validate_ess_request <- function(ess_min, panel=NULL) {
+  if(!is.null(ess_min) && (!is.numeric(ess_min)||length(ess_min)!=1L||
+      !is.finite(ess_min)||ess_min<=0))stop("ess_min must be NULL or one finite positive number.")
+  if(!is.null(panel) && (!is.list(panel)||is.null(panel$X)||is.null(panel$C)))
+    stop("ess_panel must contain X and C, with optional U, n_latent and seed.")
+  invisible(NULL)
+}
+
+mixedgp_ess_extension_size <- function(tab, retained, ess_min, chunk_iter=5000L) {
+  weakest<-suppressWarnings(min(c(tab$ess_bulk,tab$ess_tail)))
+  if(!is.finite(weakest)||weakest<=0)return(as.integer(chunk_iter))
+  estimate<-ceiling(retained*max(0,1.2*ess_min/weakest-1))
+  as.integer(min(4*chunk_iter,max(chunk_iter,estimate)))
+}
+
+mixedgp_finish_ess <- function(fit, ess_min=NULL, ess_panel=NULL, parallel=FALSE,
+                               n_cores=1L, checkpoint_file=NULL) {
+  mixedgp_validate_ess_request(ess_min,ess_panel)
+  if(is.null(ess_min))return(fit)
+  if(is.null(ess_panel)) {
+    d<-fit$data;one<-mixedgp_fit_engine(fit)=="univariate"
+    X<-if(one)d$x_raw else d$X_raw;C<-if(one)matrix(d$c_ord,ncol=1L)else d$C_ord
+    rows<-unique(as.integer(round(seq(1,nrow(X),length.out=min(5,nrow(X))))))
+    ess_panel<-list(X=X[rows,,drop=FALSE],C=C[rows,,drop=FALSE])
+  }
+  z<-continue_eivgp_until_ess(fit,ess_panel$X,ess_panel$C,ess_panel$U,
+    ess_min=ess_min,n_latent=if(is.null(ess_panel$n_latent))64L else ess_panel$n_latent,
+    seed=if(is.null(ess_panel$seed))481517L else ess_panel$seed,
+    parallel=parallel,n_cores=n_cores,checkpoint_file=checkpoint_file,adaptive=TRUE)
+  if(!isTRUE(z$success))stop("Scientific ESS target was not reached; retained state is available.")
+  fit<-z$fit
+  fit$scientific_ess<-z[setdiff(names(z),'fit')]
+  fit
+}

@@ -124,3 +124,58 @@ remain available. Interpret matched accuracy alongside failure rates because
 conditioning on success can select easier datasets. Diagnostics do not prove
 convergence. Render `convergence-report.Rmd` with `manifest` and `output` parameters
 for the same analysis in HTML. Partial-run reports are snapshots, not final results.
+
+## Scientific ESS continuation (joint EIV-GP fits)
+
+The paper-profile core FULL workflow uses `config$mcmc$ess_min = 100`.
+It runs the initial budget, then checks scientific-target bulk and tail ESS
+on all retained draws at the fixed five-point test panel. Compatible saved fits
+are checked and extended before prediction/recovery scoring. Additional batches
+are estimated from the weakest ESS, with a 20% margin and 5,000–20,000 transitions
+per chain per check. Sampling stops only when both ESS types strictly exceed the
+threshold; R-hat remains reported, not a stopping condition. Persistent separated
+chains still require investigation. Set `config$mcmc$ess_min <- NULL` in a custom
+configuration to retain fixed-budget behavior.
+
+For ordinary package fits, automatic continuation is opt-in:
+
+```r
+fit <- fit_eivgp(X, y, C, engine = "multivariate", latent_dim = 2,
+  ess_min = 100,
+  ess_panel = list(X = X_eval, C = C_eval, U = U_eval),
+  n_iter = 20000, burn = 5000, n_chains = 4)
+```
+
+`ess_min = NULL` is the base API default. Without `ess_panel`, the monitored
+observable targets use five evenly spaced training rows. Supply integer-coded C
+and a meaningful fixed panel for scientific applications. U is optional and adds
+physical-surface targets when calibrated. No new warmup or discarded history is
+introduced during continuation. `fit$scientific_ess` stores the checks and traces.
+For existing fits, `continue_eivgp_until_ess(..., ess_min=100, adaptive=TRUE)`
+uses the same logic, including compatible internal Study II saved fits.
+
+With `--mixing-plots=true` (the default), core reporting produces
+`scientific_traces_means.{png,pdf}` and
+`scientific_traces_uncertainty.{png,pdf}`, each with up to four weak scientific
+targets. Display subsampling spans the complete retained history; ESS uses every
+draw. This does not change the separate CUT measurement/conditional-GP sampling
+budgets or imply that their nested-integration precision has been established.
+
+Do not reinstall the package during an active run. Source updates take effect
+for future sessions after `Rscript tools/setup_numerical.R` has been run from the
+repository root. A process already running keeps its loaded implementation.
+
+
+### CUT: descriptive scientific traces, no ESS stopping requirement
+
+CUT remains a fixed-budget comparison method. Neither outer nor conditional
+ESS triggers continuation or excludes completed scores. Diagnostic flags remain
+visible and do not certify final CUT precision. The report now includes two
+separate trace groups: full retained conditional-GP histories for the first
+outer state of the first selected replication at each calibration, and the
+retained outer integration sequence of conditional posterior means and
+predictive second moments. Conditional plots hold the outer U/A/threshold state
+fixed; incidental measurement-parameter draws from the GP fit are not substituted
+for it. Outer summaries average the available inner GP draws and retain their
+finite Monte Carlo error; they are not every measurement-chain transition.
+The plots and diagnostics are generated from saved draws, without extra MCMC.

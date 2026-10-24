@@ -1,3 +1,18 @@
+# Unreleased
+
+- Production Study I now continues exact saved states until all monitored scientific
+  targets have bulk and tail ESS strictly above 100; retain R-hat and MCSE for review.
+- Add `continue_eivgp_until_ess()` and `continue_study1_results()` to extend chains
+  and refresh only affected scores, with fixed prediction RNG blocks and provenance.
+- Remove redundant Study I checkpoint files only after complete target diagnostics,
+  final fit histories, scores and reporting have been verified.
+
+- Make Study I EIV-GP saved-result reporting independent of fitting/resume checks;
+  the existing study1.Rmd renders a complete report with scientific-target ESS > 100.
+- Save small target traces for all new Study I fits and reconstruct selected
+  historical traces from verified saved inputs without new MCMC.
+- Render mixing figures serially to avoid macOS Objective-C fork crashes.
+
 # eivGP 0.4.0.9012
 
 - Ocean retries only missing baseline methods, preserving successful fitted
@@ -73,3 +88,25 @@ The package remains reusable independently of the manuscript's experiment
 scripts. No experimental designs, datasets, cached results, or run budgets are
 changed by this patch. Numerical-study caches must distinguish code revisions.
 Small correctness/performance checks do not guarantee mixing in general.
+
+- `fit_eivgp()` now accepts `ess_min = NULL` and `ess_panel = NULL`.
+  A positive ESS threshold requests adaptive saved-state extensions after the
+  initial budget until all scientific bulk and tail ESS values strictly exceed
+  it. NULL preserves fixed-budget behavior. Scientific history and diagnostics
+  are retained in `fit$scientific_ess`; raw-coordinate diagnostics remain separate.
+- Study II core FULL fits enable threshold 100 in the paper profile, including
+  compatible saved fits. Extensions precede scoring and retain checkpoint state.
+  Two full-history scientific trace figures replace aggregate mixing dashboards
+  when scientific trace artifacts are available. CUT's nested conditional workflow
+  retains its existing sampling controls; this change applies to joint EIV-GP fits.
+
+
+- Ocean and ADNI method CLIs accept optional `--ess-min=100` (default NULL).
+  Final scientific checks and adaptive saved-state extensions precede scoring;
+  ADNI applies the rule only at the final nominal stage and records actual
+  per-fit budgets. Both save full-history scientific traces, with no fitting
+  during report-only execution.
+- CUT retains fixed budgets and all completed comparisons. New conditional-GP
+  and outer-integration scientific traces are descriptive, with no ESS stopping
+  requirement. Conditional diagnostics freeze the correct outer measurement state;
+  outer diagnostics explicitly retain finite inner Monte Carlo uncertainty.

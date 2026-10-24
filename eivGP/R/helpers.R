@@ -3840,7 +3840,7 @@ study1_latent_imputation_metrics <- function(eiv_fit,
                                               rep_id,
                                               n_calib,
                                               scenario) {
-  methods <- c("EIV-GP", "Response-free threshold model")
+  methods <- if(is.null(measurement_fit)) "EIV-GP" else c("EIV-GP", "Response-free threshold model")
   U_true <- as.numeric(U_true)
   n_calib <- as.integer(n_calib)
   if (length(n_calib) != 1L || is.na(n_calib) || n_calib < 0L ||
@@ -3869,9 +3869,9 @@ study1_latent_imputation_metrics <- function(eiv_fit,
   }
 
   if (is.null(eiv_fit$mcmc$samples_u) ||
-      is.null(measurement_fit$samples_u) ||
+      (!is.null(measurement_fit) && is.null(measurement_fit$samples_u)) ||
       is.null(eiv_fit$data$miss_idx) ||
-      is.null(measurement_fit$data$miss_idx)) {
+      (!is.null(measurement_fit) && is.null(measurement_fit$data$miss_idx))) {
     stop("Both fitted objects must retain posterior training-U draws.")
   }
   if (!isTRUE(eiv_fit$data$latent_scale_anchored)) {
@@ -3892,11 +3892,11 @@ study1_latent_imputation_metrics <- function(eiv_fit,
 
   miss_idx <- as.integer(eiv_fit$data$miss_idx)
   measurement_miss_idx <- as.integer(measurement_fit$data$miss_idx)
-  if (!identical(miss_idx, measurement_miss_idx)) {
+  if (!is.null(measurement_fit) && !identical(miss_idx, measurement_miss_idx)) {
     stop("EIV-GP and response-free fits must use the same calibration rows.")
   }
   if (ncol(eiv_fit$mcmc$samples_u) != length(U_true) ||
-      ncol(measurement_fit$samples_u) != length(U_true)) {
+      (!is.null(measurement_fit) && ncol(measurement_fit$samples_u) != length(U_true))) {
     stop("Posterior training-U draws do not match the supplied truth.")
   }
   if (length(miss_idx) == 0L) {
@@ -3921,7 +3921,7 @@ study1_latent_imputation_metrics <- function(eiv_fit,
       n_calib = n_calib,
       scenario = scenario
     ),
-    summarize_study1_training_u_draws(
+    if (!is.null(measurement_fit)) summarize_study1_training_u_draws(
       draws = measurement_fit$samples_u[, miss_idx, drop = FALSE],
       truth = U_true[miss_idx],
       method = methods[2L],
@@ -5412,6 +5412,7 @@ study2_simulation_config <- function(
            thin = 1L, n_chains = 4L,
            rhat_limit = 1.01, raw_ess_limit = 400L,
            target_bulk_ess_limit = 400L, target_tail_ess_limit = 400L,
+           ess_min = if(mode == "publication")100 else NULL,
            require_gate = identical(mode, "publication"))
     },
     measurement_mcmc = if (smoke) {
@@ -6242,6 +6243,7 @@ mixedgp_cell_controls_study2 <- function(config, cell, cell_output) {
     STUDY2_PREDICTIVE_LATENT_SAMPLER = config$predictive_latent_sampler,
     STUDY2_ENFORCE_MCMC_GATE = config$mcmc$require_gate,
     STUDY2_MCMC_RHAT_LIMIT = config$mcmc$rhat_limit,
+    STUDY2_ESS_MIN = config$mcmc$ess_min,
     STUDY2_MCMC_RAW_ESS_LIMIT = config$mcmc$raw_ess_limit,
     STUDY2_MCMC_TARGET_BULK_ESS_LIMIT = config$mcmc$target_bulk_ess_limit,
     STUDY2_MCMC_TARGET_TAIL_ESS_LIMIT = config$mcmc$target_tail_ess_limit,
@@ -7441,10 +7443,15 @@ mixedgp_run_simulation <- function(config) {
   if ("aggregate" %in% config$stages) {
     report_env <- new.env(parent = environment())
     report_env$mixedgp_report_run <- mixedgp_report_run
-    tryCatch(report_env$mixedgp_report_run(run_dir, "report", code_dir = config$code_dir),
+    report_status <- tryCatch(report_env$mixedgp_report_run(run_dir, "report", code_dir = config$code_dir),
       error = function(e) warning("Fitting completed, but reporting failed: ", conditionMessage(e),
         ". Use run_numerical_study with action=report to retry without fitting.", call. = FALSE))
   }
+  if(identical(config$study,"study1") && exists("report_status",inherits=FALSE) &&
+     is.data.frame(report_status) && all(report_status$status=="success") &&
+     all(vapply(results,function(z)"scientific_ess_pass" %in% names(z$outputs$mcmc_diagnostics) &&
+       all(z$outputs$mcmc_diagnostics$scientific_ess_pass %in% TRUE),logical(1))))
+    clean_study1_checkpoints(run_dir)
   invisible(out)
 }
 
@@ -7743,8 +7750,14 @@ STUDY1_DESIGN_TAG <- paste0(
   "_f", as.integer(isTRUE(STUDY1_EVALUATE_F)),
   "_u", as.integer(isTRUE(STUDY1_EVALUATE_U))
 )
+STUDY1_AUTO_CONTINUE <- get0("STUDY1_AUTO_CONTINUE", inherits=TRUE, ifnotfound=!STUDY1_QUICK)
+STUDY1_TARGET_ESS <- get0("STUDY1_TARGET_ESS", inherits=TRUE, ifnotfound=100)
+STUDY1_CONTINUE_CHUNK <- get0("STUDY1_CONTINUE_CHUNK", inherits=TRUE, ifnotfound=5000L)
+if (isTRUE(STUDY1_AUTO_CONTINUE) && settings$n_chains<4L)
+  stop("Automatic scientific-target ESS continuation requires four chains.")
 STUDY1_CACHE_SPEC <- list(
-  schema = "s1v9_nonfatal_target_diagnostics",
+  schema = "s1v10_scientific_ess_continuation",
+  continuation=list(enabled=STUDY1_AUTO_CONTINUE,ess_min=STUDY1_TARGET_ESS,chunk_iter=STUDY1_CONTINUE_CHUNK),
   design_label = STUDY1_DESIGN_TAG,
   study1_config = STUDY1_CONFIG,
   scenario = STUDY1_SCENARIO,
@@ -8052,7 +8065,11 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
   if (isTRUE(run_eiv)) {
     for (n_calib in calib_grid) {
       message("Study I replication ", rep_id, ": EIV-GP |O|=", n_calib)
-      fit_eiv <- fit_eivgp_1d(
+      continuation_file <- file.path(RES_DIR,sprintf("continuation_%s_rep%03d_cal%03d.rds",STUDY1_DESIGN_TAG,rep_id,n_calib))
+      final_file <- file.path(RES_DIR,sprintf("fit_rep%03d_cal%03d.rds",rep_id,n_calib))
+      final_saved <- if(file.exists(final_file))read_fit(final_file)else NULL
+      fit_eiv <- if(file.exists(continuation_file))read_fit(continuation_file)$fit else
+        if(!is.null(final_saved) && identical(final_saved$cache_spec$fingerprint,STUDY1_CACHE_SPEC$fingerprint))final_saved$fit else fit_eivgp_1d(
         x_raw = train$x,
         y_raw = train$y,
         c_ord = train$c,
@@ -8070,6 +8087,12 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
         n_cores = chain_cores,
         verbose = FALSE
       )
+      observed_u<-rep(NA_real_,nrow(train));observed_u[calib_sets[[as.character(n_calib)]]]<-train$u[calib_sets[[as.character(n_calib)]]]
+      if(!identical(as.numeric(fit_eiv$data$x_raw),as.numeric(train$x)) ||
+         !identical(as.numeric(fit_eiv$data$y_raw),as.numeric(train$y)) ||
+         !identical(as.integer(fit_eiv$data$c_ord),as.integer(train$c)) ||
+         !identical(as.numeric(fit_eiv$data$u_obs),observed_u))
+        stop("Saved Study I fit does not match this frozen dataset and calibration set.")
       control_key <- as.character(n_calib)
       sampler_controls[[control_key]] <- list(
         control = fit_eiv$control,
@@ -8084,20 +8107,25 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
       )
       sampler_control_manifest[[control_key]] <-
         study1_sampler_control_rows(fit_eiv, rep_id, n_calib)
-      diag_row <- fit_eiv$diagnostics$summary
-      parameter_diag <- mixedgp_study1_raw_diagnostics(
-        fit_eiv, rhat_limit = STUDY1_MAX_RHAT,
-        bulk_ess_limit = STUDY1_MIN_ESS, tail_ess_limit = STUDY1_MIN_ESS
-      )
-      raw_gate_pass <- mixedgp_diagnostic_table_pass(
-        parameter_diag, rhat_limit = STUDY1_MAX_RHAT,
-        bulk_ess_limit = STUDY1_MIN_ESS, tail_ess_limit = STUDY1_MIN_ESS,
-        expected_parameters = names(mixedgp_study1_raw_series(fit_eiv))
-      )
       panel <- mixedgp_study2_diagnostic_rows(
         matrix(test$x, ncol = 1L), matrix(test$c, ncol = 1L),
         max_points = STUDY1_DIAGNOSTIC_N_POINTS
       )
+      if(isTRUE(STUDY1_AUTO_CONTINUE)) {
+        if(file.exists(continuation_file)) {
+          pending<-read_fit(continuation_file)
+          if(!identical(pending$fit$data,fit_eiv$data) || !identical(pending$fit$control,fit_eiv$control))
+            stop("Saved continuation is incompatible with this Study I fit.")
+          fit_eiv<-pending$fit
+        }
+        extended <- continue_eivgp_until_ess(fit_eiv,
+          X=matrix(test$x[panel],ncol=1L),C=test$c[panel],
+          U=if(isTRUE(STUDY1_EVALUATE_F) && STUDY1_HETEROGENEITY_ETA==1)test$u[panel] else NULL,
+          ess_min=STUDY1_TARGET_ESS,chunk_iter=STUDY1_CONTINUE_CHUNK,
+          n_latent=STUDY1_DIAGNOSTIC_N_LATENT,seed=380000L+1000L*rep_id+n_calib,
+          parallel=parallel_chains,n_cores=chain_cores,checkpoint_file=continuation_file)
+        fit_eiv<-extended$fit;target_series<-extended$target_series;target_diag<-extended$diagnostics
+      } else {
       target_series <- mixedgp_study1_target_series(
         fit_eiv, X = matrix(test$x[panel], ncol = 1L), C = test$c[panel],
         U = if (isTRUE(STUDY1_EVALUATE_F) && STUDY1_HETEROGENEITY_ETA == 1) {
@@ -8111,15 +8139,38 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
         target_series, rhat_limit = STUDY1_MAX_RHAT,
         bulk_ess_limit = STUDY1_MIN_ESS, tail_ess_limit = STUDY1_MIN_ESS
       )
+      }
+      diag_row <- fit_eiv$diagnostics$summary
+      parameter_diag <- mixedgp_study1_raw_diagnostics(
+        fit_eiv, rhat_limit = STUDY1_MAX_RHAT,
+        bulk_ess_limit = STUDY1_MIN_ESS, tail_ess_limit = STUDY1_MIN_ESS
+      )
+      raw_gate_pass <- mixedgp_diagnostic_table_pass(
+        parameter_diag, rhat_limit = STUDY1_MAX_RHAT,
+        bulk_ess_limit = STUDY1_MIN_ESS, tail_ess_limit = STUDY1_MIN_ESS,
+        expected_parameters = names(mixedgp_study1_raw_series(fit_eiv))
+      )
       target_gate_pass <- mixedgp_diagnostic_table_pass(
         target_diag, rhat_limit = STUDY1_MAX_RHAT,
         bulk_ess_limit = STUDY1_MIN_ESS, tail_ess_limit = STUDY1_MIN_ESS,
         expected_parameters = names(target_series)
       )
+      # Retain small scientific-target traces for every fit, including good fits.
+      # Full-window diagnostics above are never recomputed on display-thinned traces.
+      trace_n <- length(target_series[[1L]][[1L]])
+      trace_keep <- unique(c(seq.int(1L, trace_n, by=max(1L, ceiling(trace_n/750L))), trace_n))
+      trace_series <- lapply(target_series, function(chains) lapply(chains, function(v) v[trace_keep]))
+      trace_series <- mixedgp_mark_diagnostic_window(trace_series, length(trace_keep)==trace_n)
+      mixedgp_save_artifact(list(schema_version=1L, series=trace_series,
+        iteration=settings$burn+trace_keep, retained_index=trace_keep,
+        panel_rows=panel, test_panel=test[panel,], diagnostics=target_diag,
+        source="retained target functionals from this fit"),
+        file.path(RES_DIR, sprintf("target_traces_rep%03d_cal%03d.rds",rep_id,n_calib)))
       parameter_diag$diagnostic_role <- "raw"
       target_diag$diagnostic_role <- "target"
       parameter_diag <- bind_rows(parameter_diag, target_diag)
-      gate_pass <- raw_gate_pass && target_gate_pass
+      scientific_ess_pass <- mixedgp_scientific_ess_pass(target_diag,STUDY1_TARGET_ESS)
+      gate_pass <- scientific_ess_pass
       max_rhat <- if (nrow(parameter_diag)) max(parameter_diag$rhat) else NA_real_
       min_ess <- if (nrow(parameter_diag)) {
         min(parameter_diag$ess_bulk, parameter_diag$ess_tail)
@@ -8134,10 +8185,16 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
       diag_row$gate_pass <- gate_pass
       diag_row$raw_gate_pass <- raw_gate_pass
       diag_row$target_gate_pass <- target_gate_pass
+      diag_row$scientific_ess_pass <- scientific_ess_pass
       mcmc_diagnostics[[as.character(n_calib)]] <- diag_row
       diag_row$diagnostic_warning <- !isTRUE(gate_pass)
       diag_row$diagnostic_advice <- if (isTRUE(gate_pass)) "" else mixedgp_simulation_diagnostic_advice()
       mcmc_diagnostics[[as.character(n_calib)]] <- diag_row
+      # Keep a final fit with terminal states for every completed inference.
+      mixedgp_checkpoint_write(mixedgp_pack_artifact(list(fit=fit_eiv,diagnostics=parameter_diag,
+        diagnostic_panel_rows=panel,cache_spec=STUDY1_CACHE_SPEC)),
+        file.path(RES_DIR,sprintf("fit_rep%03d_cal%03d.rds",rep_id,n_calib)))
+      if(file.exists(continuation_file))unlink(continuation_file)
       if (!isTRUE(gate_pass)) {
         failure_file <- file.path(RES_DIR,
           sprintf("mcmc_failure_rep%03d_cal%03d.rds", rep_id, n_calib))
@@ -8152,75 +8209,13 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
           mixedgp_simulation_diagnostic_advice(), call. = FALSE
         )
       }
-      draw_ids <- seq_len(nrow(fit_eiv$mcmc$samples_u))
-      if (length(draw_ids) > n_pred_draw) {
-        set.seed(350000L + 1000L * rep_id + n_calib)
-        draw_ids <- sample(draw_ids, n_pred_draw)
-      }
-      eiv_draws <- sample_eiv_test_y(
-        x_test_raw = test$x,
-        c_test = test$c,
-        fit_obj = fit_eiv,
-        draw_ids = draw_ids,
-        n_per_draw = 1L
-      )
-      metrics[[paste0("EIV_", n_calib)]] <- summarize_predictive_samples_1d(
-        eiv_draws, test$y, method = "EIV-GP", rep_id = rep_id,
-        n_calib = n_calib, scenario = STUDY1_SCENARIO
-      )
-      m_draw_ids <- draw_ids
-      if (length(m_draw_ids) > settings$n_m_draw) {
-        set.seed(360000L + 1000L * rep_id + n_calib)
-        m_draw_ids <- sample(m_draw_ids, settings$n_m_draw)
-      }
-      m_draws <- sample_eiv_m_given_xc_1d(
-        x_star_raw = test$x[mean_eval_idx],
-        c_star = test$c[mean_eval_idx],
-        fit_obj = fit_eiv,
-        draw_ids = m_draw_ids,
-        n_latent = settings$n_m_latent,
-        include_process_uncertainty = TRUE,
-        joint = FALSE,
-        return_components = TRUE,
-        seed = 370000L + 1000L * rep_id + n_calib
-      )
-      mean_metrics[[paste0("EIV_", n_calib)]] <-
-        summarize_mean_recovery_1d(
-          m_draws,
-          m_true = m_true,
-          method = "EIV-GP",
-          rep_id = rep_id,
-          n_calib = n_calib,
-          scenario = STUDY1_SCENARIO,
-          valid_function_draws = TRUE
-        )
-      if (isTRUE(STUDY1_EVALUATE_U) &&
-          !is.null(measurement_fits[[as.character(n_calib)]])) {
-        latent_imputation_metrics[[as.character(n_calib)]] <-
-          study1_latent_imputation_metrics(
-            eiv_fit = fit_eiv,
-            measurement_fit = measurement_fits[[as.character(n_calib)]],
-            U_true = train$u,
-            rep_id = rep_id,
-            n_calib = n_calib,
-            scenario = STUDY1_SCENARIO
-          )
-      }
-      if (isTRUE(STUDY1_EVALUATE_F) && n_calib > 0L) {
-        surface_recovery_metrics[[as.character(n_calib)]] <-
-          study1_eiv_surface_recovery_metrics(
-            fit = fit_eiv,
-            scenario = STUDY1_SCENARIO,
-            rep_id = rep_id,
-            n_calib = n_calib,
-            tau_true = dat$tau_true,
-            heterogeneity_eta = STUDY1_HETEROGENEITY_ETA,
-            grid_n_x = if (STUDY1_QUICK) 15L else 31L,
-            grid_n_u = if (STUDY1_QUICK) 21L else 51L,
-            max_draw = if (STUDY1_QUICK) 40L else 200L,
-            seed = 380000L + 1000L * rep_id + n_calib
-          )
-      }
+      scored <- mixedgp_score_study1_fit(fit_eiv, frozen, STUDY1_CACHE_SPEC, rep_id, n_calib,
+        measurement_fits[[as.character(n_calib)]])
+      metrics[[paste0("EIV_",n_calib)]] <- scored$metrics
+      mean_metrics[[paste0("EIV_",n_calib)]] <- scored$mean_recovery
+      latent_imputation_metrics[[as.character(n_calib)]] <- scored$latent_imputation
+      surface_recovery_metrics[[as.character(n_calib)]] <- scored$surface_recovery
+
     }
   }
 
@@ -8279,6 +8274,10 @@ run_or_load_study1_replication <- function(rr) {
         tolower(as.character(cached$metadata$frozen_data_md5)),
         tolower(unname(tools::md5sum(data_path)))
       )
+    if(!is.null(STUDY2_ESS_MIN))cache_valid<-isTRUE(cache_valid) &&
+      identical(cached$metadata$scientific_ess_min,STUDY2_ESS_MIN) &&
+      is.data.frame(cached$diagnostics) && nrow(cached$diagnostics)==length(scenario_calib_grid(scenario)) && "scientific_ess_pass" %in% names(cached$diagnostics) &&
+      all(cached$diagnostics$scientific_ess_pass %in% TRUE)
     if (isTRUE(cache_valid)) { attr(cached,"eivgp_cache_hit") <- TRUE; return(cached) }
     message("Ignoring incompatible Study I cache: ", rep_file)
   }
@@ -8596,6 +8595,7 @@ if (anyNA(c(
   stop("Study II prediction and mean-integration sizes must be positive integers.")
 }
 if (!exists("STUDY2_MCMC_RHAT_LIMIT")) STUDY2_MCMC_RHAT_LIMIT <- 1.01
+if (!exists("STUDY2_ESS_MIN")) STUDY2_ESS_MIN <- NULL
 if (!exists("STUDY2_MCMC_RAW_ESS_LIMIT")) STUDY2_MCMC_RAW_ESS_LIMIT <- 400
 if (!exists("STUDY2_MCMC_TARGET_BULK_ESS_LIMIT")) {
   STUDY2_MCMC_TARGET_BULK_ESS_LIMIT <- 400
@@ -9132,6 +9132,24 @@ run_one_study2_replication <- function(rep_id, scenario) {
     if (isTRUE(STUDY2_CHECKPOINT_FITS) && is.null(saved_fit))
       mixedgp_save_artifact(list(identity=fit_identity,fit=fit),fit_file)
     rm(saved_fit)
+    if(!is.null(STUDY2_ESS_MIN)) {
+      panel<-list(X=test$X[target_gate_test_rows,,drop=FALSE],
+        C=test$C[target_gate_test_rows,,drop=FALSE],
+        U=if(n_calib>0L && isTRUE(STUDY2_EVALUATE_F))test$U[target_gate_test_rows,,drop=FALSE]else NULL,
+        n_latent=STUDY2_MCMC_TARGET_N_LATENT,seed=fit_seed_base+2900L)
+      extension_file<-paste0(fit_file,".ess-state.rds")
+      if(file.exists(extension_file)) {
+        resumed<-mixedgp_read_artifact(extension_file)
+        if(!identical(resumed$settings$X,panel$X)||!identical(resumed$settings$C,panel$C)||
+           !identical(resumed$settings$U,panel$U))stop("Scientific continuation panel mismatch.")
+        fit<-resumed$fit
+      }
+      fit<-mixedgp_finish_ess(fit,STUDY2_ESS_MIN,panel,parallel_chains,chain_cores,extension_file)
+      mixedgp_save_artifact(list(identity=fit_identity,fit=fit),fit_file)
+      mixedgp_save_scientific_trace(fit,file.path(FIT_DIR,sprintf("scientific-trace-%s-%03d-%03d",scenario,rep_id,n_calib)),
+        sprintf("%s | q=%d | replication %d | calibration %d",scenario,length(m_vec),rep_id,n_calib))
+      unlink(extension_file)
+    }
     draw_ids <- seq_len(dim(fit$mcmc$samples_U)[1])
     if (length(draw_ids) > n_pred_draw) {
       draw_ids <- draw_ids[
@@ -9217,7 +9235,7 @@ run_one_study2_replication <- function(rep_id, scenario) {
         valid_function_draws = TRUE
       )
 
-    target_series <- mixedgp_study2_target_series(
+    target_series <- if(!is.null(fit$scientific_ess))fit$scientific_ess$target_series else mixedgp_study2_target_series(
       fit, test$X[target_gate_test_rows, , drop = FALSE],
       test$C[target_gate_test_rows, , drop = FALSE],
       U = if (n_calib > 0L && isTRUE(STUDY2_EVALUATE_F)) {
@@ -9244,8 +9262,8 @@ run_one_study2_replication <- function(rep_id, scenario) {
     invariant_diag$target <- "ordinal_measurement_invariant"
     raw_diag$target <- "raw_coordinate"
     functional_diag$used_for_gate <- TRUE
-    invariant_diag$used_for_gate <- TRUE
-    raw_diag$used_for_gate <- n_calib > 0L
+    invariant_diag$used_for_gate <- is.null(STUDY2_ESS_MIN)
+    raw_diag$used_for_gate <- is.null(STUDY2_ESS_MIN) && n_calib > 0L
     target_diag <- bind_rows(functional_diag, invariant_diag, raw_diag)
     target_diag$rep <- rep_id
     target_diag$scenario <- scenario
@@ -9298,6 +9316,11 @@ run_one_study2_replication <- function(rep_id, scenario) {
     diag_row$invariant_min_tail_ess <- study2_finite_min(invariant_diag$ess_tail)
     diag_row$mcmc_pass <- target_functional_pass && invariant_measurement_pass &&
       (n_calib == 0L || raw_coordinate_pass)
+    if(!is.null(STUDY2_ESS_MIN)) {
+      diag_row$scientific_ess_pass<-mixedgp_scientific_ess_pass(functional_diag,STUDY2_ESS_MIN)
+      diag_row$mcmc_pass<-diag_row$scientific_ess_pass
+      diag_row$mcmc_gate_rule<-paste0("scientific_bulk_and_tail_ESS_strictly_greater_than_",STUDY2_ESS_MIN)
+    }
     diag_row$diagnostic_warning <- !isTRUE(diag_row$mcmc_pass)
     diag_row$diagnostic_advice <- if (isTRUE(diag_row$mcmc_pass)) "" else mixedgp_simulation_diagnostic_advice()
     diagnostics[[as.character(n_calib)]] <- diag_row
@@ -9846,6 +9869,7 @@ run_one_study2_replication <- function(rep_id, scenario) {
       frozen_data_md5 = attr(frozen, "manifest_md5"),
       frozen_manifest = attr(frozen, "manifest_path"),
       cache_tag = CACHE_TAG,
+      scientific_ess_min = STUDY2_ESS_MIN,
       sampler = sampler_controls,
       downstream_monte_carlo = list(
         predictive_draws_requested = n_pred_draw,
@@ -10023,7 +10047,7 @@ report_names <- c(
   "n_m_truth", "n_rep_eff", "n_test", "n_train",
   "pattern_counts", "predictive_latent_sampler", "raw_outputs", "rejection_max_batches",
   "sampler_control_manifest", "scenario_label", "STUDY2_ABLATION_GP_MAXIT", "STUDY2_ABLATION_GP_N_STARTS",
-  "STUDY2_ABLATION_SCENARIOS", "STUDY2_CONTRAST_CALIB", "STUDY2_DESIGN_TAG", "STUDY2_MCMC_RAW_ESS_LIMIT",
+  "STUDY2_ESS_MIN", "STUDY2_ABLATION_SCENARIOS", "STUDY2_CONTRAST_CALIB", "STUDY2_DESIGN_TAG", "STUDY2_MCMC_RAW_ESS_LIMIT",
   "STUDY2_MCMC_RHAT_LIMIT", "STUDY2_MCMC_TARGET_BULK_ESS_LIMIT", "STUDY2_MCMC_TARGET_DRAWS_PER_CHAIN", "STUDY2_MCMC_TARGET_N_LATENT",
   "STUDY2_MCMC_TARGET_N_POINTS", "STUDY2_MCMC_TARGET_TAIL_ESS_LIMIT", "STUDY2_MEAS_BULK_ESS_LIMIT", "STUDY2_MEAS_RHAT_LIMIT",
   "STUDY2_MEAS_TAIL_ESS_LIMIT", "STUDY2_PUBLISHED_COMPETITORS", "STUDY2_RUN_ABLATIONS", "STUDY2_SCENARIOS")
@@ -10622,7 +10646,8 @@ run_numerical_study <- function(config, action=c("plan","data","fit","run","repo
     if(any(status$status!="success")) stop("Reporting failed; inspect status outputs.")
     return(invisible(list(run_dir=run_dir,status=status)))
   }
-  old_checkpoint <- options(eivGP.checkpoint_root=getOption("eivGP.checkpoint_root",
+  old_checkpoint <- options(eivGP.checkpoint_root=if(identical(config$study,"study1"))
+    file.path(mixedgp_run_directory(config),"checkpoints") else getOption("eivGP.checkpoint_root",
     file.path(mixedgp_run_directory(config),"checkpoints")))
   on.exit(options(old_checkpoint),add=TRUE)
   config$stages<-switch(action,data="data",fit=c("data","fit"),run=c("data","fit","aggregate"))
@@ -11159,7 +11184,8 @@ ocean_settings <- function(profile = "paper", action = "plan", folds = 1:5,
   cells = c("O0", "O20", "O50"),
   modules = c("eiv", "original_baselines", "continuation", "complete_case_baselines",
     "prediction", "diagnostics", "surface_comparison"),
-  task_ids = character(), cores = 4L, run_id = "local", continuation_iter = NULL, chains = NULL, iter = NULL, burn = NULL) {
+  task_ids = character(), cores = 4L, run_id = "local", continuation_iter = NULL, chains = NULL, iter = NULL, burn = NULL, ess_min = NULL) {
+  ess_min <- mixedgp_parse_ess_min(ess_min)
   profile <- match.arg(profile, c("paper", "quick", "pilot"))
   action <- match.arg(action, c("plan", "fit", "run", "analyze", "continue", "report"))
   if(action=="run")action<-"fit"
@@ -11170,6 +11196,7 @@ ocean_settings <- function(profile = "paper", action = "plan", folds = 1:5,
   if(burn>=iter)stop("burn must be smaller than iter.")
   if(is.null(chains))chains<-if(profile=="quick")1L else 4L
   chains<-mixedgp_as_integer_strict(chains,"chains",1L,1L)
+  if(!is.null(ess_min) && chains<4L)stop("Scientific ESS requires at least four chains.")
   if(profile=="quick" && chains!=1L)stop("quick uses one chain; choose pilot or paper for multiple chains.")
   if(profile=="paper" && action%in%c("plan","fit","continue") &&
      !identical(c(chains,iter,burn),c(4L,50000L,5000L)))
@@ -11194,7 +11221,7 @@ ocean_settings <- function(profile = "paper", action = "plan", folds = 1:5,
   }
   list(profile = profile, action = action, folds = unique(folds), cells = unique(cells),
     modules = unique(modules), task_ids = unique(task_ids), cores = as.integer(cores),
-    run_id = run_id, continuation_iter = continuation_iter,
+    run_id = run_id, continuation_iter = continuation_iter, ess_min=ess_min,
     iter = iter, burn = burn,
     chains = chains, u_block = 8L)
 }
@@ -11423,7 +11450,7 @@ ocean_identity <- function(repository_dir,data_dir,settings) {
     data=setNames(ocean_hashes(paths),basename(paths)),code=eivgp_module_identity(),packages=versions,
     package_functions=setNames(vapply(functions,function(n)digest::digest(
       paste(deparse(get(n,asNamespace("eivGP"))),collapse="\n"),algo="sha256"),""),functions),
-    numerics=list(iter=settings$iter,burn=settings$burn,chains=settings$chains,u_block=8L,
+    numerics=list(iter=settings$iter,burn=settings$burn,chains=settings$chains,u_block=8L,ess_min=settings$ess_min,
       controls=ocean_cc_controls(settings$profile),n_draw=400L,
       continuation_policy=ocean_continuation_policy(settings$profile)),
     RNG=c("Mersenne-Twister","Inversion","Rejection"))
@@ -11494,6 +11521,7 @@ ocean_run_task <- function(task,repository_dir,output_dir,settings,inputs,identi
   env$root <- output_dir; env$smoke <- settings$profile=="quick"
   env$stage <- settings$action
   env$out <- ocean_path(output_dir,if(env$smoke) "smoke_class4" else "full5_class4")
+  env$ess_min <- settings$ess_min
   env$iter <- settings$iter; env$burn <- settings$burn; env$chains <- settings$chains
   env$cores <- if(env$smoke) 1L else settings$cores; env$u_block <- 8L
   env$baseline_controls <- ocean_cc_controls(settings$profile)
@@ -11860,7 +11888,7 @@ run_eiv <- function(fold, cell, train, test, fold_out) {
   cell_out <- ocean_path(fold_out, cell)
   dir.create(cell_out, showWarnings = FALSE)
   metric_path <- ocean_path(cell_out, "metrics.csv")
-  if (file.exists(metric_path)) return(invisible("reused output"))
+  if (file.exists(metric_path) && !identical(get0("stage",inherits=TRUE),"fit")) return(invisible("reused output"))
   # 1. Assemble X/C and reveal U only on the fixed training-calibration mask.
   x_train <- as.matrix(train[, c("G2salinity", "log_pressure")])
   x_test <- as.matrix(test[, c("G2salinity", "log_pressure")])
@@ -11891,6 +11919,17 @@ run_eiv <- function(fold, cell, train, test, fold_out) {
     capture.output(summary(model), file = ocean_path(cell_out, "fit_summary.txt"))
     model
   }
+  if(identical(get0("stage",inherits=TRUE),"fit") && length(fit$checkpoint$states)>=4L) {
+    rows<-mixedgp_study2_diagnostic_rows(x_test,c_test,5L)
+    panel<-list(X=x_test[rows,,drop=FALSE],C=as.integer(c_test[rows,1L]),
+      U=if(any(mask))test$U[rows]else NULL,n_latent=64L,seed=202610240L+fold*100L+seed_offset)
+    fit<-mixedgp_application_ess(fit,get0("ess_min",inherits=TRUE),panel,
+      ocean_path(cell_out,"scientific-ess-state.rds"),cores)
+    atomic_rds(fit,fit_path)
+    mixedgp_save_scientific_trace(fit,ocean_path(cell_out,"scientific-trace-targets"),
+      sprintf("Ocean | fold %d | %s",fold,cell))
+    unlink(ocean_path(cell_out,"scientific-ess-state.rds"))
+  }
   diagnostic_parts <- lapply(
     fit$diagnostics[c("rhat_hyper", "rhat_tau", "rhat_u")],
     function(z) z[, c("parameter", "rhat", "ess_bulk", "ess_tail", "target_pass"),
@@ -11899,7 +11938,8 @@ run_eiv <- function(fold, cell, train, test, fold_out) {
   atomic_csv(diagnostics, ocean_path(cell_out, "convergence_parameters.csv"))
   finite_rhat <- diagnostics$rhat[is.finite(diagnostics$rhat)]
   finite_ess <- diagnostics$ess_bulk[is.finite(diagnostics$ess_bulk)]
-  atomic_csv(data.frame(max_finite_rhat = if (length(finite_rhat)) max(finite_rhat) else NA_real_,
+  atomic_csv(data.frame(iterations=fit$checkpoint$iteration,
+                        max_finite_rhat = if (length(finite_rhat)) max(finite_rhat) else NA_real_,
                         min_finite_ess_bulk = if (length(finite_ess)) min(finite_ess) else NA_real_,
                         limited_screen_pass = length(finite_rhat) > 0L && length(finite_ess) > 0L &&
                           max(finite_rhat) <= 1.01 && min(finite_ess) >= 400),
@@ -12616,6 +12656,7 @@ aggregate_scores <- function(jobs,root) {
       write.csv(summarize_pairs(si,keys),file.path(root,"interaction_summary.csv"),row.names=FALSE)
     }
   }
+  F("mixedgp_cut_trace_report")(root)
   mechanism_report(root)
   invisible(sums)
 }
@@ -12653,6 +12694,10 @@ mechanism_report <- function(root) {
   }
   if(nrow(timing))body<-c(body,"<h2>Stage wall times (seconds)</h2>",table(timing))
   body<-c(body,"<p>Inspect measurement_diagnostics.csv and full/conditional diagnostic CSVs alongside flags. integration_stability.csv compares two subsets of prediction components; it is an integration sensitivity screen, not an R-hat or a proof of stationarity. Full chains, failure records and checkpoints are retained.</p>")
+  figures<-list.files(file.path(root,"cut-traces"),"[.]png$",full.names=TRUE)
+  if(length(figures))body<-c(body,"<h2>CUT scientific traces (descriptive; no ESS requirement)</h2>",
+    "<p>Conditional GP traces cover every retained iteration with the outer measurement state fixed. Outer traces summarize the retained integration states, with finite inner Monte Carlo error; they are not the full measurement-chain history. No fit is continued or excluded on these diagnostics.</p>",
+    vapply(figures,function(p)paste0("<img style='width:100%' src='cut-traces/",basename(p),"'>"),character(1)))
   writeLines(body,file.path(root,"report.html"))
   invisible(file.path(root,"report.html"))
 }
@@ -12760,12 +12805,26 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
             passed<-record_gp_diagnostics(fit,sub("rds$","diagnostics.csv",cp),TRUE)
             atomic_rds(list(pass=passed,states=select_gp(fit,cfg$inner_draws,meas$states[[b]])),sp)
           }
+          if(job$rep==min(cfg$reps) && b==1L) {
+            fit<-F("mixedgp_read_artifact")(cp)
+            rows<-F("mixedgp_study2_diagnostic_rows")(dat$test$X,dat$test$C,5L)
+            series<-F("mixedgp_cut_conditional_series")(fit,meas$states[[b]],
+              dat$test$X[rows,,drop=FALSE],dat$test$C[rows,,drop=FALSE],dat$test$U[rows,,drop=FALSE],
+              n_latent=cfg$latent,seed=base_seed+2900L)
+            diagnostic_fit<-fit
+            diagnostic_fit$scientific_ess<-list(target_series=series,diagnostics=F("mixedgp_summarize_diagnostic_series")(series),
+              scope="conditional_gp",success=NA)
+            F("mixedgp_save_scientific_trace")(diagnostic_fit,file.path(folder,"scientific-trace-cut-conditional"),
+              sprintf("CUT conditional GP | rep %d | calibration %d | outer state 1",job$rep,job$calib))
+          }
           # Preserve full chain histories as well as selected integration states.
           saved<-retire_conditional_fit(cp,sp)
           passes<-c(passes,saved$pass)
           states<-c(states,saved$states)
         }
         pred<-stage_time(folder,"prediction",gp_evaluate(states,dat$train,dat$test,cfg,base_seed+300000L))
+        F("mixedgp_cut_outer_trace")(pred,states,dat$test,cfg,folder,
+          sprintf("CUT outer integration | rep %d | calibration %d",job$rep,job$calib))
         # Keep every measurement draw for imputation, not just integration states.
         mis<-which(!complete.cases(Uobs));arr<-meas$trace[,,seq_len(length(mis)*2),drop=FALSE]
         pred$U<-array(NA_real_,c(dim(arr)[1]*4,nrow(Uobs),2));pred$U[,mis,]<-matrix(arr,ncol=length(mis)*2)
@@ -12797,7 +12856,8 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
         pred<-stage_time(folder,"cc-fit-predict",cc_evaluate(job$method,dat$train,dat$test,cal,readRDS(up),cfg,base_seed+500000L,file.path(folder,"fit.rds")))
         if(!is.null(pred$optimization_status)&&grepl("nonconverged",pred$optimization_status))passes<-c(passes,FALSE)
       }
-      atomic_rds(list(pass=all(passes),checks=passes,profile=cfg$profile,
+      atomic_rds(list(pass=all(passes),checks=passes,profile=cfg$profile,ess_required=FALSE,
+        diagnostic_scope=if(job$method=="CUT")"Measurement and conditional screens are descriptive, not final CUT precision certification"else"descriptive",
         optimizer_status=pred$optimization_status,
         measurement_pass=if(job$method=="CUT"||grepl("-CC$",job$method))diagnostic_pass(meas$diagnostics)else NA,
         note="MCMC screening only; also inspect target stability and nested integration error before publication"),file.path(folder,"diagnostics.rds"))
@@ -14179,6 +14239,18 @@ adni_plan_fit_task <- function(task, inputs, out, s, extend = FALSE) {
     }
     if (fit$checkpoint$burn != s$burn || length(fit$checkpoint$states) != s$chains)
         stop("Saved fit settings differ.")
+    if(isTRUE(s$final_stage) && length(fit$checkpoint$states)>=4L) {
+      X<-as.matrix(z$test[,z$x,drop=FALSE]);C<-as.matrix(z$test[,z$c,drop=FALSE])
+      rows<-mixedgp_study2_diagnostic_rows(X,C,5L)
+      panel<-list(X=X[rows,,drop=FALSE],C=C[rows,,drop=FALSE],
+        U=if(task$cell!="O0")as.matrix(z$test[rows,z$u,drop=FALSE])else NULL,
+        n_latent=64L,seed=z$protocol$seeds$prediction)
+      fit<-mixedgp_application_ess(fit,s$ess_min,panel,file.path(dirname(path),"scientific-ess-state.rds"),s$cores)
+      adni_plan_save_fit(fit,path)
+      mixedgp_save_scientific_trace(fit,file.path(dirname(path),"scientific-trace-targets"),
+        sprintf("ADNI | fold %d | %s",task$fold,task$cell))
+      unlink(file.path(dirname(path),"scientific-ess-state.rds"))
+    }
     dg <- adni_plan_diagnostics(fit)
     ocean_atomic_csv(dg$parameters, file.path(dirname(path), "diagnostic_parameters.csv"))
     ocean_atomic_csv(dg$summary, file.path(dirname(path), "diagnostic_summary.csv"))
@@ -14187,7 +14259,7 @@ adni_plan_fit_task <- function(task, inputs, out, s, extend = FALSE) {
 
 adni_plan_diagnostics <- function(fit) {
     parts <- fit$diagnostics[grep("^rhat_", names(fit$diagnostics))]
-    parts <- Filter(function(z) is.data.frame(z) && all(c("parameter", "rhat", "ess_bulk", "ess_tail") %in% names(z)),
+    parts <- Filter(function(z) is.data.frame(z) && nrow(z)>0L && all(c("parameter", "rhat", "ess_bulk", "ess_tail") %in% names(z)),
         parts)
     d <- do.call(rbind, lapply(names(parts), function(n) {
         z <- parts[[n]][, c("parameter", "rhat", "ess_bulk", "ess_tail")]
@@ -14750,7 +14822,7 @@ adni_report_prepare <- function(repo,data_dir,output_dir,settings,report_source=
     prospective_metrics=adni_bind(pm),method_status=adni_bind(statuses),paths=paths)
   if(nrow(analysis$convergence)) {
     nums<-unique(analysis$convergence[,c('iterations','burn','chains')])
-    if(nrow(nums)!=1L)stop('Selected report stage mixes chain budgets')
+    nums<-mixedgp_application_numerics(nums)
     analysis$numerics<-nums
     analysis$settings$chains<-as.integer(nums$chains)
     analysis$settings$iter<-as.integer(nums$iterations)
@@ -15035,7 +15107,7 @@ adni_saved_functionals <- function(a) {
     }else {
       cat('Read-only functionals fold',f,cell,'\n');flush.console()
       fit<-a$api$adni_plan_read_fit(path$fit)
-      stopifnot(fit$checkpoint$iteration==a$numerics$iterations,fit$checkpoint$burn==a$numerics$burn)
+      stopifnot(if(is.null(fit$scientific_ess$settings$ess_min))fit$checkpoint$iteration==a$numerics$iterations else fit$checkpoint$iteration>=a$numerics$iterations,fit$checkpoint$burn==a$numerics$burn)
       info<-fit$mcmc$mcmc_draw_info
       ids<-unlist(lapply(split(seq_len(nrow(info)),info$chain),function(v)
         v[unique(round(seq(1,length(v),length.out=min(length(v),a$settings$functional_draws_per_chain))))]),use.names=FALSE)
@@ -15178,7 +15250,7 @@ adni_cli_params <- function(args) {
   allowed<-c('cores','profile','dataset','data_root','data_dir','output','output_dir','config','manifest',
     'chains','iter','burn','stages','folds','cells','draws_per_chain','first_checkpoint','checkpoint_step',
     'baseline_profile','sampler_o0','sampler_o20','sampler_o50','representative_fold','appendix',
-    'plan','reuse_only','report_source','report_dir','functional_draws_per_chain','n_latent','run_id')
+    'plan','reuse_only','report_source','report_dir','functional_draws_per_chain','n_latent','run_id','ess_min')
   p<-list()
   for(a in args) {
     if(!grepl('^--[^=]+=.+$',a))stop('Use --name=value: ',a)
@@ -15217,6 +15289,8 @@ adni_settings <- function(profile='pilot',cores=4L,...) {
     checkpoint_step=1000L,baseline_profile=if(profile=='quick')'quick'else'paper',
     sampler_o0='HMC',sampler_o20='HMC',sampler_o50='ESS',representative_fold=1L,
     appendix=TRUE,functional_draws_per_chain=64L,n_latent=256L,run_id='local')),overrides)
+  s$ess_min<-mixedgp_parse_ess_min(s$ess_min)
+  if(!is.null(s$ess_min) && as.numeric(s$chains)<4L)stop('Scientific ESS requires at least four chains.')
   for(n in c('cores','chains','iter','draws_per_chain','checkpoint_step','representative_fold',
              'functional_draws_per_chain','n_latent'))s[[n]]<-adni_integer(s[[n]],n)
   s$burn<-adni_integer(s$burn,'burn',0L);s$folds<-adni_integer_list(s$folds,'folds')
@@ -15244,13 +15318,18 @@ adni_method_run <- function(repo,params,group) {
   }
   get<-function(n,default)if(is.null(params[[n]]))default else params[[n]]
   if(!is.null(params$manifest)) {
+    if(!is.null(params$ess_min)) {
+      declared<-jsonlite::fromJSON(adni_resolve_path(params$manifest,repo))$ess_min
+      if(!identical(mixedgp_parse_ess_min(params$ess_min),mixedgp_parse_ess_min(declared)))
+        stop('--ess-min must match the supplied manifest; set ess_min in that manifest.')
+    }
     env<-adni_load_api(repo)
     return(env$adni_screen_run(repo,list(manifest=adni_resolve_path(params$manifest,repo),
       cores=adni_integer(get('cores',4L),'cores'),plan=isTRUE(params$plan),reuse_only=isTRUE(params$reuse_only)),group))
   }
   fields<-c('chains','iter','burn','stages','folds','cells','draws_per_chain','first_checkpoint','checkpoint_step',
     'baseline_profile','sampler_o0','sampler_o20','sampler_o50','representative_fold','appendix',
-    'functional_draws_per_chain','n_latent','run_id')
+    'functional_draws_per_chain','n_latent','run_id','ess_min')
   s<-do.call(adni_settings,c(list(profile=get('profile','pilot'),cores=get('cores',4L)),params[intersect(names(params),fields)]))
   dataset<-get('dataset','adni')
   if(!grepl('^[A-Za-z0-9][A-Za-z0-9_-]*$',dataset))stop('Invalid dataset name')
@@ -15272,7 +15351,7 @@ adni_method_run <- function(repo,params,group) {
     package_version=as.character(packageVersion('eivGP')),
     baseline_profile=s$baseline_profile,trial_id=dataset,smoke=s$profile=='quick',
     output_root=file.path(out,'workflow'),cores=s$cores,chains=s$chains,stages=s$stages,burn=s$burn,
-    first_checkpoint=s$first_checkpoint,checkpoint_step=s$checkpoint_step,draws_per_chain=s$draws_per_chain,
+    first_checkpoint=s$first_checkpoint,checkpoint_step=s$checkpoint_step,draws_per_chain=s$draws_per_chain,ess_min=s$ess_min,
     samplers=list(O0=s$sampler_o0,O20=s$sampler_o20,O50=s$sampler_o50),folds=s$folds,cells=s$cells,
     cases=list(list(id=p$plan_id,input=input,output=out,C=p$C_order,N=inp$N,q=p$q)),frozen_inputs=files)
   if(isTRUE(params$plan)) {
@@ -15346,6 +15425,8 @@ adni_screen_settings <- function(m,iter,cores) {
     cores=as.integer(cores),chains=as.integer(get('chains',4L)),iter=as.integer(iter),burn=as.integer(m$burn),
     first_checkpoint=as.integer(min(iter,get('first_checkpoint',if(smoke)iter else m$burn+250L))),
     checkpoint_step=as.integer(get('checkpoint_step',1000L)),
+    ess_min=if(iter==max(unlist(m$stages)))mixedgp_parse_ess_min(m$ess_min)else NULL,
+    final_stage=iter==max(unlist(m$stages)),
     draws_per_chain=as.integer(get('draws_per_chain',if(smoke)5L else 250L)),protocol=m$trial_id,
     samplers=get('samplers',list(O0='HMC',O20='HMC',O50='ESS')))
 }
@@ -15354,6 +15435,8 @@ adni_screen_manifest <- function(path,api) {
   if(!m$schema%in%c('adni-screening-v2','adni-application-v1')||!length(m$cases))stop('Unsupported ADNI manifest')
   if(m$schema=='adni-screening-v2'&&!isTRUE(m$smoke)&&
     (m$burn!=500L||!identical(as.integer(unlist(m$folds)),1:5)))stop('Production screening requires all five folds and burn500')
+  m$ess_min<-mixedgp_parse_ess_min(m$ess_min)
+  if(!is.null(m$ess_min) && !is.null(m$chains) && m$chains<4L)stop('Scientific ESS requires four chains.')
   stages<-unlist(m$stages)
   if(!length(stages)||any(!is.finite(stages))||any(stages!=as.integer(stages))||any(diff(stages)<=0)||
     length(m$burn)!=1L||!is.finite(m$burn)||m$burn<0||m$burn!=as.integer(m$burn)||min(stages)<=m$burn)stop('Invalid stage budgets')
@@ -15481,7 +15564,7 @@ adni_screen_run <- function(repo,p,group) {
   writeLines(as.character(Sys.getpid()),file.path(lock,'pid'));on.exit(unlink(lock,recursive=TRUE),add=TRUE)
   code<-file.path(repo,'eivGP/R/helpers.R')
   base_id<-list(schema='adni-upstream-screening-v2',trial=m$trial_id,modules=api$eivgp_module_identity(),
-    application=unname(tools::md5sum(code)),burn=m$burn,stages=unlist(m$stages),smoke=isTRUE(m$smoke),
+    application=unname(tools::md5sum(code)),burn=m$burn,stages=unlist(m$stages),smoke=isTRUE(m$smoke),ess_min=m$ess_min,
     chains=if(is.null(m$chains))4L else as.integer(m$chains),
     samplers=if(is.null(m$samplers))list(O0='HMC',O20='HMC',O50='ESS')else m$samplers,
     baseline_profile=if(is.null(m$baseline_profile))if(isTRUE(m$smoke))'pilot'else'paper'else m$baseline_profile,
@@ -15518,12 +15601,15 @@ adni_screen_run <- function(repo,p,group) {
       if(t$kind=='eiv'){
         path<-api$adni_plan_fit_path(out,t)
         if(evaluate){
-          if(!file.exists(path)||api$adni_plan_read_fit(path)$checkpoint$iteration!=iter)stop('Exact stage checkpoint unavailable for evaluation')
+          if(!file.exists(path))stop('Stage checkpoint unavailable for evaluation')
+          actual<-api$adni_plan_read_fit(path)$checkpoint$iteration
+          if(is.null(s$ess_min) && actual!=iter || !is.null(s$ess_min) && actual<iter)stop('Stage checkpoint unavailable for evaluation')
+          s$iter<-actual
           api$analyze_cell(t,inp,out,s,stage);folder<-file.path(out,stage,'analysis',sprintf('fold%02d',t$fold),t$cell)
         }else{
           if(file.exists(path)){
             fit<-api$adni_plan_read_fit(path)
-            if(fit$checkpoint$iteration>iter)stop('Cannot refit an earlier stage after continuation; restore its completed evaluation receipt')
+            if(fit$checkpoint$iteration>iter && is.null(s$ess_min))stop('Cannot refit an earlier stage after continuation; restore its completed evaluation receipt')
             if(fit$checkpoint$burn!=s$burn||fit$control$sampler!=s$samplers[[t$cell]])stop('Checkpoint sampler/burn differs')
           }
           api$adni_plan_fit_task(t,inp,out,s,extend=FALSE);folder<-NULL
@@ -15547,6 +15633,7 @@ adni_screen_run <- function(repo,p,group) {
     }else if(any(status$state=='FAILED'))warning('Comparator failures retained; saved results remain available.')
     adni_screen_collect(m,api)
   }
+  for(z in m$cases)mixedgp_application_trace_report(z$output,file.path(z$output,'reports','scientific-traces'))
   invisible(adni_screen_collect(m,api))
 }
 
@@ -15587,4 +15674,442 @@ run_adni_application <- function(repository_dir,params=list(),group=c('report','
   group<-match.arg(group)
   api<-adni_workflow_api(repository_dir)
   api$adni_method_run(repository_dir,params,group)
+}
+
+# Score one existing fit; this function never fits any model.
+mixedgp_score_study1_fit <- function(fit_eiv, frozen, cache_spec, rep_id, n_calib,
+                                    measurement_fit=NULL) {
+  # Use the original fixed eight-state prediction streams even in serial replay.
+  release_budget<-mixedgp_budget_enter(1L);on.exit(release_budget(),add=TRUE)
+  dat<-frozen$data;train<-dat$train;test<-dat$test
+  settings<-list(n_m_eval=cache_spec$mean_recovery$n_eval,
+    n_m_draw=cache_spec$mean_recovery$n_draw,n_m_latent=cache_spec$mean_recovery$n_latent)
+  n_pred_draw<-cache_spec$prediction$n_draw
+  STUDY1_SCENARIO<-cache_spec$scenario
+  STUDY1_HETEROGENEITY_ETA<-cache_spec$heterogeneity_eta
+  STUDY1_EVALUATE_F<-cache_spec$task_flags$evaluate_f
+  STUDY1_EVALUATE_U<-cache_spec$task_flags$evaluate_u
+  STUDY1_QUICK<-identical(cache_spec$study1_config,"quick")
+  set.seed(240000L+rep_id)
+  mean_eval_idx<-sort(sample(seq_len(nrow(test)),min(settings$n_m_eval,nrow(test))))
+  m_true<-m0_1d(test$x[mean_eval_idx],test$c[mean_eval_idx],tau=dat$tau_true,scenario=STUDY1_SCENARIO)
+  metrics<-mean_metrics<-latent_imputation_metrics<-surface_recovery_metrics<-list()
+  measurement_fits<-setNames(list(measurement_fit),as.character(n_calib))
+      draw_ids <- seq_len(nrow(fit_eiv$mcmc$samples_u))
+      if (length(draw_ids) > n_pred_draw) {
+        set.seed(350000L + 1000L * rep_id + n_calib)
+        draw_ids <- sample(draw_ids, n_pred_draw)
+      }
+      eiv_draws <- sample_eiv_test_y(
+        x_test_raw = test$x,
+        c_test = test$c,
+        fit_obj = fit_eiv,
+        draw_ids = draw_ids,
+        n_per_draw = 1L
+      )
+      metrics[[paste0("EIV_", n_calib)]] <- summarize_predictive_samples_1d(
+        eiv_draws, test$y, method = "EIV-GP", rep_id = rep_id,
+        n_calib = n_calib, scenario = STUDY1_SCENARIO
+      )
+      m_draw_ids <- draw_ids
+      if (length(m_draw_ids) > settings$n_m_draw) {
+        set.seed(360000L + 1000L * rep_id + n_calib)
+        m_draw_ids <- sample(m_draw_ids, settings$n_m_draw)
+      }
+      m_draws <- sample_eiv_m_given_xc_1d(
+        x_star_raw = test$x[mean_eval_idx],
+        c_star = test$c[mean_eval_idx],
+        fit_obj = fit_eiv,
+        draw_ids = m_draw_ids,
+        n_latent = settings$n_m_latent,
+        include_process_uncertainty = TRUE,
+        joint = FALSE,
+        return_components = TRUE,
+        seed = 370000L + 1000L * rep_id + n_calib
+      )
+      mean_metrics[[paste0("EIV_", n_calib)]] <-
+        summarize_mean_recovery_1d(
+          m_draws,
+          m_true = m_true,
+          method = "EIV-GP",
+          rep_id = rep_id,
+          n_calib = n_calib,
+          scenario = STUDY1_SCENARIO,
+          valid_function_draws = TRUE
+        )
+      if (isTRUE(STUDY1_EVALUATE_U)) {
+        latent_imputation_metrics[[as.character(n_calib)]] <-
+          study1_latent_imputation_metrics(
+            eiv_fit = fit_eiv,
+            measurement_fit = measurement_fits[[as.character(n_calib)]],
+            U_true = train$u,
+            rep_id = rep_id,
+            n_calib = n_calib,
+            scenario = STUDY1_SCENARIO
+          )
+      }
+      if (isTRUE(STUDY1_EVALUATE_F) && n_calib > 0L) {
+        surface_recovery_metrics[[as.character(n_calib)]] <-
+          study1_eiv_surface_recovery_metrics(
+            fit = fit_eiv,
+            scenario = STUDY1_SCENARIO,
+            rep_id = rep_id,
+            n_calib = n_calib,
+            tau_true = dat$tau_true,
+            heterogeneity_eta = STUDY1_HETEROGENEITY_ETA,
+            grid_n_x = if (STUDY1_QUICK) 15L else 31L,
+            grid_n_u = if (STUDY1_QUICK) 21L else 51L,
+            max_draw = if (STUDY1_QUICK) 40L else 200L,
+            seed = 380000L + 1000L * rep_id + n_calib
+          )
+      }
+  list(metrics=bind_rows(metrics),mean_recovery=bind_rows(mean_metrics),
+    latent_imputation=bind_rows(latent_imputation_metrics),surface_recovery=bind_rows(surface_recovery_metrics))
+}
+# Refresh a single saved replication after exact continuation; never fit baselines.
+mixedgp_refresh_study1_continuation <- function(run_dir,cell_id,rep_id,n_calib,extended,data_root,ess_min=100) {
+  if(!isTRUE(extended$success) || !mixedgp_scientific_ess_pass(extended$diagnostics,ess_min))
+    stop("Continuation is not scientifically ESS-complete.")
+  cell_dir<-file.path(run_dir,"cells",cell_id)
+  res<-file.path(cell_dir,"results","study1_publication")
+  fit_path<-file.path(res,sprintf("mcmc_failure_rep%03d_cal%03d.rds",rep_id,n_calib))
+  if(!file.exists(fit_path))fit_path<-file.path(res,sprintf("fit_rep%03d_cal%03d.rds",rep_id,n_calib))
+  saved<-read_fit(fit_path);old<-saved$fit;fit<-extended$fit
+  if(!identical(old$data,fit$data) || !identical(old$control,fit$control) || !identical(old$priors,fit$priors))
+    stop("Continuation changed the data, controls or priors.")
+  nold<-old$checkpoint$iteration-old$checkpoint$burn
+  for(name in names(old$mcmc$samples_by_chain))for(i in seq_along(old$mcmc$samples_by_chain[[name]])) {
+    a<-old$mcmc$samples_by_chain[[name]][[i]];b<-fit$mcmc$samples_by_chain[[name]][[i]]
+    if(is.null(a))next
+    prefix<-if(is.null(dim(b)))b[seq_len(nold)] else b[seq_len(nold),,drop=FALSE]
+    if(!identical(a,prefix))stop("Continuation did not preserve the original draws: ",name)
+  }
+  spec<-saved$cache_spec
+  data_path<-file.path(data_root,cell_id,mixedgp_dataset_filename("study1",rep_id,
+    spec$scenario,spec$n_train,spec$n_test,spec$m))
+  manifest<-utils::read.csv(file.path(run_dir,"config","input_manifest.csv"),stringsAsFactors=FALSE)
+  matchrow<-manifest[manifest$cell_id==cell_id & basename(manifest$file)==basename(data_path),,drop=FALSE]
+  if(nrow(matchrow)!=1L || !identical(tolower(as.character(matchrow$md5)),tolower(unname(tools::md5sum(data_path)))))
+    stop("Frozen data identity mismatch.")
+  frozen<-readRDS(data_path)
+  panel<-saved$diagnostic_panel_rows;t<-frozen$data$test
+  expected_U<-if(spec$heterogeneity_eta==1 && isTRUE(spec$task_flags$evaluate_f))t$u[panel]else NULL
+  expected_targets<-saved$diagnostics$parameter[saved$diagnostics$diagnostic_role=="target"]
+  if(!setequal(extended$diagnostics$parameter,expected_targets) ||
+     anyDuplicated(extended$diagnostics$parameter) ||
+     !identical(extended$settings$U,expected_U) ||
+     !identical(extended$settings$X,matrix(t$x[panel],ncol=1L)) ||
+     !identical(extended$settings$C,t$c[panel]) ||
+     extended$settings$n_latent!=spec$diagnostic_panel$n_latent ||
+     extended$settings$seed!=380000L+1000L*rep_id+n_calib)
+    stop("Continuation target panel or integration settings changed.")
+  scored<-mixedgp_score_study1_fit(fit,frozen,spec,rep_id,n_calib)
+  raw<-mixedgp_study1_raw_diagnostics(fit,rhat_limit=spec$mcmc$rhat_limit,
+    bulk_ess_limit=spec$mcmc$ess_limit,tail_ess_limit=spec$mcmc$ess_limit)
+  targets<-extended$diagnostics
+  raw$diagnostic_role<-"raw";targets$diagnostic_role<-"target"
+  tab<-bind_rows(raw,targets);tab$rep<-rep_id;tab$n_calib<-n_calib
+  row<-fit$diagnostics$summary;row$rep<-rep_id;row$n_calib<-n_calib
+  row$gate_max_rhat<-max(tab$rhat);row$gate_min_ess<-min(tab$ess_bulk,tab$ess_tail)
+  row$raw_gate_pass<-mixedgp_diagnostic_table_pass(raw)
+  row$target_gate_pass<-mixedgp_diagnostic_table_pass(targets)
+  row$scientific_ess_pass<-TRUE;row$gate_pass<-TRUE
+  row$diagnostic_warning<-FALSE;row$diagnostic_advice<-""
+  replace<-function(x,y,method=FALSE) {
+    if(!is.data.frame(y)||!nrow(y))return(x)
+    hit<-x$rep==rep_id & x$n_calib==n_calib;hit[is.na(hit)]<-FALSE
+    if(method)hit<-hit & x$method=="EIV-GP"
+    out<-bind_rows(x[!hit,,drop=FALSE],y)
+    out[order(out$rep,out$n_calib,na.last=TRUE),,drop=FALSE]
+  }
+  rep_path<-list.files(file.path(res,"competitor_replications"),
+    pattern=sprintf("^study1_rep%03d_.*[.]rds$",rep_id),full.names=TRUE)
+  if(length(rep_path)!=1L)stop("Expected one saved replication bundle.")
+  bundle<-read_fit(rep_path)
+  for(name in names(scored))bundle[[name]]<-replace(bundle[[name]],scored[[name]],TRUE)
+  bundle$mcmc_diagnostics<-replace(bundle$mcmc_diagnostics,row)
+  bundle$mcmc_parameter_diagnostics<-replace(bundle$mcmc_parameter_diagnostics,tab)
+  provenance<-list(updated_utc=format(Sys.time(),tz="UTC",usetz=TRUE),
+    source_fit_md5=unname(tools::md5sum(fit_path)),initial_iteration=old$checkpoint$iteration,
+    final_iteration=fit$checkpoint$iteration,ess_min=ess_min,history=extended$history,
+    modules=eivgp_module_identity(),data_md5=unname(tools::md5sum(data_path)))
+  bundle$metadata$continuations[[as.character(n_calib)]]<-provenance
+  report_path<-file.path(cell_dir,"report_inputs.rds");report<-readRDS(report_path)
+  mapping<-c(metrics="mc_results",mean_recovery="mean_recovery",latent_imputation="latent_imputation",surface_recovery="surface_recovery")
+  for(name in names(mapping))report$context[[mapping[[name]]]]<-replace(report$context[[mapping[[name]]]],scored[[name]],TRUE)
+  report$context$mcmc_diagnostics<-replace(report$context$mcmc_diagnostics,row)
+  report$context$mcmc_parameter_diagnostics<-replace(report$context$mcmc_parameter_diagnostics,tab)
+  # Persist scores/report inputs before publishing the replacement fit. If interrupted,
+  # the same completed extension can safely replay this deterministic update.
+  mixedgp_save_replication(bundle,rep_path)
+  mixedgp_atomic_save_rds(report,report_path)
+  saved$fit<-fit;saved$diagnostics<-tab;saved$continuation<-provenance
+  mixedgp_checkpoint_write(mixedgp_pack_artifact(saved),fit_path)
+  n<-length(extended$target_series[[1]][[1]]);keep<-unique(c(seq.int(1L,n,by=max(1L,ceiling(n/750L))),n))
+  traces<-lapply(extended$target_series,function(chains)lapply(chains,function(x)x[keep]))
+  traces<-mixedgp_mark_diagnostic_window(traces,length(keep)==n)
+  mixedgp_save_artifact(list(schema_version=1L,series=traces,iteration=fit$checkpoint$burn+keep,
+    retained_index=keep,panel_rows=panel,test_panel=t[panel,],diagnostics=targets,
+    source="full retained history after scientific-target ESS continuation"),
+    file.path(res,sprintf("target_traces_rep%03d_cal%03d.rds",rep_id,n_calib)))
+  invisible(provenance)
+}
+
+#' Continue only Study I fits below the scientific-target ESS requirement
+#' @param path Saved Study I run directory.
+#' @param data_root Frozen Study I data root.
+#' @param continuation_dir Directory for resumable extension states.
+#' @param ess_min Strict bulk and tail ESS lower bound.
+#' @param chunk_iter Additional transitions per chain between checks.
+#' @param n_cores Number of chain workers; fits are processed sequentially.
+#' @param cleanup Remove files under this run's checkpoints after all required
+#'   fits pass and refreshed result exports have been verified. Final fit states remain.
+#' @return Updated run path and an audit of continued fits.
+#' @export
+continue_study1_results <- function(path,data_root,continuation_dir=file.path(path,"continuation"),
+    ess_min=100,chunk_iter=5000L,n_cores=1L,cleanup=TRUE) {
+  path<-mixedgp_study1_report_run_dir(path)
+  release_budget<-mixedgp_budget_enter(n_cores);on.exit(release_budget(),add=TRUE)
+  checkpoint_options<-options(eivGP.checkpoint_root=file.path(path,"checkpoints"),
+    eivGP.checkpoint_seconds=getOption("eivGP.checkpoint_seconds",120))
+  on.exit(options(checkpoint_options),add=TRUE)
+  cfg<-readRDS(file.path(path,"config","resolved_config.rds"))
+  dir.create(continuation_dir,recursive=TRUE,showWarnings=FALSE)
+  audit<-list()
+  for(cell in cfg$cells) {
+    report<-readRDS(file.path(path,"cells",cell$id,"report_inputs.rds"))
+    all<-report$context$mcmc_parameter_diagnostics
+    targets<-all[all$diagnostic_role=="target",,drop=FALSE]
+    keys<-unique(targets[,c("rep","n_calib")])
+    if(nrow(keys)!=cell$n_rep*length(cell$calibration_grid))stop("Missing target diagnostics in ",cell$id)
+    for(j in seq_len(nrow(keys))) {
+      k<-keys[j,];tab<-targets[targets$rep==k$rep & targets$n_calib==k$n_calib,,drop=FALSE]
+      if(mixedgp_scientific_ess_pass(tab,ess_min))next
+      res<-file.path(path,"cells",cell$id,"results","study1_publication")
+      p<-file.path(res,sprintf("mcmc_failure_rep%03d_cal%03d.rds",k$rep,k$n_calib))
+      if(!file.exists(p))p<-file.path(res,sprintf("fit_rep%03d_cal%03d.rds",k$rep,k$n_calib))
+      saved<-read_fit(p);spec<-saved$cache_spec
+      dest<-file.path(continuation_dir,cell$id,sprintf("rep%03d-cal%03d.rds",k$rep,k$n_calib))
+      extended<-if(file.exists(dest))read_fit(dest)else NULL
+      fit<-if(is.null(extended))saved$fit else extended$fit
+      data_path<-file.path(data_root,cell$id,mixedgp_dataset_filename("study1",k$rep,spec$scenario,spec$n_train,spec$n_test,spec$m))
+      t<-readRDS(data_path)$data$test;panel<-saved$diagnostic_panel_rows
+      if(is.null(extended)||!isTRUE(extended$success)||!mixedgp_scientific_ess_pass(extended$diagnostics,ess_min))
+        extended<-continue_eivgp_until_ess(fit,matrix(t$x[panel],ncol=1L),t$c[panel],
+          if(spec$heterogeneity_eta==1 && isTRUE(spec$task_flags$evaluate_f))t$u[panel]else NULL,
+          ess_min=ess_min,chunk_iter=chunk_iter,n_latent=spec$diagnostic_panel$n_latent,
+          seed=380000L+1000L*k$rep+k$n_calib,parallel=n_cores>1,n_cores=n_cores,checkpoint_file=dest)
+      audit[[paste(cell$id,k$rep,k$n_calib,sep="/")]]<-mixedgp_refresh_study1_continuation(path,cell$id,k$rep,k$n_calib,extended,data_root,ess_min)
+    }
+  }
+  # Rebuild all summaries from the updated saved rows; no model is refitted.
+  results<-list()
+  mapping<-c(predictive_metrics="mc_results",mean_recovery="mean_recovery",latent_imputation="latent_imputation",
+    surface_recovery="surface_recovery",ablation_predictive_metrics="ablation_results",ablation_surface_recovery="ablation_surface_recovery",
+    mcmc_diagnostics="mcmc_diagnostics",competitor_status="competitor_status",ablation_status="ablation_status",sampler_control_manifest="sampler_control_manifest")
+  for(cell in cfg$cells) {
+    rp<-file.path(path,"cells",cell$id,"report_inputs.rds");report<-readRDS(rp);ctx<-report$context
+    target<-ctx$mcmc_parameter_diagnostics;target<-target[target$diagnostic_role=="target",,drop=FALSE]
+    d<-ctx$mcmc_diagnostics
+    d$scientific_ess_pass<-vapply(seq_len(nrow(d)),function(i)
+      mixedgp_scientific_ess_pass(target[target$rep==d$rep[i]&target$n_calib==d$n_calib[i],,drop=FALSE],ess_min),logical(1))
+    if(!all(d$scientific_ess_pass)||nrow(d)!=cell$n_rep*length(cell$calibration_grid))stop("Incomplete scientific-target results.")
+    d$gate_pass<-d$scientific_ess_pass;d$diagnostic_warning<-!d$scientific_ess_pass;d$diagnostic_advice<-""
+    ctx$mcmc_diagnostics<-d;report$context<-ctx;mixedgp_atomic_save_rds(report,rp)
+    tables<-file.path(path,"cells",cell$id,"tables")
+    mixedgp_write_diagnostic_tables(d,ctx$mcmc_parameter_diagnostics,tables,"study1",overwrite=TRUE)
+    results[[cell$id]]<-list(cell=cell,outputs=setNames(lapply(mapping,function(n)ctx[[n]]),names(mapping)))
+  }
+  mixedgp_aggregate_results(results,cfg,path)
+  gates<-mixedgp_bind_rows_base(lapply(results,mixedgp_result_gates,config=cfg))
+  mixedgp_atomic_write_csv(gates,file.path(path,"config","diagnostic_gates.csv"))
+  summary_path<-file.path(path,"run_summary.rds");summary<-readRDS(summary_path);summary$gates<-gates
+  summary$continuation_audit<-c(summary$continuation_audit,audit);mixedgp_atomic_save_rds(summary,summary_path)
+  status_path<-file.path(path,"config","cell_status.csv");status<-utils::read.csv(status_path,stringsAsFactors=FALSE)
+  for(cell in cfg$cells)if(all(gates$pass[gates$cell_id==cell$id])) {
+    status$status[status$cell_id==cell$id]<-"success";status$message[status$cell_id==cell$id]<-""
+  }
+  mixedgp_atomic_write_csv(status,status_path)
+  reporting_status<-mixedgp_report_run(path,"report",code_dir=system.file(package="eivGP"))
+  if(any(reporting_status$status!="success"))stop("Reporting incomplete; checkpoints retained.")
+  if(cleanup)clean_study1_checkpoints(path,ess_min=ess_min)
+  invisible(list(run_dir=path,audit=audit))
+}
+
+#' Remove redundant Study I checkpoint files after successful inference
+#' @param path Saved Study I run directory.
+#' @param ess_min Strict scientific-target ESS lower bound.
+#' @return File removal audit, stored outside checkpoints.
+#' @details Requires complete replication scores and full-window target diagnostics
+#'   for every expected fit, and checks final continuation states when present.
+#'   Active locks stop cleanup. Only the run's checkpoints subtree is removed;
+#'   final fit artifacts and continuation states outside that subtree are retained.
+#' @export
+clean_study1_checkpoints <- function(path,ess_min=100) {
+  cfg<-readRDS(file.path(path,"config","resolved_config.rds"))
+  if(!identical(cfg$study,"study1"))stop("Expected a Study I run.")
+  for(cell in cfg$cells) {
+    ctx<-readRDS(file.path(path,"cells",cell$id,"report_inputs.rds"))$context
+    d<-ctx$mcmc_parameter_diagnostics;d<-d[d$diagnostic_role=="target",,drop=FALSE]
+    for(rep in seq_len(cell$n_rep))for(cal in cell$calibration_grid) {
+      tab<-d[d$rep==rep & d$n_calib==cal,,drop=FALSE]
+      fam<-c("m_conditional_mean","m_conditional_variance","predictive_second_moment")
+      if(cal>0L)fam<-c(fam,"prospective_U_mean","prospective_U_second_moment")
+      if(cal>0L && ctx$STUDY1_HETEROGENEITY_ETA==1)fam<-c(fam,"f_conditional_mean","f_conditional_variance")
+      expected<-unlist(lapply(fam,function(f)paste0(f,"[",seq_len(5L),"]")),use.names=FALSE)
+      if(!setequal(tab$parameter,expected) || anyDuplicated(tab$parameter) ||
+         !mixedgp_scientific_ess_pass(tab,ess_min))stop("Checkpoint cleanup requires complete successful scientific-target diagnostics for every fit.")
+      rows<-ctx$mc_results[ctx$mc_results$rep==rep & ctx$mc_results$method=="EIV-GP" & !is.na(ctx$mc_results$n_calib) & ctx$mc_results$n_calib==cal,,drop=FALSE]
+      if(nrow(rows)!=1L || !is.finite(rows$RMSE))stop("Missing final prediction scores; checkpoints retained.")
+    }
+  }
+  root<-file.path(path,"checkpoints")
+  files<-list.files(root,recursive=TRUE,full.names=TRUE,all.files=TRUE,no..=TRUE)
+  if(any(basename(list.dirs(root,recursive=TRUE))=="LOCK"))stop("Active checkpoint lock; cleanup refused.")
+  if(length(files)) {
+    identities<-files[basename(files)=="identity.rds"]
+    if(!length(identities))stop("Unidentified checkpoint files; cleanup refused.")
+    checked<-new.env(parent=emptyenv())
+    for(identity_path in identities) {
+      model<-readRDS(identity_path)$model
+      seed<-model$seed
+      if(length(seed)!=1L || !is.finite(seed))stop("Unidentified checkpoint model; cleanup refused.")
+      rep<-as.integer((seed-300000L)%/%1000L);cal<-as.integer((seed-300000L)%%1000L)
+      verified<-FALSE
+      for(cell in cfg$cells) {
+        if(!rep %in% seq_len(cell$n_rep)||!cal %in% cell$calibration_grid)next
+        folder<-file.path(path,"cells",cell$id,"results","study1_publication")
+        p<-file.path(folder,sprintf("fit_rep%03d_cal%03d.rds",rep,cal))
+        if(!file.exists(p))p<-file.path(folder,sprintf("mcmc_failure_rep%03d_cal%03d.rds",rep,cal))
+        if(!file.exists(p))next
+        if(!exists(p,checked,inherits=FALSE)) {
+          fit<-read_fit(p)$fit;cp<-fit$checkpoint
+          valid<-identical(cp$version,2L) && !is.null(cp$states) && length(cp$states)>=4L &&
+            length(fit$mcmc$samples_by_chain$u)==length(cp$states) &&
+            length(fit$mcmc$samples_by_chain$logtheta)==length(cp$states) &&
+            all(vapply(cp$states,function(st)!is.null(st$state)&&!is.null(st$rng),logical(1))) &&
+            all(vapply(fit$mcmc$samples_by_chain$u,nrow,integer(1))==cp$iteration-cp$burn) &&
+            all(vapply(fit$mcmc$samples_by_chain$logtheta,nrow,integer(1))==cp$iteration-cp$burn)
+          assign(p,list(data=fit$data,iteration=cp$iteration,valid=valid),checked)
+        }
+        saved<-get(p,checked,inherits=FALSE);d<-saved$data
+        if(isTRUE(saved$valid) && saved$iteration>=model$n_iter &&
+           identical(d$x,model$X) && identical(d$y,model$y) &&
+           identical(as.numeric(d$u_obs),as.numeric(model$U_obs)) &&
+           identical(as.integer(d$c_ord),as.integer(model$C)))verified<-TRUE
+      }
+      if(!verified)stop("No matching final fit with complete terminal states; checkpoints retained: ",identity_path)
+    }
+  }
+  audit<-data.frame(file=files,bytes=file.info(files)$size,md5=unname(tools::md5sum(files)),removed=rep(FALSE,length(files)))
+  audit_path<-file.path(path,"config","checkpoint_cleanup.csv")
+  mixedgp_atomic_write_csv(audit,audit_path)
+  if(length(files)) {
+    for(p in files)if(unlink(p)!=0L || file.exists(p))stop("Could not remove checkpoint: ",p)
+    audit$removed<-TRUE;mixedgp_atomic_write_csv(audit,audit_path)
+  }
+  invisible(audit)
+}
+
+
+mixedgp_parse_ess_min <- function(x=NULL) {
+  if(is.null(x)||identical(x,"NULL"))return(NULL)
+  if(is.character(x))x<-suppressWarnings(as.numeric(x))
+  mixedgp_validate_ess_request(x)
+  x
+}
+
+mixedgp_application_ess <- function(fit,ess_min,panel,checkpoint_file,cores=1L) {
+  ess_min<-mixedgp_parse_ess_min(ess_min)
+  if(!is.null(ess_min)) {
+    if(file.exists(checkpoint_file)) {
+      old<-mixedgp_read_artifact(checkpoint_file)
+      if(!identical(old$settings$X,panel$X)||!identical(old$settings$C,panel$C)||!identical(old$settings$U,panel$U)||
+         !identical(old$fit$data,fit$data))stop("Saved scientific continuation identity differs.")
+      if(old$fit$checkpoint$iteration>=fit$checkpoint$iteration)fit<-old$fit
+    }
+    return(mixedgp_finish_ess(fit,ess_min,panel,cores>1L,cores,checkpoint_file))
+  }
+  series<-mixedgp_continuation_target_series(fit,panel$X,panel$C,panel$U,panel$n_latent,panel$seed,cores>1L,cores)
+  fit$scientific_ess<-list(target_series=series,diagnostics=mixedgp_summarize_diagnostic_series(series),
+    settings=c(panel,list(ess_min=NULL)),success=NA,history=data.frame())
+  fit
+}
+
+mixedgp_application_trace_report <- function(root,dest) {
+  index<-list.files(root,'^scientific-trace-.*[.]csv$',recursive=TRUE,full.names=TRUE)
+  if(!length(index))return(character())
+  mixedgp_save_scientific_trace_plots(index,dest)
+}
+
+
+# CUT functionals must hold the outer measurement state fixed; the incidental
+# A/tau draws from the all-inputs-observed conditional GP fit are not CUT draws.
+mixedgp_cut_conditional_series <- function(fit,measurement,X,C,U=NULL,n_latent=64L,seed=1L) {
+  display<-fit
+  by<-display$mcmc$samples_by_chain
+  tau<-flatten_tau(measurement$tau)
+  for(ch in seq_along(by$A)) {
+    n<-dim(by$A[[ch]])[1L]
+    by$A[[ch]]<-array(rep(as.vector(measurement$A),each=n),dim(by$A[[ch]]))
+    by$tau[[ch]]<-matrix(rep(tau,each=n),nrow=n)
+  }
+  display$mcmc$samples_by_chain<-by
+  mixedgp_study2_target_series(display,X,C,U,max_draws_per_chain=Inf,n_latent=n_latent,seed=seed)
+}
+
+mixedgp_cut_outer_trace <- function(pred,states,test,cfg,folder,label) {
+  rows<-mixedgp_study2_diagnostic_rows(test$X,test$C,5L)
+  chain<-vapply(states,function(s)as.integer(s$chain),integer(1))
+  iteration<-vapply(states,function(s)as.integer(s$iteration),integer(1))
+  iterations<-sort(unique(iteration))
+  groups<-split(seq_along(states),paste(chain,iteration,sep="/"))
+  series<-list()
+  for(i in seq_along(rows)) {
+    r<-rows[i]
+    for(family in c("m_conditional_mean","f_conditional_mean","predictive_second_moment")) {
+      values<-if(family=="m_conditional_mean")pred$m_mean[r,]else if(family=="f_conditional_mean")pred$f_mean[r,]else {
+        v<-pred$y_var[r,]+pred$y_mean[r,]^2
+        colMeans(matrix(v,nrow=cfg$gp_response_latent))
+      }
+      stopifnot(length(values)==length(states))
+      series[[paste0(family,"[",i,"]")]]<-lapply(1:4,function(ch)vapply(iterations,function(it) {
+        ids<-groups[[paste(ch,it,sep="/")]]
+        if(!length(ids))stop("Incomplete CUT outer chain history.")
+        mean(values[ids])
+      },numeric(1)))
+    }
+  }
+  series<-mixedgp_mark_diagnostic_window(series,TRUE)
+  tab<-mixedgp_summarize_diagnostic_series(series)
+  # This iteration vector is the complete retained outer integration sequence,
+  # not every measurement transition. Keep that distinction in the plot caption.
+  fake<-list(checkpoint=list(burn=0L,iteration=length(iterations)),
+    scientific_ess=list(target_series=series,diagnostics=tab,scope="outer_integration",success=NA))
+  prefix<-file.path(folder,"scientific-trace-cut-outer")
+  mixedgp_save_scientific_trace(fake,prefix,label)
+  obj<-readRDS(paste0(prefix,".rds"));obj$iteration<-iterations
+  mixedgp_atomic_save_rds(obj,paste0(prefix,".rds"))
+  utils::write.csv(tab,file.path(folder,"cut_outer_target_diagnostics.csv"),row.names=FALSE)
+}
+
+mixedgp_cut_trace_report <- function(root,dest=file.path(root,"cut-traces"),formats=c("png","pdf")) {
+  paths<-character()
+  for(kind in c("conditional","outer")) {
+    index<-list.files(root,paste0("^scientific-trace-cut-",kind,"[.]csv$"),recursive=TRUE,full.names=TRUE)
+    if(!length(index))next
+    made<-mixedgp_save_scientific_trace_plots(index,file.path(dest,kind),formats)
+    for(p in made){target<-file.path(dest,paste0(kind,"_",basename(p)));file.copy(p,target,overwrite=TRUE);paths<-c(paths,target)}
+  }
+  paths
+}
+
+
+mixedgp_application_numerics <- function(nums) {
+  if(nrow(unique(nums[,c("burn","chains"),drop=FALSE]))!=1L)
+    stop("Selected report stage mixes warmup or chain counts.")
+  if(nrow(nums)==1L)return(nums)
+  out<-nums[1,,drop=FALSE]
+  out$iterations<-min(nums$iterations);out$iterations_max<-max(nums$iterations)
+  out
 }

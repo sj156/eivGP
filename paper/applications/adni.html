@@ -481,7 +481,7 @@ compatible with saved fitting identities.</li>
 slice sampling at O50. Core allocation changes execution concurrency,
 not chains, seeds or masks.</li>
 <li><strong>Inputs and outputs:</strong> private prepared folds are read
-from <code>data/adni/inputs</code> or <code>--data-root</code>. Fits,
+from <code>data/adni</code> or <code>--data-root</code>. Fits,
 diagnostics and empirical HTML are written to ignored
 <code>results/</code> or an external directory. Data preparation is
 separate from fitting.</li>
@@ -861,6 +861,11 @@ Supplementary: report export status
 </details>
 <div id="scientific-target-traceplots-and-monte-carlo-precision" class="section level3">
 <h3>Scientific-target traceplots and Monte Carlo precision</h3>
+<p>The optional <code>--ess-min=100</code> setting extends the final
+planned fit until monitored scientific bulk and tail ESS both exceed
+100. The default is <code>NULL</code>. Actual per-fit iterations appear
+in the convergence tables; nominal stage names retain the initially
+requested budget. This precision rule does not certify convergence.</p>
 <p>The same representative fold is selected by configuration, never by
 prediction performance. The observable-mean target uses training-defined
 median X, the modal joint C profile for the other items and C1 grade 2.

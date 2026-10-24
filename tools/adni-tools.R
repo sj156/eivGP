@@ -15,8 +15,89 @@ adni_load_api <- function(repo=.adni_repository) {
     stop('Install eivGP >= 0.4.0.9014 before running this application.')
   ns<-asNamespace('eivGP');e<-new.env(parent=ns)
   evalq({
+# Task folders and shared directories mirror the Ocean flat result layout.
+adni_storage_flat <- function(root) {
+  marker<-base::file.path(root,'_meta','storage-layout.rds')
+  if(!file.exists(marker))return(FALSE)
+  if(!identical(readRDS(marker)$schema,'adni-flat-v1'))stop('Unknown ADNI storage schema: ',marker)
+  TRUE
+}
+adni_storage_init <- function(root,stages) {
+  if(adni_storage_flat(root))return(invisible(root))
+  existing<-if(dir.exists(root))list.files(root,all.files=TRUE,no..=TRUE)else character()
+  # Existing unmarked results retain their original physical layout.
+  if(length(existing))return(invisible(root))
+  dir.create(base::file.path(root,'_meta'),recursive=TRUE,showWarnings=FALSE)
+  mixedgp_atomic_rds(list(schema='adni-flat-v1',stages=as.integer(stages)),
+    base::file.path(root,'_meta','storage-layout.rds'))
+  invisible(root)
+}
+adni_flat_relative <- function(path,stages) {
+  path<-gsub('\\','/',path,fixed=TRUE)
+  stage<-regexec('^(S[0-9]+K?)/analysis/(fold[0-9]+)/(O[0-9]+)(/.*)?$',path)
+  hit<-regmatches(path,stage)[[1]]
+  if(length(hit)) {
+    task<-paste0('eiv_',hit[3],'_',hit[4]);suffix<-hit[5]
+    if(hit[2]!=paste0('S',tail(stages,1L)))task<-paste0(task,'/stages/',hit[2])
+    return(paste0(task,suffix))
+  }
+  path<-sub('^fits/(fold[0-9]+)/(O[0-9]+)(?=/|$)','eiv_\\1_\\2',path,perl=TRUE)
+  cc<-regexec('^CC/(O[0-9]+)/baselines/(fold[0-9]+)/([^/]+)(/.*)?$',path)
+  hit<-regmatches(path,cc)[[1]]
+  if(length(hit))return(paste0('cc_',hit[3],'_',hit[2],'_',gsub('-','',hit[4]),hit[5]))
+  path<-sub('^baselines/(fold[0-9]+)(?=/|$)','baseline_\\1',path,perl=TRUE)
+  path<-sub('^receipts(?=/|$)','_meta/tasks',path,perl=TRUE)
+  path<-sub('^workflow/logs(?=/|$)','logs',path,perl=TRUE)
+  path<-sub('^workflow/reports(?=/|$)','reports/prediction_report',path,perl=TRUE)
+  path<-sub('^report-assets/paper(?=/|$)','reports/paper',path,perl=TRUE)
+  path<-sub('^report-assets/functionals(?=/|$)','reports/diagnostics/functionals',path,perl=TRUE)
+  path<-sub('^report-assets(?=/|$)','reports/diagnostics',path,perl=TRUE)
+  path<-sub('^(reports/(eivGP|competitors))/report-assets/paper(?=/|$)','\\1/paper',path,perl=TRUE)
+  path<-sub('^(reports/(eivGP|competitors))/report-assets(?=/|$)','\\1/diagnostics',path,perl=TRUE)
+  if(grepl('^(application_manifest[.]json|workflow_identity[.]rds|[^/]+_budget[.]txt)$',path))path<-paste0('_meta/',path)
+  path
+}
+adni_path <- function(...,fsep=.Platform$file.sep) {
+  paths<-base::file.path(...,fsep=fsep)
+  vapply(paths,function(path) {
+    candidate<-path
+    repeat {
+      marker<-base::file.path(candidate,'_meta','storage-layout.rds')
+      if(dir.exists(candidate)&&file.exists(marker)) {
+        adni_storage_flat(candidate)
+        if(identical(path,candidate))return(path)
+        rel<-substring(path,nchar(candidate)+2L)
+        return(base::file.path(candidate,adni_flat_relative(rel,readRDS(marker)$stages)))
+      }
+      parent<-dirname(candidate)
+      if(identical(parent,candidate)||candidate=='.')return(path)
+      candidate<-parent
+    }
+  },character(1),USE.NAMES=FALSE)
+}
+adni_workflow_root <- function(out)if(adni_storage_flat(out))out else base::file.path(out,'workflow')
+adni_default_output <- function(dataset,profile,repo) {
+  base::file.path(repo,'results',if(profile=='paper')dataset else paste(dataset,profile,sep='_'))
+}
+adni_snapshot_inputs <- function(input,out,files) {
+  dest<-adni_path(out,'data');meta<-base::file.path(input,'DATASET.json')
+  if(file.exists(meta))files<-c(files,meta)
+  for(source in files) {
+    target<-base::file.path(dest,adni_input_basename(source))
+    if(file.exists(target)) {
+      if(!identical(unname(tools::md5sum(source)),unname(tools::md5sum(target))))
+        stop('Frozen input snapshot differs: ',target)
+    }else {
+      dir.create(dirname(target),recursive=TRUE,showWarnings=FALSE)
+      if(!file.copy(source,target)||!identical(unname(tools::md5sum(source)),unname(tools::md5sum(target))))
+        stop('Could not verify frozen input snapshot: ',target)
+    }
+  }
+  dest
+}
+
 adni_source_files <- function(repo) {
-  file.path(repo,'tools',c('adni-tools.R','adni.R','adni-eivGP.R',
+  adni_path(repo,'tools',c('adni-tools.R','adni.R','adni-eivGP.R',
     'adni-competitors.R','adni-report.R','adni-prepare-folds.R'))
 }
 # ADNI application: data. Reuses package model and sampler functions.
@@ -133,10 +214,31 @@ adni_plan_require <- function() {
         stop("Required ADNI dependency: ", p)
 }
 
+# Flat filenames encode fold and calibration; older prepared trees remain readable.
+adni_input_basename <- function(path) {
+    name <- basename(path)
+    if (name %in% c('train.csv','test.csv','PROTOCOL.json')) {
+        normalized <- gsub('\\', '/', path, fixed=TRUE)
+        hit <- regmatches(normalized, regexec('(fold[0-9]+)/(O[0-9]+)/(private/)?(train[.]csv|test[.]csv|PROTOCOL[.]json)$', normalized))[[1]]
+        if (length(hit)) name <- paste(hit[2], hit[3], hit[5], sep='_')
+    }
+    name
+}
+adni_default_input <- function(dataset,repo) {
+    base::file.path(repo,'data',if(dataset=='adni')'adni'else paste0('adni_',dataset))
+}
+adni_input_files <- function(root,fold,cell) {
+    prefix <- sprintf('fold%02d_%s_',fold,cell)
+    flat <- base::file.path(root,paste0(prefix,c('PROTOCOL.json','train.csv','test.csv')))
+    if (any(file.exists(flat))) return(flat)
+    base::file.path(root,sprintf('fold%02d',fold),cell,c('PROTOCOL.json','private/train.csv','private/test.csv'))
+}
 adni_plan_input_root <- function(path) {
     path <- path.expand(path)
-    if (dir.exists(file.path(path, "MC")))
-        path <- file.path(path, "MC")
+    if (!file.exists(base::file.path(path,'fold01_O0_PROTOCOL.json'))) {
+        if (dir.exists(base::file.path(path,'MC'))) path <- base::file.path(path,'MC')
+        else if (dir.exists(base::file.path(path,'inputs','MC'))) path <- base::file.path(path,'inputs','MC')
+    }
     normalizePath(path, mustWork = TRUE)
 }
 
@@ -152,8 +254,8 @@ adni_plan_inputs <- function(data_dir) {
     for (f in 1:5) {
         by_cell <- list()
         for (cell in c("O0", "O20", "O50")) {
-            dir <- file.path(root, sprintf("fold%02d", f), cell)
-            paths <- file.path(dir, c("PROTOCOL.json", "private/train.csv", "private/test.csv"))
+            dir <- adni_path(root, sprintf("fold%02d", f), cell)
+            paths <- adni_input_files(root,f,cell)
             if (!all(file.exists(paths)))
                 stop("Missing private fold inputs: ", dir)
             p <- jsonlite::fromJSON(paths[1], simplifyVector = TRUE)
@@ -255,7 +357,7 @@ adni_plan_fit_args <- function(z, s) {
         n_chains = s$chains, seed = p$seeds$production, verbose = TRUE)
 }
 
-adni_plan_fit_path <- function(out, task) file.path(out, "fits", sprintf("fold%02d", task$fold), task$cell, "fit.rds")
+adni_plan_fit_path <- function(out, task) adni_path(out, "fits", sprintf("fold%02d", task$fold), task$cell, "fit.rds")
 
 adni_plan_read_fit <- function(path) mixedgp_read_artifact(path)
 
@@ -289,7 +391,7 @@ adni_plan_fit_task <- function(task, inputs, out, s, extend = FALSE) {
         stop('Checkpoint sampler/burn differs')
     }
     target <- s$iter
-    request <- file.path(dirname(path), "continuation_request.rds")
+    request <- adni_path(dirname(path), "continuation_request.rds")
     if (extend) {
         if (is.null(fit))
             stop("Missing initial fit: ", path)
@@ -327,15 +429,15 @@ adni_plan_fit_task <- function(task, inputs, out, s, extend = FALSE) {
       panel<-list(X=X[rows,,drop=FALSE],C=C[rows,,drop=FALSE],
         U=if(task$cell!="O0")as.matrix(z$test[rows,z$u,drop=FALSE])else NULL,
         n_latent=64L,seed=z$protocol$seeds$prediction)
-      fit<-mixedgp_application_ess(fit,s$ess_min,panel,file.path(dirname(path),"scientific-ess-state.rds"),s$cores)
+      fit<-mixedgp_application_ess(fit,s$ess_min,panel,adni_path(dirname(path),"scientific-ess-state.rds"),s$cores)
       adni_plan_save_fit(fit,path)
-      mixedgp_save_scientific_trace(fit,file.path(dirname(path),"scientific-trace-targets"),
+      mixedgp_save_scientific_trace(fit,adni_path(dirname(path),"scientific-trace-targets"),
         sprintf("ADNI | fold %d | %s",task$fold,task$cell))
-      unlink(file.path(dirname(path),"scientific-ess-state.rds"))
+      unlink(adni_path(dirname(path),"scientific-ess-state.rds"))
     }
     dg <- adni_plan_diagnostics(fit)
-    mixedgp_atomic_csv(dg$parameters, file.path(dirname(path), "diagnostic_parameters.csv"))
-    mixedgp_atomic_csv(dg$summary, file.path(dirname(path), "diagnostic_summary.csv"))
+    mixedgp_atomic_csv(dg$parameters, adni_path(dirname(path), "diagnostic_parameters.csv"))
+    mixedgp_atomic_csv(dg$summary, adni_path(dirname(path), "diagnostic_summary.csv"))
     invisible("DONE")
 }
 
@@ -385,9 +487,9 @@ adni_plan_score <- function(draws, point, truth, training_sd) {
 }
 
 adni_plan_baseline <- function(task, inputs, out, s) {
-    dir <- file.path(out, "baselines", sprintf("fold%02d", task$fold), task$method)
-    path <- file.path(dir, "fit.rds")
-    if (all(file.exists(file.path(dir, c("fit.rds", "prediction_draws.rds")))))
+    dir <- adni_path(out, "baselines", sprintf("fold%02d", task$fold), task$method)
+    path <- adni_path(dir, "fit.rds")
+    if (all(file.exists(adni_path(dir, c("fit.rds", "prediction_draws.rds")))))
         return(invisible("DONE"))
     z <- inputs$cells[[paste(task$fold, "O50", sep = "/")]]
     tr <- z$train
@@ -435,14 +537,14 @@ adni_plan_baseline <- function(task, inputs, out, s) {
         pp <- adni_ezgp_predict_covariance_consistent(vx, model)
         point <- yc + ys * pp$Y_hat
         draws <- yc + ys * adni_ezgp_draws(pp$Y_hat, pp$predictive_MSE, 4L * s$draws_per_chain, p$seeds$EzGP_draws)
-        mixedgp_atomic_csv(sel$audit, file.path(dir, "tau_cv_audit.csv"))
-        mixedgp_atomic_csv(sel$candidates, file.path(dir, "tau_cv_candidates.csv"))
+        mixedgp_atomic_csv(sel$audit, adni_path(dir, "tau_cv_audit.csv"))
+        mixedgp_atomic_csv(sel$candidates, adni_path(dir, "tau_cv_candidates.csv"))
     }
     mixedgp_atomic_rds(list(model = model, center = mu, scale = ss, y_center = yc, y_scale = ys), path)
     mm <- cbind(data.frame(fold = task$fold, cell = "OI", method = task$method, protocol = "OI"), adni_plan_score(draws,
         point, te$Y, ys))
-    mixedgp_atomic_csv(mm, file.path(dir, "metrics.csv"))
-    mixedgp_atomic_rds(list(draws = draws, point = point), file.path(dir, "prediction_draws.rds"))
+    mixedgp_atomic_csv(mm, adni_path(dir, "metrics.csv"))
+    mixedgp_atomic_rds(list(draws = draws, point = point), adni_path(dir, "prediction_draws.rds"))
     invisible("DONE")
 }
 
@@ -455,7 +557,7 @@ adni_plan_analyze_cell <- function(task, inputs, out, s) {
     p <- z$protocol
     tr <- z$train
     te <- z$test
-    dir <- file.path(out, "analysis", sprintf("fold%02d", task$fold), task$cell)
+    dir <- adni_path(out, "analysis", sprintf("fold%02d", task$fold), task$cell)
     dir.create(dir, recursive = TRUE, showWarnings = FALSE)
     n <- nrow(fit$mcmc$samples_tau)
     cn <- n%/%s$chains
@@ -473,7 +575,7 @@ adni_plan_analyze_cell <- function(task, inputs, out, s) {
         protocol = protocol), adni_plan_score(draws, point, te$Y, sd(tr$Y)))
     metrics <- score(yd, point, "OI")
     predictions <- data.frame(row = seq_len(nrow(te)), observed_Y = te$Y, predicted_Y = point)
-    mixedgp_atomic_csv(predictions, file.path(dir, "Y_predictions.csv"))
+    mixedgp_atomic_csv(predictions, adni_path(dir, "Y_predictions.csv"))
     if (any(z$available)) {
         if (!isTRUE(fit$data$latent_scale_anchored))
             stop("Unanchored fit cannot receive raw test U.")
@@ -492,17 +594,17 @@ adni_plan_analyze_cell <- function(task, inputs, out, s) {
         else colMeans(cm)
         metrics <- rbind(metrics, score(mixed, mp, "MI"))
         mixedgp_atomic_csv(data.frame(row = seq_len(nrow(te)), observed_Y = te$Y, predicted_Y = mp, U_available = z$available),
-            file.path(dir, "mixed_Y_predictions.csv"))
+            adni_path(dir, "mixed_Y_predictions.csv"))
     }
-    mixedgp_atomic_csv(metrics, file.path(dir, "prediction_metrics.csv"))
+    mixedgp_atomic_csv(metrics, adni_path(dir, "prediction_metrics.csv"))
     dg <- adni_plan_diagnostics(fit)
-    mixedgp_atomic_csv(cbind(fold = task$fold, cell = task$cell, dg$summary), file.path(dir, "convergence.csv"))
-    mixedgp_atomic_csv(dg$parameters, file.path(dir, "diagnostic_parameters.csv"))
+    mixedgp_atomic_csv(cbind(fold = task$fold, cell = task$cell, dg$summary), adni_path(dir, "convergence.csv"))
+    mixedgp_atomic_csv(dg$parameters, adni_path(dir, "diagnostic_parameters.csv"))
     scale <- if (any(tr$calibration == 1L))
         "raw"
     else "model"
     imp <- impute_eivgp(fit, rows = seq_len(nrow(tr)), draw_ids = ids, scale = scale)
-    mixedgp_atomic_rds(list(draws = imp, scale = scale, draw_ids = ids, coordinates = p$U_order), file.path(dir,
+    mixedgp_atomic_rds(list(draws = imp, scale = scale, draw_ids = ids, coordinates = p$U_order), adni_path(dir,
         "U_draws.rds"))
     if (scale == "raw") {
         plots <- tables <- list()
@@ -522,18 +624,18 @@ adni_plan_analyze_cell <- function(task, inputs, out, s) {
                 calibration = tr$calibration, common_hidden = common, true_U = truth, posterior_mean = up, q025 = qq[1,
                   ], q975 = qq[2, ])
         }
-        mixedgp_atomic_csv(do.call(rbind, tables), file.path(dir, "U_metrics.csv"))
-        mixedgp_atomic_csv(do.call(rbind, plots), file.path(dir, "U_predictions.csv"))
+        mixedgp_atomic_csv(do.call(rbind, tables), adni_path(dir, "U_metrics.csv"))
+        mixedgp_atomic_csv(do.call(rbind, plots), adni_path(dir, "U_predictions.csv"))
     }
     if (task$fold == s$folds[1]) {
         series <- mixedgp_v030_raw_series(fit)
         parameters <- head(grep("^(V$|r$|theta_x|tau|A\\[)", names(series), value = TRUE), 6L)
         if (length(parameters) && length(fit$checkpoint$states) >= 2L)
-            ggplot2::ggsave(file.path(dir, "mcmc_trace.png"), plot_mcmc(fit, parameters), width = 10, height = 7,
+            ggplot2::ggsave(adni_path(dir, "mcmc_trace.png"), plot_mcmc(fit, parameters), width = 10, height = 7,
                 dpi = 130)
         else if (length(fit$checkpoint$states) < 2L)
             writeLines("Single-chain workflow check: multi-chain trace diagnostics are unavailable; convergence is not established.",
-                file.path(dir, "MCMC_TRACE_UNAVAILABLE.txt"))
+                adni_path(dir, "MCMC_TRACE_UNAVAILABLE.txt"))
     }
     invisible("DONE")
 }
@@ -543,10 +645,10 @@ adni_plan_analyze_cell <- function(task, inputs, out, s) {
 adni_save_plot <- function(filename, plot, width, height, dpi = 130, ...) {
     input <- paste0(filename, ".plot.rds")
     saveRDS(plot, input)
-    code <- paste0("source(", deparse(file.path(repository_dir,"tools/adni.R")),
+    code <- paste0("source(", deparse(adni_path(repository_dir,"tools/adni.R")),
       ");adni_load_api()$adni_render_plot(commandArgs(TRUE))")
     args <- c('-e', shQuote(code), shQuote(input), shQuote(filename), width, height, dpi)
-    rc <- system2(file.path(R.home("bin"), "Rscript"), args, stdout = paste0(filename, ".render.log"), stderr = paste0(filename,
+    rc <- system2(adni_path(R.home("bin"), "Rscript"), args, stdout = paste0(filename, ".render.log"), stderr = paste0(filename,
         ".render.log"))
     stopifnot(rc == 0L, file.exists(filename), file.info(filename)$size > 1000)
     unlink(input)
@@ -579,8 +681,8 @@ adni_analyze_cell <- function(task, inputs, out, s, stage) {
     tr <- z$train
     te <- z$test
     p <- z$protocol
-    stageout <- file.path(out, stage)
-    dir <- file.path(stageout, "analysis", sprintf("fold%02d", task$fold), task$cell)
+    stageout <- adni_path(out, stage)
+    dir <- adni_path(stageout, "analysis", sprintf("fold%02d", task$fold), task$cell)
     dir.create(dir, recursive = TRUE, showWarnings = FALSE)
     cache <- new.env(parent = emptyenv())
     env <- new.env(parent = environment(api$adni_plan_analyze_cell))
@@ -597,11 +699,11 @@ adni_analyze_cell <- function(task, inputs, out, s, stage) {
             stopifnot(is.null(a$new_y))
             cache$ids <- a$draw_ids
             cache$pure <- r
-            atomic_rds(list(draws = r, draw_ids = a$draw_ids), file.path(dir, "Y_draws.rds"))
+            atomic_rds(list(draws = r, draw_ids = a$draw_ids), adni_path(dir, "Y_draws.rds"))
         }
         else {
             cache$exact <- r
-            atomic_rds(list(draws = r, draw_ids = a$draw_ids), file.path(dir, "known_U_Y_draws.rds"))
+            atomic_rds(list(draws = r, draw_ids = a$draw_ids), adni_path(dir, "known_U_Y_draws.rds"))
         }
         r
     }
@@ -613,7 +715,7 @@ adni_analyze_cell <- function(task, inputs, out, s, stage) {
     fit <- cache$fit
     stopifnot(fit$data$p == length(z$x), fit$data$q == p$q, fit$data$d == length(z$u), all(is.na(fit$data$U_obs_raw[tr$calibration ==
         0, , drop = FALSE])))
-    met <- read.csv(file.path(dir, "prediction_metrics.csv"))
+    met <- read.csv(adni_path(dir, "prediction_metrics.csv"))
     met$stage <- stage
     met$iterations <- s$iter
     met$sampler <- fit$control$sampler
@@ -628,13 +730,13 @@ adni_analyze_cell <- function(task, inputs, out, s, stage) {
         extra$sampler <- fit$control$sampler
         met <- rbind(met, extra)
     }
-    atomic_csv(met, file.path(dir, "prediction_metrics.csv"))
-    dg <- read.csv(file.path(dir, "convergence.csv"))
+    atomic_csv(met, adni_path(dir, "prediction_metrics.csv"))
+    dg <- read.csv(adni_path(dir, "convergence.csv"))
     dg$stage <- stage
     dg$sampler <- fit$control$sampler
     if (!is.null(fit$diagnostics$hmc))
-        atomic_csv(fit$diagnostics$hmc, file.path(dir, "HMC_DIAGNOSTICS.csv"))
-    atomic_csv(dg, file.path(dir, "convergence.csv"))
+        atomic_csv(fit$diagnostics$hmc, adni_path(dir, "HMC_DIAGNOSTICS.csv"))
+    atomic_csv(dg, adni_path(dir, "convergence.csv"))
     cm <- attr(cache$pure, "conditional_means", exact = TRUE)
     per <- nrow(cm)%/%s$chains
     target_diagnostics <- do.call(rbind, lapply(seq_len(ncol(cm)), function(j) {
@@ -642,12 +744,12 @@ adni_analyze_cell <- function(task, inputs, out, s, stage) {
         data.frame(RID = te$RID[j], predicted_Y = mean(a), selected_Rhat = posterior::rhat(a), selected_ESS = posterior::ess_bulk(a),
             selected_MCSE = posterior::mcse_mean(a))
     }))
-    atomic_csv(target_diagnostics, file.path(dir, "PREDICTION_FUNCTION_DIAGNOSTICS.csv"))
+    atomic_csv(target_diagnostics, adni_path(dir, "PREDICTION_FUNCTION_DIAGNOSTICS.csv"))
     if (task$cell != "O0") {
         cal <- tr[tr$calibration == 1, , drop = FALSE]
         hidden <- which(tr$calibration == 0)
-        ui <- read.csv(file.path(dir, "U_predictions.csv"))
-        um <- read.csv(file.path(dir, "U_metrics.csv"))
+        ui <- read.csv(adni_path(dir, "U_predictions.csv"))
+        um <- read.csv(adni_path(dir, "U_metrics.csv"))
         for (j in seq_along(z$u)) {
             truth <- tr[[z$u[j]]]
             ref <- adni_reference_points(cal, tr[hidden, , drop = FALSE], z$c, z$u[j])
@@ -663,8 +765,8 @@ adni_analyze_cell <- function(task, inputs, out, s, stage) {
             ui$hi_std[hit] <- (ui$q975[hit] - mean(truth))/sd(truth)
         }
         um$stage <- stage
-        atomic_csv(um, file.path(dir, "U_metrics.csv"))
-        atomic_csv(ui, file.path(dir, "U_predictions.csv"))
+        atomic_csv(um, adni_path(dir, "U_metrics.csv"))
+        atomic_csv(ui, adni_path(dir, "U_predictions.csv"))
         ct <- as.matrix(te[, z$c, drop = FALSE])
         colnames(ct) <- p$C_order
         prospective <- impute_eivgp(fit, new_C = ct, draw_ids = cache$ids, scale = "raw", seed = p$seeds$prospective_U)
@@ -684,8 +786,8 @@ adni_analyze_cell <- function(task, inputs, out, s, stage) {
             pp[[j]] <- data.frame(RID = te$RID, coordinate = p$U_order[j], true_U = truth, posterior_mean = point,
                 q025 = qq[1, ], q975 = qq[2, ])
         }
-        atomic_csv(do.call(rbind, pm), file.path(dir, "PROSPECTIVE_U_metrics.csv"))
-        atomic_csv(do.call(rbind, pp), file.path(dir, "PROSPECTIVE_U_predictions.csv"))
+        atomic_csv(do.call(rbind, pm), adni_path(dir, "PROSPECTIVE_U_metrics.csv"))
+        atomic_csv(do.call(rbind, pp), adni_path(dir, "PROSPECTIVE_U_predictions.csv"))
         ui$role <- factor(ifelse(ui$calibration == 1, "Observed calibration", "Masked training U"), levels = c("Masked training U",
             "Observed calibration"))
         plot <- ggplot(ui, aes(true_std, mean_std, colour = factor(C1))) + geom_abline(slope = 1, intercept = 0,
@@ -695,13 +797,13 @@ adni_analyze_cell <- function(task, inputs, out, s, stage) {
             labs(x = "Reference U (training SD units; evaluation only)", y = "Posterior mean (training SD units)",
                 colour = "MEMORY3", shape = NULL, title = paste(p$plan_id, "fold", task$fold, task$cell, stage),
                 subtitle = paste(fit$control$sampler, "; CORE pass:", dg$core_pass))
-        adni_save_plot(file.path(dir, "training_U_imputation_std.png"), plot, width = 10, height = 5.3, dpi = 140,
+        adni_save_plot(adni_path(dir, "training_U_imputation_std.png"), plot, width = 10, height = 5.3, dpi = 140,
             bg = "white")
     }
-    else writeLines("O0 is unanchored: no physical-U RMSE or truth-based alignment.", file.path(dir, "O0_SCALE_LIMITATION.txt"))
+    else writeLines("O0 is unanchored: no physical-U RMSE or truth-based alignment.", adni_path(dir, "O0_SCALE_LIMITATION.txt"))
     atomic_json(list(state = "PASS", stage = stage, iterations = s$iter, primary_no_test_U_Y = TRUE, hidden_training_U_masked = TRUE,
         calibration_excluded_from_U_scoring = TRUE, prospective_U_uses_C_not_test_Y = TRUE, sampler = fit$control$sampler),
-        file.path(dir, "EVALUATION_VALIDATION.json"))
+        adni_path(dir, "EVALUATION_VALIDATION.json"))
     rm(fit, cache)
     gc(FALSE)
     invisible("DONE")
@@ -714,7 +816,7 @@ adni_baseline_cell <- function(task, inputs, out, s, cc = FALSE) {
     tr <- source$train
     te <- source$test
     root <- if (cc)
-        file.path(out, "CC", task$cell)
+        adni_path(out, "CC", task$cell)
     else out
     inp <- inputs
     if (cc) {
@@ -732,8 +834,8 @@ adni_baseline_cell <- function(task, inputs, out, s, cc = FALSE) {
         inp$cells[[paste(task$fold, "O50", sep = "/")]] <- z
     }
     api$adni_plan_baseline(task, inp, root, s)
-    dir <- file.path(root, "baselines", sprintf("fold%02d", task$fold), task$method)
-    saved <- readRDS(file.path(dir, "prediction_draws.rds"))
+    dir <- adni_path(root, "baselines", sprintf("fold%02d", task$fold), task$method)
+    saved <- readRDS(adni_path(dir, "prediction_draws.rds"))
     selected <- if (cc)
         which(source$available)
     else seq_len(nrow(te))
@@ -748,9 +850,9 @@ adni_baseline_cell <- function(task, inputs, out, s, cc = FALSE) {
     mm$training_N <- if (cc)
         sum(tr$calibration == 1)
     else nrow(tr)
-    atomic_csv(mm, file.path(dir, "metrics.csv"))
+    atomic_csv(mm, adni_path(dir, "metrics.csv"))
     atomic_csv(data.frame(RID = te$RID, observed_Y = te$Y, predicted_Y = saved$point, scored = seq_len(nrow(te)) %in%
-        selected), file.path(dir, "Y_predictions.csv"))
+        selected), adni_path(dir, "Y_predictions.csv"))
     invisible("DONE")
 }
 
@@ -838,7 +940,7 @@ adni_screen_tasks <- function(m,group,stage='') {
   x<-do.call(rbind,rows);x$id<-paste(x$plan,x$stage,x$kind,x$fold,x$cell,gsub('[+]','_',x$method),sep='__');x
 }
 
-adni_screen_receipt <- function(out,task,phase)file.path(out,'receipts',paste0(phase,'_',task$id,'.rds'))
+adni_screen_receipt <- function(out,task,phase)adni_path(out,'receipts',paste0(phase,'_',task$id,'.rds'))
 
 adni_screen_verified <- function(path,identity) {
   if(!file.exists(path))return(FALSE)
@@ -857,12 +959,12 @@ adni_screen_phase <- function(tasks,phase,cores,api,FUN,status_dir,chains=4L,res
   dir.create(status_dir,recursive=TRUE,showWarnings=FALSE)
   status<-tasks;status$state<-'PENDING';status$detail<-'';status$worker_pid<-NA_integer_;status$seconds<-NA_real_
   outer<-adni_resident_workers(cores,phase,nrow(tasks),chains,resident_limit)
-  publish<-function()api$atomic_csv(status,file.path(status_dir,paste0(phase,'_status.csv')))
+  publish<-function()api$atomic_csv(status,adni_path(status_dir,paste0(phase,'_status.csv')))
   publish()
   # Match the public Ocean executor: resident jobs share the full active-worker pool.
   api$mixedgp_budget_yield(function()api$queue$mixedgp_schedule(seq_len(nrow(tasks)),rep(1L,nrow(tasks)),outer,
     function(i,allocated)api$mixedgp_budget_worker(function(){
-      logpath<-file.path(status_dir,paste0(phase,'_',make.names(tasks$id[i]),'.log'));con<-file(logpath,'at')
+      logpath<-adni_path(status_dir,paste0(phase,'_',make.names(tasks$id[i]),'.log'));con<-file(logpath,'at')
       old_message<-getConnection(sink.number(type='message'));sink(con);sink(con,type='message')
       on.exit({sink(old_message,type='message');sink();close(con)},add=TRUE);t<-proc.time()[3]
       err<-tryCatch({FUN(tasks[i,,drop=FALSE],cores);NULL},error=function(e)conditionMessage(e))
@@ -881,7 +983,7 @@ adni_screen_collect <- function(m,api) {
     for(mark in list.files(z$output,'^EVALUATION_VALIDATION[.]json$',recursive=TRUE,full.names=TRUE)){
       dir<-dirname(mark)
       for(pair in list(c('prediction_metrics.csv','pred'),c('convergence.csv','conv'),c('U_metrics.csv','u'),c('PROSPECTIVE_U_metrics.csv','pros'))){
-        p<-file.path(dir,pair[1]);if(!file.exists(p))next
+        p<-adni_path(dir,pair[1]);if(!file.exists(p))next
         val<-cbind(plan=z$id,read.csv(p));dest<-get(pair[2]);dest[[length(dest)+1L]]<-val;assign(pair[2],dest)
       }
     }
@@ -890,15 +992,15 @@ adni_screen_collect <- function(m,api) {
   }
   bind<-function(x)if(length(x))api$queue$mixedgp_bind(x)else data.frame()
   tables<-list(prediction=bind(pred),convergence=bind(conv),training_U=bind(u),prospective_U=bind(pros))
-  dest<-file.path(m$output_root,'reports');dir.create(dest,recursive=TRUE,showWarnings=FALSE)
-  for(k in names(tables))if(nrow(tables[[k]]))api$atomic_csv(tables[[k]],file.path(dest,paste0(k,'_fold_metrics.csv')))
+  dest<-if(adni_storage_flat(m$output_root))adni_path(m$output_root,'reports','prediction_report')else adni_path(m$output_root,'reports');dir.create(dest,recursive=TRUE,showWarnings=FALSE)
+  for(k in names(tables))if(nrow(tables[[k]]))api$atomic_csv(tables[[k]],adni_path(dest,paste0(k,'_fold_metrics.csv')))
   p<-tables$prediction;summary<-list()
   if(nrow(p))for(ix in split(seq_len(nrow(p)),interaction(p$plan,p$stage,p$cell,p$method,p$protocol,drop=TRUE))){
     x<-p[ix,,drop=FALSE];v<-x$RMSE_SD
     summary[[length(summary)+1L]]<-data.frame(x[1,c('plan','stage','cell','method','protocol')],completed_folds=length(unique(x$fold)),
        RMSE_SD_mean=mean(v),RMSE_SD_SD=if(length(v)>1)sd(v)else NA_real_)
   }
-  five<-bind(summary);if(nrow(five))api$atomic_csv(five,file.path(dest,'fivefold_prediction.csv'))
+  five<-bind(summary);if(nrow(five))api$atomic_csv(five,adni_path(dest,'fivefold_prediction.csv'))
   stability<-list()
   for(kind in names(tables)[names(tables)%in%c('prediction','training_U','prospective_U')]){
     tab<-tables[[kind]];if(!nrow(tab)||!'stage'%in%names(tab))next
@@ -911,17 +1013,17 @@ adni_screen_collect <- function(m,api) {
       z$target<-kind;z$delta_last_minus_first<-z$RMSE_SD_last-z$RMSE_SD_first;stability[[kind]]<-z
     }
   }
-  stable<-bind(stability);if(nrow(stable))api$atomic_csv(stable,file.path(dest,'stage_stability.csv'))
+  stable<-bind(stability);if(nrow(stable))api$atomic_csv(stable,adni_path(dest,'stage_stability.csv'))
   lines<-c('# ADNI screening: saved results',paste('Author: Xinye Chen. Trial',m$trial_id),
     'Partial fold counts and CORE failures remain explicit. Budget completion does not establish convergence.',
     if(nrow(five))capture.output(print(five,row.names=FALSE))else'No completed scores yet.')
-  writeLines(lines,file.path(dest,'REPORT.md'))
+  writeLines(lines,adni_path(dest,'REPORT.md'))
   html<-c('<!doctype html><meta charset="utf-8"><title>ADNI screening</title>',
     '<h1>ADNI screening: saved results</h1><p>Author: Xinye Chen. Partial folds and CORE failures remain explicit; completing a budget does not establish convergence.</p>',
     api$queue$mixedgp_table_html(five,'Response prediction: fold means and sample SD'),
     api$queue$mixedgp_table_html(tables$convergence,'Full-chain CORE diagnostics'),
     api$queue$mixedgp_table_html(stable,'Paired stage stability; descriptive screening only'))
-  writeLines(html,file.path(dest,'index.html'));invisible(tables)
+  writeLines(html,adni_path(dest,'index.html'));invisible(tables)
 }
 
 adni_screen_run <- function(repo,p,group) {
@@ -934,9 +1036,9 @@ adni_screen_run <- function(repo,p,group) {
   }
   root<-m$output_root
   adni_output_check(root,repo)
-  dir.create(root,recursive=TRUE,showWarnings=FALSE);lock<-file.path(root,'.adni-application.lock')
+  dir.create(root,recursive=TRUE,showWarnings=FALSE);lock<-adni_path(root,if(adni_storage_flat(root))'.application.lock'else'.adni-application.lock')
   if(!dir.create(lock,showWarnings=FALSE))stop('ADNI workflow already active: ',lock)
-  writeLines(as.character(Sys.getpid()),file.path(lock,'pid'));on.exit(unlink(lock,recursive=TRUE),add=TRUE)
+  writeLines(as.character(Sys.getpid()),adni_path(lock,'pid'));on.exit(unlink(lock,recursive=TRUE),add=TRUE)
   code<-adni_source_files(repo)
   base_id<-list(schema='adni-upstream-screening-v2',trial=m$trial_id,modules=api$eivgp_module_identity(),
     application=setNames(unname(tools::md5sum(code)),substring(code,nchar(repo)+2L)),burn=m$burn,stages=unlist(m$stages),smoke=isTRUE(m$smoke),ess_min=m$ess_min,
@@ -947,7 +1049,7 @@ adni_screen_run <- function(repo,p,group) {
   identities<-list()
   for(z in m$cases){
     id<-c(base_id,list(plan=z$id,inputs=unname(tools::md5sum(inputs[[z$id]]$files))))
-    identities[[z$id]]<-id;path<-file.path(z$output,'workflow_identity.rds')
+    identities[[z$id]]<-id;path<-adni_path(z$output,'workflow_identity.rds')
     if(file.exists(path)){if(!identical(readRDS(path),id))stop('Saved workflow identity differs; use a new output root')}else if(group!='report'&&!p$reuse_only)api$atomic_rds(id,path)
   }
   required<-list()
@@ -962,10 +1064,10 @@ adni_screen_run <- function(repo,p,group) {
     if(!all(vapply(required,function(r)adni_screen_verified(r$path,r$identity),logical(1))))stop('Saved-only prerequisites incomplete; no fitting or continuation started')
     return(adni_screen_collect(m,api))
   }
-  api$adni_plan_require();job<-file.path(root,'logs',paste0(group,'_',format(Sys.time(),'%Y%m%d_%H%M%S')))
-  old<-options(eivGP.core_events=file.path(job,'core-events'));on.exit(options(old),add=TRUE)
+  api$adni_plan_require();job<-adni_path(root,'logs',paste0(group,'_',format(Sys.time(),'%Y%m%d_%H%M%S')))
+  old<-options(eivGP.core_events=adni_path(job,'core-events'));on.exit(options(old),add=TRUE)
   close<-api$mixedgp_budget_enter(p$cores);on.exit(close(),add=TRUE,after=FALSE);cores<-api$mixedgp_budget_cores()
-  writeLines(paste('Effective shared worker budget',cores,'; public resident-fit scheduling.'),file.path(root,paste0(group,'_budget.txt')))
+  writeLines(paste('Effective shared worker budget',cores,'; public resident-fit scheduling.'),adni_path(root,paste0(group,'_budget.txt')))
   stages<-if(group=='eivGP')unlist(m$stages)else 0L
   for(iter in stages){
     stage<-if(group=='eivGP')paste0('S',iter)else'BASELINE';tasks<-adni_screen_tasks(m,group,stage)
@@ -980,7 +1082,7 @@ adni_screen_run <- function(repo,p,group) {
           actual<-api$adni_plan_read_fit(path)$checkpoint$iteration
           if(is.null(s$ess_min) && actual!=iter || !is.null(s$ess_min) && actual<iter)stop('Stage checkpoint unavailable for evaluation')
           s$iter<-actual
-          api$analyze_cell(t,inp,out,s,stage);folder<-file.path(out,stage,'analysis',sprintf('fold%02d',t$fold),t$cell)
+          api$analyze_cell(t,inp,out,s,stage);folder<-adni_path(out,stage,'analysis',sprintf('fold%02d',t$fold),t$cell)
         }else{
           api$adni_plan_fit_task(t,inp,out,s,extend=FALSE);folder<-NULL
         }
@@ -989,21 +1091,21 @@ adni_screen_run <- function(repo,p,group) {
         failures<-character()
         for(method in methods){one<-t;one$method<-method;tryCatch(api$baseline_cell(one,inp,out,s,cc=t$kind=='cc'),error=function(e)failures<<-c(failures,paste(method,conditionMessage(e))))}
         if(length(failures))stop(paste(failures,collapse='; '))
-        folder<-if(t$kind=='cc')file.path(out,'CC',t$cell,'baselines',sprintf('fold%02d',t$fold),t$method)else file.path(out,'baselines',sprintf('fold%02d',t$fold))
+        folder<-if(t$kind=='cc')adni_path(out,'CC',t$cell,'baselines',sprintf('fold%02d',t$fold),t$method)else adni_path(out,'baselines',sprintf('fold%02d',t$fold))
       }
       files<-if(is.null(folder))character()else sort(list.files(folder,recursive=TRUE,full.names=TRUE))
       api$atomic_rds(list(identity=id,task=t,files=files,md5=unname(tools::md5sum(files)),finished=as.character(Sys.time())),receipt)
     }
     nchains<-if(is.null(m$chains))4L else as.integer(m$chains)
-    status<-adni_screen_phase(tasks,'fit',cores,api,function(t,n)work(t,n),file.path(job,stage),nchains,p$fit_jobs)
+    status<-adni_screen_phase(tasks,'fit',cores,api,function(t,n)work(t,n),adni_path(job,stage),nchains,p$fit_jobs)
     if(group=='eivGP'&&any(status$state=='FAILED'))stop('EIV stage incomplete; checkpoints retained. Inspect ',job)
     if(group=='eivGP'){
-      status<-adni_screen_phase(tasks,'evaluate',cores,api,function(t,n)work(t,n,TRUE),file.path(job,stage),nchains,p$evaluation_jobs)
+      status<-adni_screen_phase(tasks,'evaluate',cores,api,function(t,n)work(t,n,TRUE),adni_path(job,stage),nchains,p$evaluation_jobs)
       if(any(status$state=='FAILED'))stop('EIV evaluation incomplete; continuation not started. Inspect ',job)
     }else if(any(status$state=='FAILED'))warning('Comparator failures retained; saved results remain available.')
     adni_screen_collect(m,api)
   }
-  for(z in m$cases)mixedgp_application_trace_report(z$output,file.path(z$output,'reports','scientific-traces'))
+  for(z in m$cases)mixedgp_application_trace_report(z$output,adni_path(z$output,'reports','scientific-traces'))
   invisible(adni_screen_collect(m,api))
 }
 
@@ -1016,7 +1118,7 @@ adni_trace_diagnostic <- function(values,chain) {
 }
 
 adni_baseline_mean <- function(api,dir,X,C,mvec,method) {
-  a<-readRDS(file.path(dir,'fit.rds'));x<-sweep(sweep(X,2,a$center,'-'),2,a$scale,'/')
+  a<-readRDS(adni_path(dir,'fit.rds'));x<-sweep(sweep(X,2,a$center,'-'),2,a$scale,'/')
   if(method=='UC-GP') {
     nd<-getFromNamespace('make_mixedgp_competitor_data','eivGP')(x,C,mvec)
     mean<-as.numeric(stats::predict(a$model$fit,newdata=nd,type='UK',seCompute=FALSE,lightReturn=TRUE)$mean)
@@ -1027,13 +1129,13 @@ adni_baseline_mean <- function(api,dir,X,C,mvec,method) {
 
 adni_saved_functionals <- function(a) {
   library(ggplot2)
-  dest<-file.path(a$report_dir,'report-assets','functionals');dir.create(dest,recursive=TRUE,showWarnings=FALSE)
+  dest<-adni_path(a$report_dir,'report-assets','functionals');dir.create(dest,recursive=TRUE,showWarnings=FALSE)
   traces<-raw_traces<-curves<-surfaces<-precision<-integration<-list()
   code<-adni_source_files(a$repo)
   summarize_draws<-function(x)data.frame(mean=colMeans(x),lo=apply(x,2,quantile,.025),hi=apply(x,2,quantile,.975))
   for(key in names(a$paths)) {
     path<-a$paths[[key]];f<-path$fold;cell<-path$cell;z<-a$input$cells[[key]];p<-z$protocol
-    cache<-file.path(dest,paste0('fold',f,'_',cell,'.rds'))
+    cache<-adni_path(dest,paste0('fold',f,'_',cell,'.rds'))
     identity<-list(fit=unname(tools::md5sum(path$fit)),inputs=unname(tools::md5sum(a$input$files)),
       code=unname(tools::md5sum(code)),states=a$settings$functional_draws_per_chain,n_latent=a$settings$n_latent,
       analysis_modules=a$api$eivgp_module_identity())
@@ -1130,7 +1232,7 @@ adni_saved_functionals <- function(a) {
   }
   out<-list(curves=adni_bind(c(curves,native)),surfaces=adni_bind(surfaces),traces=adni_bind(traces),
     raw_traces=adni_bind(raw_traces),precision=adni_bind(precision),integration=adni_bind(integration))
-  for(n in names(out))if(nrow(out[[n]]))write.csv(out[[n]],file.path(dest,paste0(n,'.csv')),row.names=FALSE)
+  for(n in names(out))if(nrow(out[[n]]))write.csv(out[[n]],adni_path(dest,paste0(n,'.csv')),row.names=FALSE)
   reference_fold<-a$settings$representative_fold
   plot_curve<-function(x)ggplot(x,aes(x,mean,colour=interaction(method,cell),group=interaction(method,cell)))+
     geom_ribbon(aes(ymin=lo,ymax=hi,fill=interaction(method,cell)),alpha=.06,colour=NA,na.rm=TRUE)+
@@ -1187,7 +1289,7 @@ adni_make_folds <- function(dat) {
 }
 
 adni_read_cohort <- function(data_dir) {
-  path <- file.path(data_dir, "toledo_adni_cohort_n495.csv")
+  path <- adni_path(data_dir, "toledo_adni_cohort_n495.csv")
   if (unname(tools::md5sum(path)) != "d10b980253304620efea9f2a013166a9")
     stop("The cleaned cohort differs from the frozen ADNI cohort: ", path)
   dat <- read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
@@ -1225,25 +1327,25 @@ adni_run_jobs <- function(jobs, FUN, plan, status_path) {
   on.exit(release_budget(),add=TRUE)
   worker <- function(i) {
     fold <- jobs$fold[i]
-    dir <- file.path(jobs$output_root[i], paste0("fold_", fold))
+    dir <- adni_path(jobs$output_root[i], paste0("fold_", fold))
     dir.create(dir, recursive = TRUE, showWarnings = FALSE)
-    lock <- file.path(dir, ".fold-lock")
+    lock <- adni_path(dir, ".fold-lock")
     if (!dir.create(lock, showWarnings = FALSE))
       return(list(ok = FALSE, fold = fold, message = paste("Fold is locked:", lock)))
     on.exit(unlink(lock, recursive = TRUE), add = TRUE)
-    writeLines(paste(Sys.info()[["nodename"]], Sys.getpid()), file.path(lock, "owner"))
-    log <- file(file.path(dir, "worker.log"), open = "at")
+    writeLines(paste(Sys.info()[["nodename"]], Sys.getpid()), adni_path(lock, "owner"))
+    log <- file(adni_path(dir, "worker.log"), open = "at")
     sink(log); sink(log, type = "message")
     on.exit({ sink(type = "message"); sink(); close(log) }, add = TRUE)
     cat("\nWorker start:", as.character(Sys.time()), "PID", Sys.getpid(), "fold", fold, "\n")
-    unlink(file.path(dir, "WORKER_FAILURE.txt"))
+    unlink(adni_path(dir, "WORKER_FAILURE.txt"))
     tryCatch({
       value <- FUN(fold)
       cat("Worker finished:", as.character(Sys.time()), "\n")
       list(ok = TRUE, fold = fold, value = value)
     }, error = function(e) {
       text <- paste("Fold", fold, "failed:", conditionMessage(e))
-      writeLines(text, file.path(dir, "WORKER_FAILURE.txt"))
+      writeLines(text, adni_path(dir, "WORKER_FAILURE.txt"))
       cat(text, "\n")
       list(ok = FALSE, fold = fold, message = text)
     })
@@ -1266,7 +1368,7 @@ adni_run_jobs <- function(jobs, FUN, plan, status_path) {
 adni_run_folds <- function(folds, FUN, plan, output_root) {
   jobs <- data.frame(fold = folds, output_root = output_root)
   values <- adni_run_jobs(jobs, function(fold) FUN(fold), plan,
-                         file.path(output_root, "fold_worker_status.csv"))
+                         adni_path(output_root, "fold_worker_status.csv"))
   setNames(values, as.character(folds))
 }
 
@@ -1312,16 +1414,16 @@ adni_eda <- function(dat, root, smoke) {
     patchwork::plot_annotation(title = if (smoke) "SMOKE RUN - descriptive cohort figure" else
       "ADNI: incomplete CSF measurements and ordinal plasma proxies",
       caption = "Exploratory associations, not causal effects. Proxy classes are constructed from continuous assays.")
-  ggplot2::ggsave(file.path(root, "main", "fig1_exploration.pdf"), fig, width = 12, height = 3.8)
-  ggplot2::ggsave(file.path(root, "main", "fig1_exploration.png"), fig, width = 12, height = 3.8, dpi = 150)
+  ggplot2::ggsave(adni_path(root, "main", "fig1_exploration.pdf"), fig, width = 12, height = 3.8)
+  ggplot2::ggsave(adni_path(root, "main", "fig1_exploration.png"), fig, width = 12, height = 3.8, dpi = 150)
   counts <- as.data.frame(table(z$pattern, z$CSF))
   names(counts) <- c("pattern", "CSF_availability", "n")
-  adni_write_csv(counts, file.path(root, "appendix", "pattern_counts.csv"))
+  adni_write_csv(counts, adni_path(root, "appendix", "pattern_counts.csv"))
   desc <- do.call(rbind, lapply(split(z, z$CSF), function(a) data.frame(
     group = as.character(a$CSF[1]), n = nrow(a), mean_age = mean(a$x_age_years),
     female_fraction = mean(a$x_female), mean_apoe4_dose = mean(a$x_apoe4_dose),
     mean_centiloid = mean(a$y_centiloid), sd_centiloid = sd(a$y_centiloid))))
-  adni_write_csv(desc, file.path(root, "appendix", "cohort_by_CSF_availability.csv"))
+  adni_write_csv(desc, adni_path(root, "appendix", "cohort_by_CSF_availability.csv"))
 }
 
 adni_draw_summary <- function(draws, truth, point_mean = NULL) {
@@ -1443,7 +1545,7 @@ adni_competitors <- function(train, test, n_draw, seed, smoke, path) {
 adni_extended_fold <- function(fit, train, test, draw_ids, fold_dir, cv_folds,
                                 fold, smoke, diagnostic_passed, available_draws,
                                 seed_base = NULL) {
-  out_dir <- file.path(fold_dir, "case-study")
+  out_dir <- adni_path(fold_dir, "case-study")
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   seed <- if (is.null(seed_base)) as.integer(202680000 + cv_folds) else
     as.integer(seed_base)
@@ -1466,26 +1568,26 @@ adni_extended_fold <- function(fit, train, test, draw_ids, fold_dir, cv_folds,
                                diagnostic_passed)
     mm <- adni_metrics(zz); mm$chain <- k; mm
   }))
-  if (nrow(chain_scores)) adni_write_csv(chain_scores, file.path(out_dir, "prediction_scores_by_chain.csv"))
+  if (nrow(chain_scores)) adni_write_csv(chain_scores, adni_path(out_dir, "prediction_scores_by_chain.csv"))
   rows <- list(adni_prediction_rows(no_csf, test, "EIV-GP", "no_test_CSF", cv_folds,
     fold, diagnostic_passed),
     adni_prediction_rows(available_draws, test, "EIV-GP", "available_CSF",
       cv_folds, fold, diagnostic_passed))
   comparison <- adni_competitors(train, test, nrow(no_csf), seed + 1000L, smoke,
-                                file.path(out_dir, "competitors.rds"))
+                                adni_path(out_dir, "competitors.rds"))
   for (method in names(comparison$draws)) for (scenario in c("no_test_CSF", "available_CSF")) {
     rows[[length(rows) + 1L]] <- adni_prediction_rows(comparison$draws[[method]], test, method,
       scenario, cv_folds, fold, point_mean = comparison$means[[method]])
   }
-  adni_write_csv(do.call(rbind, rows), file.path(out_dir, "predictions.csv"))
+  adni_write_csv(do.call(rbind, rows), adni_path(out_dir, "predictions.csv"))
   status <- rbind(data.frame(method = "EIV-GP", status = "success",
     optimization_status = if (diagnostic_passed) "mcmc_gate_passed" else "mcmc_gate_failed",
     elapsed_seconds = NA_real_, message = "Sampling time in PROGRESS.md", warnings = ""), comparison$status)
   status$cv_folds <- cv_folds; status$fold <- fold
-  adni_write_csv(status, file.path(out_dir, "method_status.csv"))
+  adni_write_csv(status, adni_path(out_dir, "method_status.csv"))
   # Save only the bounded predictive draw subset, not another full MCMC fit.
   save_fit(list(no_test_CSF = no_csf, available_CSF = available_draws,
-    draw_ids = draw_ids, RID = test$RID), file.path(out_dir, "eiv_predictive_draws.rds"))
+    draw_ids = draw_ids, RID = test$RID), adni_path(out_dir, "eiv_predictive_draws.rds"))
 
   observed <- which(test$R == 1L)
   if (length(observed)) {
@@ -1517,8 +1619,8 @@ adni_extended_fold <- function(fit, train, test, draw_ids, fold_dir, cv_folds,
       fold = fold, RID = test$RID[observed],
       method = "LM-CSF: response-free", convergence_passed = NA, ub))
     writeLines(if (inherits(ub, "error")) conditionMessage(ub) else "success",
-               file.path(out_dir, "CSF_benchmark_status.txt"))
-    adni_write_csv(urows, file.path(out_dir, "hidden_CSF_validation.csv"))
+               adni_path(out_dir, "CSF_benchmark_status.txt"))
+    adni_write_csv(urows, adni_path(out_dir, "hidden_CSF_validation.csv"))
   }
   # Draws for missing training U are conditional on observed training Y; no truth score exists.
   missing <- which(train$R == 0L)
@@ -1526,7 +1628,7 @@ adni_extended_fold <- function(fit, train, test, draw_ids, fold_dir, cv_folds,
   umat <- matrix(ud[, , 1L], nrow = length(draw_ids), ncol = length(missing))
   adni_write_csv(data.frame(RID = train$RID[missing],
     mean = colMeans(umat), probability_nonpositive_CSF = colMeans(umat <= 0), lo95 = apply(umat, 2, quantile, .025),
-    hi95 = apply(umat, 2, quantile, .975)), file.path(out_dir, "training_missing_CSF_posterior.csv"))
+    hi95 = apply(umat, 2, quantile, .975)), adni_path(out_dir, "training_missing_CSF_posterior.csv"))
 
   # Fixed, prespecified fold 1 for a physical-coordinate surface, never best-fold selection.
   if (fold == 1L) {
@@ -1541,10 +1643,10 @@ adni_extended_fold <- function(fit, train, test, draw_ids, fold_dir, cv_folds,
       hi95 = apply(fs, 2, quantile, .975), age = unname(reference[1]), female = 0, apoe4_dose = 1,
       cv_folds = cv_folds, fold = fold,
       convergence_passed = diagnostic_passed),
-      file.path(out_dir, "CSF_PET_surface.csv"))
+      adni_path(out_dir, "CSF_PET_surface.csv"))
   }
   # Include the dictionary states deliberately omitted from the lightweight stopping gate.
-  adni_write_csv(fit$diagnostics$rhat_hyper, file.path(out_dir, "all_hyper_diagnostics.csv"))
+  adni_write_csv(fit$diagnostics$rhat_hyper, adni_path(out_dir, "all_hyper_diagnostics.csv"))
   j <- fit$mcmc$samples_by_chain$J
   if (length(j)) {
     occupancy <- do.call(rbind, lapply(seq_along(j), function(k) do.call(rbind,
@@ -1552,7 +1654,7 @@ adni_extended_fold <- function(fit, train, test, draw_ids, fold_dir, cv_folds,
         tb <- table(j[[k]][, d]); data.frame(chain = k, coordinate = d,
           index = as.integer(names(tb)), fraction = as.numeric(tb) / sum(tb))
       }))))
-    adni_write_csv(occupancy, file.path(out_dir, "dictionary_occupancy.csv"))
+    adni_write_csv(occupancy, adni_path(out_dir, "dictionary_occupancy.csv"))
   }
   invisible(NULL)
 }
@@ -1623,18 +1725,18 @@ CORE_PLAN <- if (PREPARE_ONLY) get("ADNI_RUN_CORE_PLAN", inherits = FALSE) else
   adni_core_plan(TOTAL_CORES, length(FOLDS_TO_RUN), N_CHAINS, MAX_FOLD_WORKERS)
 N_CORES <- CORE_PLAN$chain_workers
 adni_print_core_plan(CORE_PLAN)
-DATA_FILE <- file.path(DATA_DIR, "toledo_adni_cohort_n495.csv")
-OUTPUT_ROOT <- file.path(output_dir, if (SMOKE_TEST) "smoke" else "five_fold")
-FOLD_FILE <- file.path(OUTPUT_ROOT,"appendix","fold_assignments.csv")
+DATA_FILE <- adni_path(DATA_DIR, "toledo_adni_cohort_n495.csv")
+OUTPUT_ROOT <- adni_path(output_dir, if (SMOKE_TEST) "smoke" else "five_fold")
+FOLD_FILE <- adni_path(OUTPUT_ROOT,"appendix","fold_assignments.csv")
 
 dir.create(OUTPUT_ROOT, recursive = TRUE, showWarnings = FALSE)
-RUN_LOCK <- file.path(OUTPUT_ROOT, ".run-lock")
+RUN_LOCK <- adni_path(OUTPUT_ROOT, ".run-lock")
 LOCK_OWNED <- FALSE
 if (!dir.create(RUN_LOCK, showWarnings = FALSE)) stop("Run already locked: ", RUN_LOCK,
   ". If a job was killed, verify it has stopped before removing this directory.")
 LOCK_OWNED <- TRUE
 on.exit(if (LOCK_OWNED && dir.exists(RUN_LOCK)) unlink(RUN_LOCK,recursive=TRUE),add=TRUE)
-writeLines(paste(Sys.info()[["nodename"]], Sys.getpid()), file.path(RUN_LOCK, "owner"))
+writeLines(paste(Sys.info()[["nodename"]], Sys.getpid()), adni_path(RUN_LOCK, "owner"))
 
 
 ## Dependency installation is a separate, explicit setup step.
@@ -1645,18 +1747,18 @@ pkg <- utils::packageDescription("eivGP")
 
 
 
-for (d in c("main", "appendix")) dir.create(file.path(OUTPUT_ROOT, d), showWarnings = FALSE)
+for (d in c("main", "appendix")) dir.create(adni_path(OUTPUT_ROOT, d), showWarnings = FALSE)
 case_packages <- adni_case_preflight(SMOKE_TEST)
-adni_write_csv(as.data.frame(CORE_PLAN), file.path(OUTPUT_ROOT, "appendix", "resource_plan.csv"))
+adni_write_csv(as.data.frame(CORE_PLAN), adni_path(OUTPUT_ROOT, "appendix", "resource_plan.csv"))
 package_files <- list.files(system.file("R", package = "eivGP"), full.names = TRUE)
 adni_write_csv(data.frame(file = basename(package_files), md5 = unname(tools::md5sum(package_files))),
-  file.path(OUTPUT_ROOT, "appendix", "eivGP_code_fingerprints.csv"))
-adni_write_csv(case_packages, file.path(OUTPUT_ROOT, "appendix", "package_versions.csv"))
+  adni_path(OUTPUT_ROOT, "appendix", "eivGP_code_fingerprints.csv"))
+adni_write_csv(case_packages, adni_path(OUTPUT_ROOT, "appendix", "package_versions.csv"))
 adni_write_csv(data.frame(schema = ADNI_CASE_SCHEMA, smoke = SMOKE_TEST,
   prediction_draws = PREDICTION_DRAWS, run_mode = "five_fold", cv_folds = CV_FOLDS, split_seed = ADNI_CV_SEED,
   primary_target = "Y | test X,C (no test CSF)",
   competitors = paste(ADNI_METHODS, collapse = ";")),
-  file.path(OUTPUT_ROOT, "appendix", "case_config.csv"))
+  adni_path(OUTPUT_ROOT, "appendix", "case_config.csv"))
 
 cat("Project:", PROJECT_DIR, "\n")
 cat("Data:", DATA_DIR, "\n")
@@ -1672,7 +1774,7 @@ if (file.exists(FOLD_FILE)) {
     stop("Saved fold assignment differs. Use a separate output directory.")
 } else adni_write_csv(folds, FOLD_FILE)
 adni_write_csv(as.data.frame(table(folds$fold, folds$R)),
-               file.path(OUTPUT_ROOT, "appendix", "fold_CSF_counts.csv"))
+               adni_path(OUTPUT_ROOT, "appendix", "fold_CSF_counts.csv"))
 
 X_COLUMNS <- c("x_age_years", "x_female", "x_apoe4_dose")
 C_COLUMNS <- c("c_ab42_ab40_3", "c_gfap_3")
@@ -1694,7 +1796,7 @@ atomic_write_lines <- function(lines, path) {
 
 stamp <- function(run_dir, message) {
   line <- sprintf("- [%s] %s", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"), message)
-  cat(line, "\n", file = file.path(run_dir, "PROGRESS.md"), append = TRUE)
+  cat(line, "\n", file = adni_path(run_dir, "PROGRESS.md"), append = TRUE)
   cat(line, "\n")
   flush.console()
 }
@@ -1704,7 +1806,7 @@ set_status <- function(run_dir, fold, stage, detail) {
     paste0("updated_at=", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z")),
     paste0("cv_folds=", CV_FOLDS), paste0("fit_unit=", fold),
     paste0("stage=", stage), paste0("detail=", detail)
-  ), file.path(run_dir, "CURRENT_STATUS.txt"))
+  ), adni_path(run_dir, "CURRENT_STATUS.txt"))
   stamp(run_dir, paste("Five-fold CV", "|", stage, "|", detail))
 }
 
@@ -1737,9 +1839,9 @@ light_diagnostics <- function(fit, fold_dir, stage) {
     light_gate_passed = passed,
     stringsAsFactors = FALSE
   )
-  write.csv(tab, file.path(fold_dir, paste0("diagnostics_", stage, "_parameters.csv")),
+  write.csv(tab, adni_path(fold_dir, paste0("diagnostics_", stage, "_parameters.csv")),
             row.names = FALSE)
-  write.csv(summary, file.path(fold_dir, paste0("diagnostics_", stage, "_summary.csv")),
+  write.csv(summary, adni_path(fold_dir, paste0("diagnostics_", stage, "_summary.csv")),
             row.names = FALSE)
   list(table = tab, summary = summary, passed = passed)
 }
@@ -1781,7 +1883,7 @@ draw_trace_panel <- function(series, path, title) {
 
 draw_convergence_plots <- function(fit, diagnostic, fold_dir, stage) {
   draw_trace_panel(trace_series(fit),
-                   file.path(fold_dir, paste0("trace_key_", stage, ".png")),
+                   adni_path(fold_dir, paste0("trace_key_", stage, ".png")),
                    paste("Five-fold CV", stage, "key traces"))
 
   udiag <- fit$diagnostics$rhat_U
@@ -1790,11 +1892,11 @@ draw_convergence_plots <- function(fit, diagnostic, fold_dir, stage) {
   useries <- setNames(lapply(worst, function(j) lapply(U, function(x) x[, j, 1L])),
                       paste0("U[", worst, "]"))
   draw_trace_panel(useries,
-                   file.path(fold_dir, paste0("trace_worst_U_", stage, ".png")),
+                   adni_path(fold_dir, paste0("trace_worst_U_", stage, ".png")),
                    paste("Worst missing-U traces by raw R-hat:", stage))
 
   tab <- diagnostic$table
-  png(file.path(fold_dir, paste0("rhat_overview_", stage, ".png")),
+  png(adni_path(fold_dir, paste0("rhat_overview_", stage, ".png")),
       width = 1800, height = 1100, res = 180)
   cols <- c(hyper = "#0072B2", loading = "#D55E00",
             threshold = "#009E73", missing_U = "#777777")
@@ -1833,9 +1935,9 @@ score_predictions <- function(z) {
 }
 
 run_one_fold <- function(fold) {
-  fold_dir <- file.path(OUTPUT_ROOT, paste0("fold_", fold))
+  fold_dir <- adni_path(OUTPUT_ROOT, paste0("fold_", fold))
   dir.create(fold_dir, recursive = TRUE, showWarnings = FALSE)
-  unlink(file.path(fold_dir, "CASE_STUDY_COMPLETED.txt"))
+  unlink(adni_path(fold_dir, "CASE_STUDY_COMPLETED.txt"))
   set_status(fold_dir, fold, "prepare", "Preparing frozen train/test data.")
 
   test_ids <- folds$RID[folds$fold == fold]
@@ -1880,8 +1982,8 @@ run_one_fold <- function(fold) {
     installed_commit = if (is.null(pkg$RemoteSha)) "unrecorded" else pkg$RemoteSha,
     stringsAsFactors = FALSE
   )
-  config_path <- file.path(fold_dir, "run_config.csv")
-  if (file.exists(file.path(fold_dir, "fit_latest.rds"))) {
+  config_path <- adni_path(fold_dir, "run_config.csv")
+  if (file.exists(adni_path(fold_dir, "fit_latest.rds"))) {
     if (!file.exists(config_path)) stop("Checkpoint has no run configuration.")
     old_config <- read.csv(config_path, stringsAsFactors = FALSE)
     if (!isTRUE(all.equal(old_config, config, check.attributes = FALSE)))
@@ -1889,7 +1991,7 @@ run_one_fold <- function(fold) {
   }
   write.csv(config, config_path, row.names = FALSE)
 
-  fit_path <- file.path(fold_dir, "fit_latest.rds")
+  fit_path <- adni_path(fold_dir, "fit_latest.rds")
   if (file.exists(fit_path)) {
     fit <- mixedgp_read_artifact(fit_path)
     stopifnot(
@@ -1977,20 +2079,20 @@ run_one_fold <- function(fold) {
     pred_hi95 = apply(response_draws, 2L, stats::quantile, probs = 0.975),
     n_prediction_draws = nrow(response_draws), stringsAsFactors = FALSE
   )
-  write.csv(pred, file.path(fold_dir, "eivgp_predictions.csv"), row.names = FALSE)
+  write.csv(pred, adni_path(fold_dir, "eivgp_predictions.csv"), row.names = FALSE)
   metrics <- score_predictions(pred)
   metrics$convergence_passed <- diagnostic$passed
   metrics$run_mode <- "five_fold"
   metrics$cv_folds <- CV_FOLDS
   metrics$fold <- fold; metrics$final_stage <- final_stage
-  write.csv(metrics, file.path(fold_dir, "eivgp_metrics.csv"), row.names = FALSE)
+  write.csv(metrics, adni_path(fold_dir, "eivgp_metrics.csv"), row.names = FALSE)
   atomic_write_lines(c(
     paste0("completed_at=", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z")),
     paste0("cv_folds=", CV_FOLDS),
     paste0("fit_unit=", fold),
     paste0("convergence_passed=", diagnostic$passed),
     paste0("final_stage=", final_stage)
-  ), file.path(fold_dir, "EIV_COMPLETED.txt"))
+  ), adni_path(fold_dir, "EIV_COMPLETED.txt"))
   set_status(fold_dir, fold, "EIV_complete", paste("EIV prediction completed at", final_stage))
   cat("\n### Fold", fold, "\n\n")
   print(knitr::kable(metrics, digits = 3))
@@ -2000,7 +2102,7 @@ run_one_fold <- function(fold) {
                      seed_base = case_seed)
   atomic_write_lines(c(paste0("completed_at=", Sys.time()),
     paste0("schema=", ADNI_CASE_SCHEMA), paste0("convergence_passed=", diagnostic$passed)),
-    file.path(fold_dir, "CASE_STUDY_COMPLETED.txt"))
+    adni_path(fold_dir, "CASE_STUDY_COMPLETED.txt"))
   set_status(fold_dir, fold, "complete", "EIV fit, comparison, and additional inference finished; inspect method status.")
   rm(fit, response_draws)
   invisible(gc())
@@ -2011,7 +2113,7 @@ if (!PREPARE_ONLY) {
 cat("Running fit units; progress and errors are written to fold_N/worker.log.\n")
 all_metrics <- adni_run_folds(FOLDS_TO_RUN, run_one_fold, CORE_PLAN, OUTPUT_ROOT)
 combined_metrics <- do.call(rbind, all_metrics)
-write.csv(combined_metrics, file.path(OUTPUT_ROOT, "all_fold_metrics.csv"), row.names = FALSE)
+write.csv(combined_metrics, adni_path(OUTPUT_ROOT, "all_fold_metrics.csv"), row.names = FALSE)
 }
 
 if (!PREPARE_ONLY) {
@@ -2020,7 +2122,7 @@ if (!PREPARE_ONLY) {
 
 }
 
-writeLines(capture.output(sessionInfo()), file.path(OUTPUT_ROOT, "sessionInfo.txt"))
+writeLines(capture.output(sessionInfo()), adni_path(OUTPUT_ROOT, "sessionInfo.txt"))
 sessionInfo()
 if (!PREPARE_ONLY) unlink(RUN_LOCK, recursive = TRUE)
 
@@ -2031,8 +2133,8 @@ run_adni_analysis <- function(data_dir,output_dir,action=c("plan","run","report"
   action<-match.arg(action);profile<-match.arg(profile)
   folds<-if(profile=="paper")1:5 else 1L
   if(action=="plan") return(data.frame(profile=profile,fold=folds,action="planned",
-    data_available=file.exists(file.path(data_dir,"toledo_adni_cohort_n495.csv"))))
-  target<-file.path(output_dir,if(profile=="paper")"five_fold" else "smoke")
+    data_available=file.exists(adni_path(data_dir,"toledo_adni_cohort_n495.csv"))))
+  target<-adni_path(output_dir,if(profile=="paper")"five_fold" else "smoke")
   if(action=="report") return(adni_case_report(target,folds_expected=folds,smoke=profile=="quick"))
   notebook_with_env(c(EIVGP_SMOKE_TEST=if(profile=="quick")"1" else "0",
     EIVGP_CORES=as.character(cores)),eivgp_adni_driver(data_dir,output_dir))
@@ -2050,13 +2152,13 @@ adni_make_C <- function(z) {
 
 adni_case_report <- function(root, folds_expected = 1:5, smoke = FALSE) {
   stopifnot(!anyDuplicated(folds_expected), all(folds_expected %in% 1:5))
-  case_dirs <- file.path(root, paste0("fold_", folds_expected), "case-study")
-  files <- file.path(case_dirs, "predictions.csv")
+  case_dirs <- adni_path(root, paste0("fold_", folds_expected), "case-study")
+  files <- adni_path(case_dirs, "predictions.csv")
   if (!all(file.exists(files))) stop("Missing fold prediction files; reporting requires every requested fold.")
   z <- do.call(rbind, lapply(files, read.csv, stringsAsFactors = FALSE))
-  status <- do.call(rbind, lapply(file.path(case_dirs, "method_status.csv"), read.csv,
+  status <- do.call(rbind, lapply(adni_path(case_dirs, "method_status.csv"), read.csv,
                                 stringsAsFactors = FALSE))
-  adni_write_csv(status, file.path(root, "appendix", "method_status.csv"))
+  adni_write_csv(status, adni_path(root, "appendix", "method_status.csv"))
   stopifnot(!anyDuplicated(z[, c("RID", "method", "scenario")]))
   reference <- z[z$method == "EIV-GP" & z$scenario == "no_test_CSF", c("RID", "fold")]
   for (m in ADNI_METHODS[-1]) {
@@ -2065,7 +2167,7 @@ adni_case_report <- function(root, folds_expected = 1:5, smoke = FALSE) {
       stop("Participant mismatch for ", m, " fold ", f)
   }
   if (!smoke) {
-    assignment_file <- file.path(root, "appendix", "fold_assignments.csv")
+    assignment_file <- adni_path(root, "appendix", "fold_assignments.csv")
     if (!file.exists(assignment_file)) stop("Missing saved fold assignments.")
     assignment <- read.csv(assignment_file)
     stopifnot(nrow(assignment) == 495L, !anyDuplicated(assignment$RID),
@@ -2084,7 +2186,7 @@ adni_case_report <- function(root, folds_expected = 1:5, smoke = FALSE) {
       flagged_folds = sum(status$method == m & (status$optimization_status != "converged" &
         status$optimization_status != "mcmc_gate_passed"), na.rm = TRUE))
   }))
-  adni_write_csv(coverage, file.path(root, "appendix", "completeness.csv"))
+  adni_write_csv(coverage, adni_path(root, "appendix", "completeness.csv"))
   # Main table requires all methods on the same fold set. Never compare each method's favorable subset.
   common_folds <- Reduce(intersect, lapply(ADNI_METHODS, function(m)
     unique(z$fold[z$method == m & z$scenario == "no_test_CSF"])))
@@ -2112,13 +2214,13 @@ adni_case_report <- function(root, folds_expected = 1:5, smoke = FALSE) {
       }
     }
   }
-  adni_write_csv(do.call(rbind, detailed), file.path(root, "appendix", "all_scenario_metrics.csv"))
-  adni_write_csv(do.call(rbind, fold_metrics), file.path(root, "appendix", "fold_metrics.csv"))
+  adni_write_csv(do.call(rbind, detailed), adni_path(root, "appendix", "all_scenario_metrics.csv"))
+  adni_write_csv(do.call(rbind, fold_metrics), adni_path(root, "appendix", "fold_metrics.csv"))
   main_table <- if (length(main)) do.call(rbind, main) else data.frame(
     status = "No fold has valid predictions from all four methods; no comparative ranking available.")
   if ("method" %in% names(main_table)) main_table <- main_table[, c("method", "group", "n",
     "RMSE", "CRPS", "Coverage95", "Width95", "IntervalScore95", "complete_comparison", "diagnostic_flag")]
-  adni_write_csv(main_table, file.path(root, "main", "table1_prediction.csv"))
+  adni_write_csv(main_table, adni_path(root, "main", "table1_prediction.csv"))
   writeLines(c("# ADNI prediction comparison", "",
     if (smoke) "SMOKE OUTPUT - no inferential interpretation." else
       if (!all(coverage$complete_cv) || !setequal(common_folds, 1:5))
@@ -2128,7 +2230,7 @@ adni_case_report <- function(root, folds_expected = 1:5, smoke = FALSE) {
     "EIV-GP additionally uses calibrated training CSF; competitors use training X,C,Y. This compares available workflows, not an isolated algorithmic effect.",
     "Diagnostic warnings are retained. Coverage and width are not ranked. See appendix for all failures and settings.", "",
     as.character(knitr::kable(main_table, format = "pipe", digits = 3))),
-    file.path(root, "main", "table1_prediction.md"))
+    adni_path(root, "main", "table1_prediction.md"))
 
   # Per-participant paired contrasts. Bootstrap conditions on fitted folds, not independent refitted studies.
   paired <- list(); set.seed(202650000L)
@@ -2148,30 +2250,30 @@ adni_case_report <- function(root, folds_expected = 1:5, smoke = FALSE) {
         lo_descriptive = quantile(bs, .025), hi_descriptive = quantile(bs, .975))
     }
   }
-  if (length(paired)) adni_write_csv(do.call(rbind, paired), file.path(root, "appendix", "paired_losses.csv"))
+  if (length(paired)) adni_write_csv(do.call(rbind, paired), adni_path(root, "appendix", "paired_losses.csv"))
   # Observable task shared by every method: held-out response predictions.
   zp <- z[z$scenario == "no_test_CSF", ]; zp$method <- factor(zp$method, levels = ADNI_METHODS)
   p <- ggplot2::ggplot(zp, ggplot2::aes(x = y_true, y = pred_mean)) +
     ggplot2::geom_point(alpha = .45, size = .8) + ggplot2::geom_abline(slope = 1, intercept = 0, linetype = 2) +
     ggplot2::facet_wrap(~method, nrow = 1) + ggplot2::theme_bw() +
     ggplot2::labs(x = "Observed Centiloid", y = "Out-of-fold prediction", title = "Common response prediction task")
-  ggplot2::ggsave(file.path(root, "appendix", "prediction_scatter.pdf"), p, width = 11, height = 3.3)
-  uf <- file.path(case_dirs, "hidden_CSF_validation.csv"); uf <- uf[file.exists(uf)]
+  ggplot2::ggsave(adni_path(root, "appendix", "prediction_scatter.pdf"), p, width = 11, height = 3.3)
+  uf <- adni_path(case_dirs, "hidden_CSF_validation.csv"); uf <- uf[file.exists(uf)]
   if (length(uf)) {
     uz <- do.call(rbind, lapply(uf, read.csv, stringsAsFactors = FALSE))
-    adni_write_csv(uz, file.path(root, "appendix", "hidden_CSF_predictions.csv"))
+    adni_write_csv(uz, adni_path(root, "appendix", "hidden_CSF_predictions.csv"))
     um <- do.call(rbind, lapply(split(uz, uz$method), function(a) data.frame(method = a$method[1],
       n = nrow(a), RMSE = sqrt(mean(a$squared_error)), CRPS = mean(a$CRPS),
       Coverage95 = mean(a$covered95), Width95 = mean(a$Width95),
       mean_probability_nonpositive_CSF = mean(a$probability_nonpositive_CSF))))
-    adni_write_csv(um, file.path(root, "appendix", "hidden_CSF_metrics.csv"))
+    adni_write_csv(um, adni_path(root, "appendix", "hidden_CSF_metrics.csv"))
     e <- uz[uz$method == "EIV-GP: prospective U|C", ]
     pi <- ggplot2::ggplot(e, ggplot2::aes(x = y_true, y = pred_mean)) +
       ggplot2::geom_linerange(ggplot2::aes(ymin = pred_lo95, ymax = pred_hi95), alpha = .17) +
       ggplot2::geom_point(size = 1.2, color = "#0072B2") + ggplot2::geom_abline(slope = 1, intercept = 0, linetype = 2) +
       ggplot2::labs(x = "Held-out observed CSF A-beta42", y = "Prospective U|C mean and 95% interval",
                     title = "A  Masked-CSF validation (observed subset)") + ggplot2::theme_bw()
-    sf <- file.path(root, "fold_1", "case-study", "CSF_PET_surface.csv")
+    sf <- adni_path(root, "fold_1", "case-study", "CSF_PET_surface.csv")
     if (file.exists(sf)) {
       s <- read.csv(sf)
       ps <- ggplot2::ggplot(s, ggplot2::aes(x = U, y = mean)) +
@@ -2184,8 +2286,8 @@ adni_case_report <- function(root, folds_expected = 1:5, smoke = FALSE) {
         title = if (smoke) "SMOKE OUTPUT - not inferential results" else "EIV-GP: additional inference on the CSF scale",
         caption = paste("Pointwise posterior intervals; inspect convergence diagnostics.",
           "Surface is an association, not a causal effect. Masked-CSF validation does not verify naturally missing CSF."))
-      ggplot2::ggsave(file.path(root, "main", "fig2_CSF_inference.pdf"), combined, width = 10, height = 4.5)
-      ggplot2::ggsave(file.path(root, "main", "fig2_CSF_inference.png"), combined, width = 10, height = 4.5, dpi = 150)
+      ggplot2::ggsave(adni_path(root, "main", "fig2_CSF_inference.pdf"), combined, width = 10, height = 4.5)
+      ggplot2::ggsave(adni_path(root, "main", "fig2_CSF_inference.png"), combined, width = 10, height = 4.5, dpi = 150)
     }
   }
   writeLines(c("# Reporting boundaries", "",
@@ -2194,7 +2296,7 @@ adni_case_report <- function(root, folds_expected = 1:5, smoke = FALSE) {
     "Each participant is tested once. Training sets overlap, so fold scores are not independent replications.",
     "The literature competitors do not estimate physical CSF posteriors or a CSF-coordinate surface. Other calibrated models can; these capabilities are not universally unique to EIV-GP.",
     "Background and task specifications are in the notebook. EDA is descriptive and must not drive post-hoc test-set tuning."),
-    file.path(root, "appendix", "INTERPRETATION.md"))
+    adni_path(root, "appendix", "INTERPRETATION.md"))
   invisible(main_table)
 }
 
@@ -2259,7 +2361,7 @@ adni_saved_source <- function(output_dir,source=NULL) {
     if(!identical(m$schema,'adni-saved-report-v1'))stop('Unsupported saved-report source')
     return(m)
   }
-  p<-file.path(output_dir,'application_manifest.json')
+  p<-adni_path(output_dir,'application_manifest.json')
   if(!file.exists(p))stop('Saved report requires application_manifest.json or --report-source=FILE')
   m<-jsonlite::fromJSON(p,simplifyVector=FALSE)
   list(schema='adni-saved-report-v1',output=output_dir,input=m$cases[[1]]$input,
@@ -2284,7 +2386,7 @@ adni_report_prepare <- function(repo,data_dir,output_dir,settings,report_source=
   if(length(m$input_sha256))for(p in names(m$input_sha256))
     if(digest::digest(file=p,algo='sha256')!=m$input_sha256[[p]])stop('Frozen report input changed: ',p)
   # Historical fitting identities are read, not rewritten to match reporting code.
-  identity<-file.path(output_dir,'workflow_identity.rds')
+  identity<-adni_path(output_dir,'workflow_identity.rds')
   if(file.exists(identity)) {
     id<-readRDS(identity)
     if(!is.null(id$inputs)&&!identical(unname(tools::md5sum(input$files)),id$inputs))stop('Saved fit input identity differs')
@@ -2302,36 +2404,36 @@ adni_report_prepare <- function(repo,data_dir,output_dir,settings,report_source=
   want_eiv<-group!='competitors';want_baseline<-group!='eivGP'
   for(i in seq_len(nrow(selected))) {
     f<-selected$fold[i];cell<-selected$cell[i];z<-input$cells[[paste(f,cell,sep='/')]]
-    dir<-file.path(output_dir,final,'analysis',sprintf('fold%02d',f),cell)
+    dir<-adni_path(output_dir,final,'analysis',sprintf('fold%02d',f),cell)
     if(want_eiv) {
-      d<-adni_csv(file.path(dir,'prediction_metrics.csv'));d<-d[d$protocol%in%c('OI','CC-known'),,drop=FALSE]
+      d<-adni_csv(adni_path(dir,'prediction_metrics.csv'));d<-d[d$protocol%in%c('OI','CC-known'),,drop=FALSE]
       pred[[length(pred)+1L]]<-d
-      cv<-adni_csv(file.path(dir,'convergence.csv'));conv[[length(conv)+1L]]<-cv
-      par<-adni_csv(file.path(dir,'diagnostic_parameters.csv'));par$fold<-f;par$cell<-cell
+      cv<-adni_csv(adni_path(dir,'convergence.csv'));conv[[length(conv)+1L]]<-cv
+      par<-adni_csv(adni_path(dir,'diagnostic_parameters.csv'));par$fold<-f;par$cell<-cell
       parameters[[length(parameters)+1L]]<-par
       paths[[paste(f,cell,sep='/')]]<-list(fold=f,cell=cell,dir=dir,
-        fit=file.path(output_dir,'fits',sprintf('fold%02d',f),cell,'fit.rds'))
+        fit=adni_path(output_dir,'fits',sprintf('fold%02d',f),cell,'fit.rds'))
       if(!file.exists(paths[[paste(f,cell,sep='/')]]$fit))stop('Missing saved EIV fit; report never fits')
       if(cell!='O0') {
-        u<-adni_csv(file.path(dir,'U_predictions.csv'));u$fold<-f;u$cell<-cell
-        up[[length(up)+1L]]<-u;um[[length(um)+1L]]<-adni_csv(file.path(dir,'U_metrics.csv'))
-        p<-adni_csv(file.path(dir,'PROSPECTIVE_U_predictions.csv'));p$fold<-f;p$cell<-cell
-        pp[[length(pp)+1L]]<-p;pm[[length(pm)+1L]]<-adni_csv(file.path(dir,'PROSPECTIVE_U_metrics.csv'))
+        u<-adni_csv(adni_path(dir,'U_predictions.csv'));u$fold<-f;u$cell<-cell
+        up[[length(up)+1L]]<-u;um[[length(um)+1L]]<-adni_csv(adni_path(dir,'U_metrics.csv'))
+        p<-adni_csv(adni_path(dir,'PROSPECTIVE_U_predictions.csv'));p$fold<-f;p$cell<-cell
+        pp[[length(pp)+1L]]<-p;pm[[length(pm)+1L]]<-adni_csv(adni_path(dir,'PROSPECTIVE_U_metrics.csv'))
       }
     }
   }
   if(want_baseline)for(f in settings$folds)for(cell in c('OI',intersect(settings$cells,c('O20','O50'))))for(method in c('UC-GP','LVGP','EzGP')) {
-    dir<-if(cell=='OI')file.path(output_dir,'baselines',sprintf('fold%02d',f),method)else
-      file.path(output_dir,'CC',cell,'baselines',sprintf('fold%02d',f),method)
+    dir<-if(cell=='OI')adni_path(output_dir,'baselines',sprintf('fold%02d',f),method)else
+      adni_path(output_dir,'CC',cell,'baselines',sprintf('fold%02d',f),method)
     version<-m$fit_package_version
     if(length(m$baseline_overrides))for(b in m$baseline_overrides)
       if(b$fold==f&&b$cell==cell&&b$method==method){dir<-b$directory;version<-b$package_version}
-    valid<-all(file.exists(file.path(dir,c('metrics.csv','fit.rds','prediction_draws.rds'))))
+    valid<-all(file.exists(adni_path(dir,c('metrics.csv','fit.rds','prediction_draws.rds'))))
     state<-'MISSING';optimization<-'not_available'
     if(valid) {
-      d<-adni_csv(file.path(dir,'metrics.csv'));d$method<-paste0(method,if(cell=='OI')''else'-CC');d$cell<-cell
+      d<-adni_csv(adni_path(dir,'metrics.csv'));d$method<-paste0(method,if(cell=='OI')''else'-CC');d$cell<-cell
       d$stage<-'BASELINE';pred[[length(pred)+1L]]<-d
-      a<-readRDS(file.path(dir,'fit.rds'));optimization<-a$model$optimization_status
+      a<-readRDS(adni_path(dir,'fit.rds'));optimization<-a$model$optimization_status
       if(is.null(optimization))optimization<-'NOT_EXPOSED'
       state<-if(grepl('nonconverged',optimization))'OPTIMIZER_FLAGGED'else'AVAILABLE'
       rm(a)
@@ -2342,7 +2444,7 @@ adni_report_prepare <- function(repo,data_dir,output_dir,settings,report_source=
   }
   p<-input$cells[[1]]$protocol
   z<-input$cells[['1/O50']];cohort<-rbind(z$train,z$test);cohort<-cohort[order(cohort$RID),]
-  metadata_path<-file.path(data_dir,'DATASET.json')
+  metadata_path<-adni_path(data_dir,'DATASET.json')
   meta<-if(file.exists(metadata_path))jsonlite::fromJSON(metadata_path,simplifyVector=FALSE)else list()
   meta<-modifyList(meta,if(is.null(m$metadata))list()else m$metadata)
   if(is.null(meta))meta<-list()
@@ -2375,7 +2477,7 @@ adni_report_prepare <- function(repo,data_dir,output_dir,settings,report_source=
   if(length(m$stage_directories))stages<-unlist(m$stage_directories)
   stability<-list()
   for(st in stages)for(i in seq_len(nrow(selected))) {
-    path<-file.path(output_dir,st,'analysis',sprintf('fold%02d',selected$fold[i]),selected$cell[i],'prediction_metrics.csv')
+    path<-adni_path(output_dir,st,'analysis',sprintf('fold%02d',selected$fold[i]),selected$cell[i],'prediction_metrics.csv')
     d<-adni_csv(path,FALSE)
     if(nrow(d)){d<-d[d$protocol=='OI',];d$stage<-st;stability[[length(stability)+1L]]<-d}
   }
@@ -2390,14 +2492,14 @@ adni_report_prepare <- function(repo,data_dir,output_dir,settings,report_source=
 }
 
 adni_report_exports <- function(a) {
-  dest<-file.path(a$report_dir,'report-assets');dir.create(dest,recursive=TRUE,showWarnings=FALSE)
+  dest<-adni_path(a$report_dir,'report-assets');dir.create(dest,recursive=TRUE,showWarnings=FALSE)
   for(n in c('prediction','convergence','parameters','U_metrics','prospective_metrics','method_status','stage_scores'))
-    if(nrow(a[[n]]))write.csv(a[[n]],file.path(dest,paste0(n,'.csv')),row.names=FALSE)
+    if(nrow(a[[n]]))write.csv(a[[n]],adni_path(dest,paste0(n,'.csv')),row.names=FALSE)
   a$api$atomic_json(list(author='Xinye Chen',saved_only=TRUE,new_MCMC=FALSE,new_optimization=FALSE,
     fitting_source=a$source,stage=a$stage,saved_fitting_numerics=a$numerics,report_settings=a$settings,
     input_md5=as.list(tools::md5sum(a$input$files)),analysis_modules=a$api$eivgp_module_identity(),
-    reporting_source=as.list(tools::md5sum(c(file.path(a$repo,'paper/applications/adni.Rmd'),adni_source_files(a$repo))))),
-    file.path(dest,'REPORT_PROVENANCE.json'))
+    reporting_source=as.list(tools::md5sum(c(adni_path(a$repo,'paper/applications/adni.Rmd'),adni_source_files(a$repo))))),
+    adni_path(dest,'REPORT_PROVENANCE.json'))
 }
 
 adni_metric_table <- function(a,protocol='OI',full=FALSE) {
@@ -2547,7 +2649,7 @@ adni_input_distributions <- function(a) {
     path<-a$paths[[key]];if(path$cell=='O0'||path$fold!=a$settings$representative_fold)next
     z<-a$input$cells[[key]]
     hidden<-which(a$input$cells[[paste(path$fold,'O50',sep='/')]]$train$calibration==0L)
-    saved<-readRDS(file.path(path$dir,'U_draws.rds'))
+    saved<-readRDS(adni_path(path$dir,'U_draws.rds'))
     if(!identical(saved$scale,'raw'))stop('Raw saved U draws required for physical distribution checks')
     ids<-unique(round(seq(1,dim(saved$draws)[1],length.out=min(128,dim(saved$draws)[1]))))
     for(j in seq_along(z$u)) {
@@ -2576,7 +2678,7 @@ adni_input_distributions <- function(a) {
 }
 
 adni_paper_assets <- function(a) {
-  dest<-file.path(a$report_dir,'report-assets','paper');dir.create(dest,recursive=TRUE,showWarnings=FALSE)
+  dest<-adni_path(a$report_dir,'report-assets','paper');dir.create(dest,recursive=TRUE,showWarnings=FALSE)
   plots<-list(fig_adni_cohort=a$plots$cohort,fig_adni_C_support=a$plots$C_counts,
     fig_adni_Y_X=a$plots$covariates,fig_adni_C_U=a$plots$C_U,
     fig_adni_target_traces=a$functionals$trace_plot,fig_adni_mean_functions=a$functionals$mean_plot,
@@ -2585,10 +2687,10 @@ adni_paper_assets <- function(a) {
   manifest<-list()
   for(name in names(plots)) {
     file<-paste0(name,'.pdf');available<-!is.null(plots[[name]])
-    if(available)ggplot2::ggsave(file.path(dest,file),plots[[name]],width=12,height=if(grepl('support|traces|C1',name))9 else 6,
+    if(available)ggplot2::ggsave(adni_path(dest,file),plots[[name]],width=12,height=if(grepl('support|traces|C1',name))9 else 6,
       device=grDevices::pdf,limitsize=FALSE)
     manifest[[length(manifest)+1L]]<-data.frame(label=name,file=file,status=if(available)'available'else'not_applicable',
-      N=a$input$N,profile=a$settings$profile,MD5=if(available)unname(tools::md5sum(file.path(dest,file)))else'')
+      N=a$input$N,profile=a$settings$profile,MD5=if(available)unname(tools::md5sum(adni_path(dest,file)))else'')
   }
   oi<-a$prediction[a$prediction$protocol=='OI',,drop=FALSE]
   cc<-a$prediction[a$prediction$protocol=='CC-known',,drop=FALSE]
@@ -2601,26 +2703,26 @@ adni_paper_assets <- function(a) {
   for(name in names(tables)) {
     d<-tables[[name]];available<-nrow(d)>0L;file<-paste0(name,'.csv')
     if(available) {
-      write.csv(d,file.path(dest,file),row.names=FALSE)
-      writeLines(adni_table_html(d,name),file.path(dest,paste0(name,'.html')))
+      write.csv(d,adni_path(dest,file),row.names=FALSE)
+      writeLines(adni_table_html(d,name),adni_path(dest,paste0(name,'.html')))
     }
     manifest[[length(manifest)+1L]]<-data.frame(label=name,file=file,status=if(available)'available'else'unavailable',
-      N=a$input$N,profile=a$settings$profile,MD5=if(available)unname(tools::md5sum(file.path(dest,file)))else'')
+      N=a$input$N,profile=a$settings$profile,MD5=if(available)unname(tools::md5sum(adni_path(dest,file)))else'')
   }
-  out<-adni_bind(manifest);write.csv(out,file.path(dest,'artifact_manifest.csv'),row.names=FALSE);out
+  out<-adni_bind(manifest);write.csv(out,adni_path(dest,'artifact_manifest.csv'),row.names=FALSE);out
 }
 
 # ADNI application: settings. Reuses package model and sampler functions.
 
 adni_resolve_path <- function(path,repo) {
   path<-path.expand(path)
-  if(!grepl('^(/|[A-Za-z]:[/\\\\])',path))path<-file.path(repo,path)
+  if(!grepl('^(/|[A-Za-z]:[/\\\\])',path))path<-adni_path(repo,path)
   base<-path;suffix<-character()
   while(!file.exists(base)&&dirname(base)!=base) {
     suffix<-c(basename(base),suffix);base<-dirname(base)
   }
   resolved<-normalizePath(base,mustWork=TRUE)
-  if(length(suffix))file.path(resolved,paste(suffix,collapse='/'))else resolved
+  if(length(suffix))adni_path(resolved,paste(suffix,collapse='/'))else resolved
 }
 
 adni_cli_params <- function(args) {
@@ -2715,24 +2817,35 @@ adni_method_run <- function(repo,params,group) {
   s<-do.call(adni_settings,c(list(profile=get('profile','pilot'),cores=get('cores',4L)),params[intersect(names(params),fields)]))
   dataset<-get('dataset','adni')
   if(!grepl('^[A-Za-z0-9][A-Za-z0-9_-]*$',dataset))stop('Invalid dataset name')
-  default_input<-if(dataset=='adni')file.path('data','adni','inputs')else file.path('data','adni',dataset,'inputs')
+  default_input<-adni_default_input(dataset,repo)
   input<-adni_resolve_path(get('data_root',get('data_dir',default_input)),repo)
-  out<-adni_resolve_path(get('output',get('output_dir',file.path('results',paste(dataset,s$profile,sep='_')))),repo)
-  if(isTRUE(params$plan)&&!dir.exists(file.path(input,'MC'))) {
+  out<-adni_resolve_path(get('output',get('output_dir',adni_default_output(dataset,s$profile,repo))),repo)
+  if(isTRUE(params$plan)&&(!dir.exists(input)||!all(file.exists(adni_input_files(adni_plan_input_root(input),1L,'O0'))))) {
     cat('Dataset:',dataset,'; data:',input,'\n');print(s[c('profile','chains','iter','burn','cores')])
     cat('Supply private inputs before fitting. No computation started.\n');return(invisible(s))
   }
   report_source<-if(!is.null(params$report_source))adni_resolve_path(params$report_source,repo)else NULL
   saved_only<-group=='report'||isTRUE(params$reuse_only)
-  if(saved_only&&!isTRUE(params$plan))return(adni_render_report(repo,input,out,s,report_source,
-    report_dir=adni_resolve_path(get('report_dir',out),repo),group=group))
+  if(saved_only&&!isTRUE(params$plan)) {
+    default_report<-if(group=='report')out else adni_path(out,'reports',group)
+    return(adni_render_report(repo,input,out,s,report_source,
+      report_dir=adni_resolve_path(get('report_dir',default_report),repo),group=group,
+      filename=if(group!='report'&&adni_storage_flat(out))'index.html'else'adni.html'))
+  }
   api<-adni_load_api(repo);inp<-api$adni_plan_inputs(input);p<-inp$cells[[1]]$protocol
   api$application$adni_output_check(out,repo)
+  if(!isTRUE(params$plan)) {
+    adni_storage_init(out,s$stages)
+    if(adni_storage_flat(out)) {
+      input<-adni_snapshot_inputs(input,out,inp$files)
+      inp<-api$adni_plan_inputs(input)
+    }
+  }
   files<-setNames(lapply(inp$files,function(x)digest::digest(file=x,algo='sha256')),inp$files)
   m<-list(schema='adni-application-v1',author='Xinye Chen',profile=s$profile,
     package_version=as.character(packageVersion('eivGP')),
     baseline_profile=s$baseline_profile,trial_id=dataset,smoke=s$profile=='quick',
-    output_root=file.path(out,'workflow'),cores=s$cores,chains=s$chains,stages=s$stages,burn=s$burn,
+    output_root=adni_workflow_root(out),cores=s$cores,chains=s$chains,stages=s$stages,burn=s$burn,
     first_checkpoint=s$first_checkpoint,checkpoint_step=s$checkpoint_step,draws_per_chain=s$draws_per_chain,ess_min=s$ess_min,
     samplers=list(O0=s$sampler_o0,O20=s$sampler_o20,O50=s$sampler_o50),folds=s$folds,cells=s$cells,
     cases=list(list(id=p$plan_id,input=input,output=out,C=p$C_order,N=inp$N,q=p$q)),frozen_inputs=files)
@@ -2744,7 +2857,7 @@ adni_method_run <- function(repo,params,group) {
       '; resident evaluation jobs:',adni_resident_workers(s$cores,'evaluate',nrow(tasks),s$chains,evaluation_jobs),'\n')
     return(invisible(m))
   }
-  dir.create(out,recursive=TRUE,showWarnings=FALSE);manifest<-file.path(out,'application_manifest.json')
+  dir.create(out,recursive=TRUE,showWarnings=FALSE);manifest<-adni_path(out,'application_manifest.json')
   if(file.exists(manifest)) {
     prior<-jsonlite::fromJSON(manifest,simplifyVector=FALSE);a<-m;b<-prior;a$cores<-b$cores<-NULL
     canonical<-function(x)jsonlite::fromJSON(jsonlite::toJSON(x,auto_unbox=TRUE,null='null'),simplifyVector=FALSE)
@@ -2754,7 +2867,8 @@ adni_method_run <- function(repo,params,group) {
   }else api$atomic_json(m,manifest)
   e<-adni_load_api(repo)
   result<-e$adni_screen_run(repo,list(manifest=manifest,cores=s$cores,fit_jobs=fit_jobs,evaluation_jobs=evaluation_jobs,plan=FALSE,reuse_only=FALSE),group)
-  adni_render_report(repo,input,out,s,report_dir=file.path(out,'reports',group),group=group)
+  adni_render_report(repo,input,out,s,report_dir=adni_path(out,'reports',group),group=group,
+    filename=if(adni_storage_flat(out))'index.html'else'adni.html')
   invisible(result)
 }
 
@@ -2766,13 +2880,13 @@ adni_render_report <- function(repo,data_dir,output_dir,settings,report_source=N
   analysis<-env$adni_report_prepare(repo,data_dir,output_dir,settings,report_source,report_dir,group)
   render_env<-new.env(parent=globalenv());render_env$.adni_precomputed_analysis<-analysis
   render_env$.adni_repository_dir<-repo
-  if(is.null(rmd))rmd<-file.path(repo,'paper/applications/adni.Rmd')
+  if(is.null(rmd))rmd<-adni_path(repo,'paper/applications/adni.Rmd')
   rmarkdown::render(rmd,output_file=filename,output_dir=report_dir,intermediates_dir=report_dir,
     params=list(profile=settings$profile,action='report',cores=settings$cores,data_dir=data_dir,
       output_dir=output_dir,report_source=if(is.null(report_source))''else report_source,
       representative_fold=settings$representative_fold,appendix=settings$appendix),envir=render_env,quiet=TRUE)
-  cat('Saved ADNI HTML: ',file.path(report_dir,filename),'\n',sep='')
-  invisible(list(html=file.path(report_dir,filename),analysis=analysis))
+  cat('Saved ADNI HTML: ',adni_path(report_dir,filename),'\n',sep='')
+  invisible(list(html=adni_path(report_dir,filename),analysis=analysis))
 }
 
 # Author: Xinye Chen. Base-R C/X-only folds and nested stratified observation masks.
@@ -2817,7 +2931,9 @@ adni_balanced_folds <- function(d,C,X,seed) {
 }
 adni_prepare_folds <- function(cohort_file,metadata_file,output_dir) {
   if(!requireNamespace('jsonlite',quietly=TRUE)||!requireNamespace('digest',quietly=TRUE))stop('Install jsonlite and digest')
-  if(dir.exists(file.path(output_dir,'MC')))stop('Prepared inputs already exist; never overwrite or reroll frozen folds')
+  if(dir.exists(adni_path(output_dir,'MC'))||
+     (dir.exists(output_dir)&&any(grepl('^fold[0-9]+_',list.files(output_dir)))))
+    stop('Prepared inputs already exist; never overwrite or reroll frozen folds')
   meta<-jsonlite::fromJSON(metadata_file);d<-read.csv(cohort_file,stringsAsFactors=FALSE)
   for(name in c('fold_seed','calibration_seed','test_seed','model_seed')) {
     v<-meta[[name]]
@@ -2847,9 +2963,10 @@ adni_prepare_folds <- function(cohort_file,metadata_file,output_dir) {
     for(cell in c('O20','O50'))if(qr(cbind(1,as.matrix(tr[tr$RID%in%cal[[cell]],U,drop=FALSE])))$rank<length(U)+1L)
       stop('The frozen calibration vectors have insufficient affine rank; no outcome-guided mask reroll is performed')
     for(cell in c('O0','O20','O50')) {
-      dir<-file.path(output_dir,'MC',sprintf('fold%02d',f),cell);dir.create(file.path(dir,'private'),recursive=TRUE)
+      dir.create(output_dir,recursive=TRUE,showWarnings=FALSE)
+      paths<-base::file.path(output_dir,paste0(sprintf('fold%02d_%s_',f,cell),c('PROTOCOL.json','train.csv','test.csv')))
       train<-tr;train$calibration<-as.integer(train$RID%in%cal[[cell]])
-      write.csv(train,file.path(dir,'private/train.csv'),row.names=FALSE);write.csv(te,file.path(dir,'private/test.csv'),row.names=FALSE)
+      write.csv(train,paths[2],row.names=FALSE);write.csv(te,paths[3],row.names=FALSE)
       seed_names<-c('production','posterior','prediction','mixed_prediction','prospective_U','UC_GP','LVGP','EzGP','EzGP_draws')
       seeds<-setNames(lapply(seed_names,function(n)adni_seed(meta$model_seed,paste(f,if(n%in%c('UC_GP','LVGP','EzGP','EzGP_draws'))'baseline'else cell,n,sep='/'))),seed_names)
       p<-list(author='Xinye Chen',plan_id=meta$dataset_id,fold=f,O=cell,N=nrow(d),training_N=nrow(tr),test_N=nrow(te),
@@ -2858,18 +2975,18 @@ adni_prepare_folds <- function(cohort_file,metadata_file,output_dir) {
         ident=if(cell=='O0')'lower_triangular'else'none',standardize_U=cell!='O0',test_U_available_RID=if(cell=='O0')integer()else mask[[cell]],
         seeds=seeds,stratification_columns=strata,calibration_design='Proportional stratified sampling; fixed seeded order within stratum; nested20/50',
         fold_design=if('fold'%in%names(original))'Supplied frozen folds'else'C/X-only balanced folds; no Y or U used',
-        train_md5=unname(tools::md5sum(file.path(dir,'private/train.csv'))),test_md5=unname(tools::md5sum(file.path(dir,'private/test.csv'))))
-      jsonlite::write_json(p,file.path(dir,'PROTOCOL.json'),auto_unbox=TRUE,pretty=TRUE)
+        train_md5=unname(tools::md5sum(paths[2])),test_md5=unname(tools::md5sum(paths[3])))
+      jsonlite::write_json(p,paths[1],auto_unbox=TRUE,pretty=TRUE)
     }
   }
-  jsonlite::write_json(meta,file.path(output_dir,'DATASET.json'),auto_unbox=TRUE,pretty=TRUE)
+  jsonlite::write_json(meta,adni_path(output_dir,'DATASET.json'),auto_unbox=TRUE,pretty=TRUE)
   invisible(d[,c('RID','fold')])
 }
 
-# Author: Xinye Chen. ADNI CLI orchestration; application implementation is in adni/.
+# Author: Xinye Chen. ADNI CLI orchestration; application implementation is in this file.
 adni_method_main <- function(group,args=commandArgs(TRUE)) {
   script<-sub('^--file=','',grep('^--file=',commandArgs(FALSE),value=TRUE)[1])
-  repo<-normalizePath(file.path(dirname(normalizePath(script)),'..'))
+  repo<-normalizePath(adni_path(dirname(normalizePath(script)),'..'))
   api<-adni_load_api(repo)
   if(identical(args,'--help')) {
     cat('Rscript tools/adni-',group,'.R --profile=paper --cores=4\n',

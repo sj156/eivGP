@@ -46,6 +46,18 @@ testthat::test_that('arbitrary C dimensions prepare portable fivefold inputs wit
   api<-adni_screen_api(repo);inputs<-api$adni_plan_inputs(out)
   testthat::expect_equal(inputs$N,n);testthat::expect_equal(length(inputs$cells),15L)
   testthat::expect_true(all(inputs$audit$q==q));testthat::expect_true(all(table(mapping$fold)==20L))
+  testthat::expect_false(any(dir.exists(list.files(out,full.names=TRUE))))
+  testthat::expect_length(list.files(out),46L)
+  legacy<-file.path(root,paste0('legacy',q));dir.create(legacy)
+  for(f in 1:5)for(cell in c('O0','O20','O50')) {
+   target<-file.path(legacy,'MC',sprintf('fold%02d',f),cell,c('PROTOCOL.json','private/train.csv','private/test.csv'))
+   for(path in target)dir.create(dirname(path),recursive=TRUE,showWarnings=FALSE)
+   stopifnot(all(file.copy(adni_input_files(out,f,cell),target)))
+  }
+  old<-api$adni_plan_inputs(legacy)
+  testthat::expect_identical(old$cells,inputs$cells)
+  testthat::expect_identical(old$audit,inputs$audit)
+
   for(f in 1:5){x<-inputs$cells[[paste(f,'O20',sep='/')]];y<-inputs$cells[[paste(f,'O50',sep='/')]]
    testthat::expect_true(all(x$train$calibration<=y$train$calibration));testthat::expect_true(all(!x$available|y$available))
    counts<-table(x$train$C1);selected<-table(factor(x$train$C1[x$train$calibration==1],levels=names(counts)))
@@ -67,7 +79,7 @@ testthat::test_that('nested strata handle singleton groups and prohibit source-d
  testthat::expect_true(all(masks$O20%in%masks$O50));testthat::expect_true(all(masks$O50%in%d$RID))
  testthat::expect_error(adni_output_check(file.path(repo,'paper/results'),repo),'ignored results')
  testthat::expect_silent(adni_output_check(file.path(repo,'results/adni'),repo))
- testthat::expect_false(file.exists(file.path(repo,'data/adni/inputs/MC/fold01/O0/private/train.csv')))
+ testthat::expect_false(file.exists(file.path(repo,'data/adni/fold01_O0_train.csv')))
 })
 
 testthat::test_that('general entrypoint freezes custom settings and resumes with a different core count',{
@@ -85,9 +97,15 @@ testthat::test_that('general entrypoint freezes custom settings and resumes with
  args<-list(profile='quick',cores=2L,data_root=input,output=out,iter=32L,burn=8L,stages=c(24L,32L),
    folds=1L,cells='O20',chains=4L,draws_per_chain=5L)
  e$adni_method_run(repo,args,'eivGP')
- manifest<-jsonlite::fromJSON(file.path(out,'application_manifest.json'),simplifyVector=FALSE)
+ manifest<-jsonlite::fromJSON(adni_path(out,'application_manifest.json'),simplifyVector=FALSE)
  testthat::expect_identical(unlist(manifest$stages),c(24L,32L));testthat::expect_identical(manifest$chains,4L)
- fit<-file.path(out,'fits/fold01/O20/fit.rds');before<-tools::md5sum(fit)
+ testthat::expect_true(adni_storage_flat(out))
+ testthat::expect_identical(manifest$cases[[1]]$input,normalizePath(file.path(out,'data')))
+ testthat::expect_true(file.exists(file.path(out,'data/fold01_O20_train.csv')))
+ testthat::expect_true(file.exists(file.path(out,'eiv_fold01_O20/stages/S24/prediction_metrics.csv')))
+ testthat::expect_true(file.exists(file.path(out,'eiv_fold01_O20/prediction_metrics.csv')))
+ testthat::expect_false(any(dir.exists(file.path(out,c('fits','S24','S32','workflow','receipts')))))
+ fit<-adni_plan_fit_path(out,list(fold=1L,cell='O20'));before<-tools::md5sum(fit)
  args$cores<-1L;testthat::expect_error(e$adni_method_run(repo,args,'eivGP'),NA)
  testthat::expect_identical(tools::md5sum(fit),before)
  args$burn<-9L;testthat::expect_error(e$adni_method_run(repo,args,'eivGP'),'settings/inputs differ')

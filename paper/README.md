@@ -58,7 +58,7 @@ Rscript tools/ocean.R --action=plan --profile=paper --dataset=ocean500 --cores=4
 # Use action=fit, then action=analyze; action=continue explicitly extends flagged chains.
 ```
 
-The default output is `results/ocean/<dataset>/<profile>/`; `--output` overrides
+The default output is `results/<dataset>/` for paper runs; `--output` overrides
 it. The Rmd defaults to `action="report"` and does not fit models. Prepare the
 1000-profile folds separately with `tools/ocean-prepare-folds.R`.
 Only `ocean.html` is versioned as the short-chain example report.
@@ -73,16 +73,16 @@ Rscript tools/adni-competitors.R --profile=paper --cores=16
 Rscript tools/adni-report.R --profile=paper --cores=16
 ```
 
-ADNI inputs default to repository-relative `data/adni/inputs/`, while results go
-to ignored `results/adni_paper/` for these commands. Participant data and empirical
+ADNI inputs default to repository-relative `data/adni/`, while results go
+to ignored `results/adni/` for these commands. Participant data and empirical
 HTML are not versioned. The paper budget is four chains, 50,000 total iterations
 per chain including 5,000 burn-in, and permits recorded overrides. The separate
 pilot budget uses 1,000 then 1,500 total iterations per chain with burn 500.
-See [ADNI result locations](../README.md#where-adni-results-are-saved) for fits,
+See [ADNI result locations](applications/README_adni.md#where-adni-results-are-saved) for fits,
 scores, task logs and exported figures/tables.
 For the separately supplied three-item cohort, add `--dataset=3C` to all three
-entrypoints, place inputs in `data/adni/3C/inputs/`, and read paper results from
-`results/3C_paper/`.
+entrypoints, place inputs in `data/adni_3C/`, and read paper results from
+`results/3C/`.
 
 Use separate output roots for changed package/input identities. Fits retain chain histories and terminal states for diagnostics and continuation. Existing archives are not automatically migrated or deleted.
 

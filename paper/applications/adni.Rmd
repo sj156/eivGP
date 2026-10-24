@@ -34,8 +34,8 @@ source(file.path(repository_dir,'tools/adni.R'),local=TRUE)
 list2env(as.list(adni_load_api(repository_dir)),envir=environment())
 a<-get0('.adni_precomputed_analysis',inherits=TRUE)
 if(is.null(a)&&params$action=='report') {
-  data_dir<-if(nzchar(params$data_dir))params$data_dir else file.path(repository_dir,'data/adni/inputs')
-  output_dir<-if(nzchar(params$output_dir))params$output_dir else file.path(repository_dir,'results',paste0('adni_',params$profile))
+  data_dir<-if(nzchar(params$data_dir))params$data_dir else file.path(repository_dir,'data/adni')
+  output_dir<-if(nzchar(params$output_dir))params$output_dir else adni_default_output('adni',params$profile,repository_dir)
   settings<-adni_settings(params$profile,params$cores,representative_fold=params$representative_fold,appendix=params$appendix)
   a<-adni_report_prepare(repository_dir,data_dir,output_dir,settings,
     if(nzchar(params$report_source))params$report_source else NULL,output_dir)
@@ -55,7 +55,7 @@ table_html<-function(x,caption='',note='')cat(adni_table_html(x,caption,note),'\
   remain compatible with saved fitting identities.
 - **Sampling:** defaults are HMC at O0/O20 and elliptical slice sampling at O50.
   Core allocation changes execution concurrency, not chains, seeds or masks.
-- **Inputs and outputs:** private prepared folds are read from `data/adni/inputs`
+- **Inputs and outputs:** private prepared folds are read from `data/adni`
   or `--data-root`. Fits, diagnostics and empirical HTML are written to ignored
   `results/` or an external directory. Data preparation is separate from fitting.
 
@@ -232,7 +232,7 @@ the initially requested budget. This precision rule does not certify convergence
 
 ```{r full-history-scientific-traces, eval=has_results, echo=FALSE, out.width='100%'}
 full_history <- getFromNamespace('mixedgp_application_trace_report','eivGP')(
-  a$output_dir, file.path(a$report_dir,'scientific-traces'))
+  a$output_dir, adni_path(a$output_dir,'reports','scientific-traces'))
 if(length(full_history))knitr::include_graphics(full_history[grepl('[.]png$',full_history)])
 ```
 

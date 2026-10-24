@@ -1,5 +1,17 @@
 # Unreleased
 
+- Move ADNI and Ocean application functions to the flat `tools/adni-tools.R`
+  and `tools/ocean-tools.R` scripts. Keep shared scheduling, atomic storage,
+  table formatting and competitor controls in the package as `mixedgp_*` helpers.
+  Preserve ADNI resident-job limits and single-load checkpoint continuation.
+  Application-specific workflow exports are now sourced from the tool scripts.
+
+- Correct EzGP training--test covariances at exact and rounded input matches.
+  Keep training noise out of cross-covariances and add independent test noise
+  once; share the correction across cross-validation, prediction, complete-case
+  integration, and application curves. Existing fitted parameters can be reused.
+  Add direct-conditioning regression tests without optimizer calls.
+
 - Production Study I now continues exact saved states until all monitored scientific
   targets have bulk and tail ESS strictly above 100; retain R-hat and MCSE for review.
 - Add `continue_eivgp_until_ess()` and `continue_study1_results()` to extend chains

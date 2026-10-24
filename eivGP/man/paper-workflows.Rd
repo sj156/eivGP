@@ -8,7 +8,6 @@
 \alias{report_table}
 \alias{read_fit}
 \alias{save_fit}
-\alias{run_adni_analysis}
 \title{Run analyses and report saved results}
 \description{Package-owned numerical and application workflows, reusable score summaries, plots, tables, and lossless fit storage. Paper scripts select scientific settings and external data/output locations.}
 \usage{
@@ -23,13 +22,11 @@ plot_comparison(summary, metric = "RMSE")
 report_table(x, caption = NULL, digits = 3L)
 read_fit(path)
 save_fit(object, path)
-run_adni_analysis(data_dir, output_dir, action = c("plan", "run", "report"),
-  profile = c("paper", "quick"), cores = 4L)
 }
 \arguments{
 \item{study}{Numerical design identifier.}
 \item{profile}{Scientific budget profile. Quick runs are workflow examples.}
-\item{output_root, data_root, data_dir, output_dir, path, run_dir, competitor_dir}{Explicit external directories or artifact paths.}
+\item{output_root, data_root, path, run_dir, competitor_dir}{Explicit external directories or artifact paths.}
 \item{cores}{Total CPU budget.}
 \item{config}{Resolved settings returned by \code{study_config}.}
 \item{action}{Planning, execution, or reporting. Report mode does not fit models.}

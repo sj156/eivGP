@@ -1,6 +1,8 @@
+repo<-Sys.getenv('EIVGP_TEST_REPO');stopifnot(nzchar(repo))
+source(file.path(repo,'tools/ocean-tools.R'),local=TRUE)
 testthat::test_that("R fold preparation is deterministic and independent of responses", {
-  root<-normalizePath(testthat::test_path("../../.."),mustWork=TRUE)
-  script<-file.path(root,"data/ocean_silicate/prepare_folds.R")
+  root<-normalizePath(testthat::test_path("../.."),mustWork=TRUE)
+  script<-file.path(root,"tools/ocean-tools.R")
   testthat::skip_if_not(file.exists(script))
   entry<-new.env(parent=globalenv());sys.source(script,entry)
   for(n in c(500L,1000L)) {

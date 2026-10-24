@@ -19,10 +19,10 @@ screening exercise; source identifiers and sampling metadata are retained.
 From the repository root:
 
 ```sh
-Rscript data/ocean_silicate/prepare_folds.R ocean1000
+Rscript tools/ocean-prepare-folds.R ocean1000
 ```
 
-`prepare_folds.R` performs the input-balanced assignment, nested training calibration
+`tools/ocean-prepare-folds.R` performs the input-balanced assignment, nested training calibration
 and test-u mask generation entirely in R. It uses `jsonlite` for metadata.
 Output defaults to `reproduction/ocean/prepared/ocean1000` and is selected by
 `--dataset=ocean1000` in `ocean.R` and `dataset="ocean1000"` in the Rmd. Pass a second argument to choose another

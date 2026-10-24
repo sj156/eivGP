@@ -1,19 +1,17 @@
 # Author: Xinye Chen. Synthetic configuration, privacy and observation-design contracts.
 repo<-Sys.getenv('EIVGP_TEST_REPO');stopifnot(nzchar(repo))
-source(file.path(repo,'paper/applications/adni.R'))
+source(file.path(repo,'tools/adni.R'))
 list2env(as.list(adni_load_api(repo)),envir=environment())
-source(file.path(repo,'data/adni/prepare_folds.R'))
+source(file.path(repo,'tools/adni-tools.R'))
 
-testthat::test_that('application files correspond to Ocean and implementation is installed',{
- app<-file.path(repo,'paper/applications')
- ocean<-list.files(app,'^ocean([.-].*)?[.](R|Rmd|html)$')
- adni<-list.files(app,'^adni([.-].*)?[.](R|Rmd|html)$')
- testthat::expect_setequal(adni,sub('^ocean','adni',ocean))
- testthat::expect_equal(sum(grepl('[.]R$',adni)),5L)
- testthat::expect_true(all(c('adni_workflow_api','run_adni_application')%in%getNamespaceExports('eivGP')))
- api<-eivGP::adni_workflow_api(repo)
- for(n in c('adni_method_run','adni_plan_fit_task','adni_analyze_cell','adni_report_prepare','adni_saved_functionals'))
-  testthat::expect_identical(body(api[[n]]),body(getFromNamespace(n,'eivGP')))
+testthat::test_that('ADNI implementation lives only in the application',{
+ api<-adni_load_api(repo)
+ testthat::expect_false(any(grepl('^(adni_|ADNI_|run_adni|eivgp_adni)',ls(asNamespace('eivGP'),all.names=TRUE))))
+ for(n in c('adni_method_run','adni_plan_fit_task','adni_analyze_cell','adni_report_prepare','adni_saved_functionals')) {
+  testthat::expect_true(is.function(api[[n]]))
+  testthat::expect_identical(environment(api[[n]]),api)
+ }
+ testthat::expect_true(all(file.exists(adni_source_files(repo))))
 })
 
 testthat::test_that('ADNI pilot matches screening and paper accepts explicit budgets',{
@@ -81,7 +79,7 @@ testthat::test_that('general entrypoint freezes custom settings and resumes with
    U_order=c('FDG','HIP'),fold_seed=9L,calibration_seed=10L,test_seed=11L,model_seed=12L)
  write.csv(d,file.path(root,'cohort.csv'),row.names=FALSE);jsonlite::write_json(meta,file.path(root,'meta.json'),auto_unbox=TRUE)
  input<-file.path(root,'inputs');out<-file.path(root,'results');adni_prepare_folds(file.path(root,'cohort.csv'),file.path(root,'meta.json'),input)
- e<-eivGP::adni_workflow_api(repo)
+ e<-adni_load_api(repo)
  # The runner is exercised; expensive HTML functionals are tested separately from saved files.
  e$adni_render_report<-function(...)invisible(NULL)
  args<-list(profile='quick',cores=2L,data_root=input,output=out,iter=32L,burn=8L,stages=c(24L,32L),

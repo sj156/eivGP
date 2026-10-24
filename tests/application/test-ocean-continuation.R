@@ -1,3 +1,5 @@
+repo<-Sys.getenv('EIVGP_TEST_REPO');stopifnot(nzchar(repo))
+source(file.path(repo,'tools/ocean-tools.R'),local=TRUE)
 testthat::test_that("Ocean continuation accepts supported totals before held-out prediction", {
   # Use an existing checkpoint and stop at prediction; no MCMC or GP is fitted.
   prediction_calls<-0L
@@ -15,9 +17,9 @@ testthat::test_that("Ocean continuation accepts supported totals before held-out
   fit<-list(diagnostics=list(rhat_hyper=diagnostic,rhat_tau=diagnostic,rhat_u=diagnostic),
     mcmc=list(samples_tau=matrix(1,20L,1L)))
   saveRDS(fit,file.path(cell,"fit_plus20k.rds"))
-  env<-new.env(parent=asNamespace("eivGP"))
+  env<-new.env(parent=environment(ocean_initial_functions))
   env$root<-root;env$out<-output;env$continuation_iter<-80L
-  env$atomic_csv<-ocean_atomic_csv
+  env$atomic_csv<-mixedgp_atomic_csv
   env$set_task<-env$write_progress<-function(...)invisible(NULL)
   ocean_continuation_functions(env)
   for(n in c(200L,500L,1000L)) {
@@ -62,7 +64,7 @@ testthat::test_that("extension budgets are chosen after fitting and saved per ta
   testthat::expect_true(any(grepl("continuation_settings.rds",ocean_task_files(task,stage="continue"),fixed=TRUE)))
   testthat::expect_true(any(grepl("continuation_settings.rds",ocean_task_files(task,stage="analyze"),fixed=TRUE)))
   path<-file.path(root,"full5_class4/fold01/O20/convergence_parameters.csv")
-  ocean_atomic_csv(data.frame(rhat=1.2,ess_bulk=20,ess_tail=10),path)
+  mixedgp_atomic_csv(data.frame(rhat=1.2,ess_bulk=20,ess_tail=10),path)
   decisions<-ocean_continuation_decisions(root)
   testthat::expect_identical(decisions$decision[decisions$fold==1 & decisions$cell=="O20"],"append_12000")
 })

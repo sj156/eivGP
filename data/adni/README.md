@@ -31,7 +31,7 @@ Protocols supply `plan_id` (a portable dataset identifier), `p,q,d`, `X_order`,
 `standardize_U`, fixed `test_U_available_RID`, CSV MD5s and task seeds.
 O0 uses `ident="lower_triangular",standardize_U=false`; O20/O50 use
 `ident="none",standardize_U=true`. All physical calibration vectors must have
-sufficient affine rank. Use `prepare_folds.R` to generate the complete contract.
+sufficient affine rank. Use `tools/adni-prepare-folds.R` to generate the complete contract.
 
 The separately supplied three-item cohort (MEMORY3, MEMORY8 and DIVATT3) uses
 `data/adni/3C/inputs/` with the same structure. Run all three application
@@ -49,7 +49,7 @@ setting. If using a different number of C items, provide matching `C_order` and
 `m_vec` arrays and `C1,...,Cq` columns; no R code changes are needed.
 
 ```sh
-Rscript data/adni/prepare_folds.R /private/cohort.csv /private/DATASET.json data/adni/inputs
+Rscript tools/adni-prepare-folds.R /private/cohort.csv /private/DATASET.json data/adni/inputs
 ```
 
 The caller is responsible for ADNI permissions, female restriction, measurement

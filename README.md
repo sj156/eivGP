@@ -23,23 +23,26 @@ data/ocean_silicate/
   n200/         # frozen 200-profile data and five-fold inputs
   n500/         # updated 500-profile data and five-fold inputs
   n1000/        # raw selected 1000-profile cohort
-  prepare_folds.R # standalone fold preparation entrypoint
 data/adni/
   inputs/       # local prepared ADNI folds; only .gitkeep is versioned
-  prepare_folds.R # preparation from an already matched private cohort
 paper/
   numerical/    # study1 and study2: one .R, .Rmd, and .html each
-  applications/ # ocean and adni: one .R, .Rmd, and .html each
+  applications/ # Ocean and ADNI Rmd reports, HTML and guides
   config/       # Ocean dataset/compute parameter templates
   manifests/    # selected numerical runs and frozen Ocean input identities
-tools/
+tools/          # flat application scripts; no application subdirectories
+  adni-tools.R  # all ADNI application functions
+  ocean-tools.R # all Ocean application functions
+  adni-eivGP.R, adni-competitors.R, adni-report.R
+  ocean-eivGP.R, ocean-competitors.R, ocean-report.R
+  adni-prepare-folds.R, ocean-prepare-folds.R
   build_package.R
   render_reports.R
 ```
 
-`eivGP/R/` is the authoritative implementation. The R modules and native HMC implementation are installed together as one package. Metadata and static-analysis declarations remain separate. Analysis scripts call package APIs and select
+`eivGP/R/` contains the shared model and numerical implementation. The R modules and native HMC implementation are installed together as one package. Metadata and static-analysis declarations remain separate. Analysis scripts call package APIs and select
 settings, inputs, and output locations. Competitor adapters call `kergp`, `LVGP`,
-and `EzGP`. Reporting functions also live in the package.
+and `EzGP`. Shared reporting utilities live in the package; ADNI-specific reporting lives in `tools/adni-tools.R`.
 
 ## Install
 
@@ -147,15 +150,15 @@ separate application installation and dataset guide, see
 #### Fit and analyze the Ocean experiment
 
 ```sh
-Rscript paper/applications/ocean-eivGP.R --plan=true --cores=16
+Rscript tools/ocean-eivGP.R --plan=true --cores=16
 
 # Fit and analyze each method group, then assemble manuscript comparisons.
-Rscript paper/applications/ocean-eivGP.R --cores=16
-Rscript paper/applications/ocean-competitors.R --cores=16
-Rscript paper/applications/ocean-report.R --cores=16
+Rscript tools/ocean-eivGP.R --cores=16
+Rscript tools/ocean-competitors.R --cores=16
+Rscript tools/ocean-report.R --cores=16
 
 # Explicitly extend flagged fits, then update analysis and HTML.
-Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=16
+Rscript tools/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=16
 ```
 
 Sampling settings are fixed by profile. `paper` uses four chains, 50,000 initial
@@ -202,8 +205,8 @@ keeps this check separate from the formal ocean500 analysis.
 
 ```sh
 OCEAN_CHECK_OUTPUT="$(mktemp -d "${TMPDIR:-/tmp}/eivGP-ocean-check.XXXXXX")"
-Rscript paper/applications/ocean.R --action=fit --profile=pilot --dataset=ocean200 --folds=1,2 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --cores=8 --output="$OCEAN_CHECK_OUTPUT"
-Rscript paper/applications/ocean.R --action=continue --profile=pilot --dataset=ocean200 --folds=1,2 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --continuation-iter=40 --cores=8 --output="$OCEAN_CHECK_OUTPUT"
+Rscript tools/ocean.R --action=fit --profile=pilot --dataset=ocean200 --folds=1,2 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --cores=8 --output="$OCEAN_CHECK_OUTPUT"
+Rscript tools/ocean.R --action=continue --profile=pilot --dataset=ocean200 --folds=1,2 --cells=O20 --modules=eiv,complete_case_baselines,continuation,prediction --continuation-iter=40 --cores=8 --output="$OCEAN_CHECK_OUTPUT"
 ```
 
 Both commands retain the allocated core budget for analysis and generate or update
@@ -234,9 +237,9 @@ as described in the Ocean guide.
 
 ```sh
 # Analyze completed saved fits and scores; fail rather than fit missing models.
-Rscript paper/applications/ocean-eivGP.R --reuse-only=true --cores=16
-Rscript paper/applications/ocean-competitors.R --reuse-only=true --cores=16
-Rscript paper/applications/ocean-report.R --cores=16
+Rscript tools/ocean-eivGP.R --reuse-only=true --cores=16
+Rscript tools/ocean-competitors.R --reuse-only=true --cores=16
+Rscript tools/ocean-report.R --cores=16
 ```
 
 The CLI already generates HTML. Direct Rmd rendering remains available using the same dataset, profile and result root:
@@ -268,12 +271,12 @@ After obtaining the prepared data separately, place its `MC/` directory and
 Run from the repository root:
 
 ```sh
-Rscript paper/applications/adni-eivGP.R --plan=true --profile=paper --cores=16
+Rscript tools/adni-eivGP.R --plan=true --profile=paper --cores=16
 
 # Fit and analyze each method group, then assemble manuscript comparisons.
-Rscript paper/applications/adni-eivGP.R --profile=paper --cores=16
-Rscript paper/applications/adni-competitors.R --profile=paper --cores=16
-Rscript paper/applications/adni-report.R --profile=paper --cores=16
+Rscript tools/adni-eivGP.R --profile=paper --cores=16
+Rscript tools/adni-competitors.R --profile=paper --cores=16
+Rscript tools/adni-report.R --profile=paper --cores=16
 ```
 
 ADNI `paper` uses five folds, four chains and 50,000 total iterations per chain
@@ -307,9 +310,9 @@ separately. Detailed output locations are in the
 
 ```sh
 # Analyze completed saved fits and scores; fail rather than fit missing models.
-Rscript paper/applications/adni-eivGP.R --reuse-only=true --profile=paper --cores=16
-Rscript paper/applications/adni-competitors.R --reuse-only=true --profile=paper --cores=16
-Rscript paper/applications/adni-report.R --profile=paper --cores=16
+Rscript tools/adni-eivGP.R --reuse-only=true --profile=paper --cores=16
+Rscript tools/adni-competitors.R --reuse-only=true --profile=paper --cores=16
+Rscript tools/adni-report.R --profile=paper --cores=16
 ```
 
 The report is generated through `paper/applications/adni.Rmd`. It includes the
@@ -367,7 +370,7 @@ migration runs during fitting, prediction, report generation or resume.
 ### Ocean: one CPU allocation, complete paper exports
 
 After installation, run `ocean-eivGP.R`, `ocean-competitors.R`, then
-`ocean-report.R` from `paper/applications/`, each with `--cores=16`. The first two
+`ocean-report.R` from `tools/`, each with `--cores=16`. The first two
 combine fitting and analysis by method group; the third assembles paper tables,
 figures and HTML. Use `--plan=true` to preview or `--reuse-only=true` on the method
 scripts to prohibit fitting when reproducing completed saved results. See [Ocean reproduction](paper/applications/README_ocean.md).

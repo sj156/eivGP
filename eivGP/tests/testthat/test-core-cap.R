@@ -19,7 +19,5 @@ test_that("requested budgets are capped without changing chain counts", {
   expect_equal(mixedgp_budget_cores(),if(.Platform$OS.type=="unix")16L else 1L)
   close()
   expect_null(mixedgp_budget())
-  # CPU resolution never modifies the independently selected four-chain setting.
-  cfg <- ocean_settings(profile="paper",cores=56L)
-  expect_equal(cfg$chains,4L)
+
 })

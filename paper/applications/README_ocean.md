@@ -6,9 +6,9 @@ The defaults are the 500-profile paper design, four chains and 50,000 iterations
 Only the total CPU allocation needs to be specified:
 
 ```sh
-Rscript paper/applications/ocean-eivGP.R --cores=16
-Rscript paper/applications/ocean-competitors.R --cores=16
-Rscript paper/applications/ocean-report.R --cores=16
+Rscript tools/ocean-eivGP.R --cores=16
+Rscript tools/ocean-competitors.R --cores=16
+Rscript tools/ocean-report.R --cores=16
 ```
 
 Run these sequentially against the same result directory. `ocean-eivGP.R` owns
@@ -16,16 +16,17 @@ EIV-GP prediction, oxygen imputation, m/f summaries and scientific-target traces
 `ocean-competitors.R` owns UC-GP, LVGP and EzGP together, including their original
 categorical and complete-case fits, predictions and scores. `ocean-report.R`
 assembles the comparisons, six manuscript tables, eight figures and `ocean.html`
-from saved results. All scientific calculations remain in the installed package;
-`ocean-workflow.R` shares CLI orchestration without copying model implementations.
+from saved results. Model calculations remain in the installed package;
+All executable Ocean scripts are directly in `tools/`.
+`tools/ocean-tools.R` contains Ocean-specific functions, including preparation, CLI orchestration and reporting. It reuses shared package utilities and model implementations.
 Method reports are `reports/eivGP/index.html` and `reports/competitors/index.html`.
 
 For the existing paper fits, explicitly prohibit fitting:
 
 ```sh
-Rscript paper/applications/ocean-eivGP.R --cores=16 --reuse-only=true --output=/path/to/saved-paper
-Rscript paper/applications/ocean-competitors.R --cores=16 --reuse-only=true --output=/path/to/saved-paper
-Rscript paper/applications/ocean-report.R --cores=16 --output=/path/to/saved-paper
+Rscript tools/ocean-eivGP.R --cores=16 --reuse-only=true --output=/path/to/saved-paper
+Rscript tools/ocean-competitors.R --cores=16 --reuse-only=true --output=/path/to/saved-paper
+Rscript tools/ocean-report.R --cores=16 --output=/path/to/saved-paper
 ```
 
 Saved-only execution requires the selected fits and prediction artifacts and
@@ -162,7 +163,7 @@ The 200 and 500 datasets include their five-fold inputs. Prepare the 1000 datase
 once before running the experiment:
 
 ```sh
-Rscript data/ocean_silicate/prepare_folds.R ocean1000
+Rscript tools/ocean-prepare-folds.R ocean1000
 ```
 
 This writes `reproduction/ocean/prepared/ocean1000`, which both entrypoints automatically
@@ -174,8 +175,8 @@ R-specific partitions; the supplied 200/500 fold files remain frozen.
 To regenerate the 500-profile design separately, or choose an output directory:
 
 ```sh
-Rscript data/ocean_silicate/prepare_folds.R ocean500
-Rscript data/ocean_silicate/prepare_folds.R ocean1000 /external/ocean1000-inputs
+Rscript tools/ocean-prepare-folds.R ocean500
+Rscript tools/ocean-prepare-folds.R ocean1000 /external/ocean1000-inputs
 ```
 
 For custom prepared inputs, use `--data-root` in the CLI and `data_dir` in the Rmd.
@@ -197,7 +198,7 @@ Select a new `--output` for new fits or the original environment to resume old f
 Chain extension remains an explicit advanced operation:
 
 ```sh
-Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=16
+Rscript tools/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=16
 ```
 
 Results default to `<repository>/results/<dataset>/` for paper runs; pilot and quick use `results/<dataset>_pilot/` and `results/<dataset>_quick/`. Use `--output` to select any custom or existing directory. Existing results are not moved. To read an older default run, explicitly pass its `~/eivGP-ocean/<dataset>/<profile>/` path.
@@ -240,7 +241,7 @@ Each fit supports one extension, with paper default +20,000 iterations per chain
 and pilot default +80. `--continuation-iter` may choose another added length:
 
 ```sh
-Rscript paper/applications/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=10000 --cores=16
+Rscript tools/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=10000 --cores=16
 ```
 
 Passing fits are skipped; conflicting saved extension lengths are rejected.
@@ -275,7 +276,7 @@ Unmarked existing roots retain their legacy paths. Readers, reports, continuatio
 The migration script is **dry-run by default** and refuses a source with `.workflow.lock`. Do not remove a lock while its job is running. Use a new, absent destination; existing outputs are never overwritten.
 
 ```bash
-Rscript paper/applications/migrate_ocean.R \
+Rscript tools/migrate_ocean.R \
   --source=/path/to/results/ocean/ocean500/paper \
   --destination=/path/to/results/ocean500
 ```
@@ -340,3 +341,5 @@ Install source changes only after active runs have finished. Do not change a
 running process or overwrite its installed library. New runs record the ESS
 setting in their workflow identity; incompatible historical roots are not
 silently relabeled.
+
+Ocean-specific package exports are now application functions: source `tools/ocean-tools.R` to access `ocean_settings()`, `ocean_workflow_api()` and `run_ocean_analysis()`. Reinstall the refactored package once; later application-script edits do not require reinstalling. Existing pre-refactor results retain their provenance checks.

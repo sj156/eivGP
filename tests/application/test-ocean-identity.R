@@ -1,3 +1,5 @@
+repo<-Sys.getenv('EIVGP_TEST_REPO');stopifnot(nzchar(repo))
+source(file.path(repo,'tools/ocean-tools.R'),local=TRUE)
 test_that("identity conflicts explain sampling differences and preserve saved results", {
   output<-tempfile("ocean-saved-");dir.create(output)
   on.exit(unlink(output,recursive=TRUE),add=TRUE)
@@ -33,12 +35,13 @@ test_that("the executor stops incompatible runs before any task starts", {
   saveRDS(saved,file.path(output,"workflow_identity.rds"))
   saveRDS(list(draws=1:10),file.path(output,"fit.rds"))
   files<-list.files(output,full.names=TRUE);hashes<-tools::md5sum(files)
-  testthat::local_mocked_bindings(
-    ocean_prepare_inputs=function(...)list(),
-    ocean_select_tasks=function(...)data.frame(module="eiv"),
-    ocean_identity=function(...)current,
-    ocean_schedule=function(...)stop("Fitting must not start"),.package="eivGP")
-  expect_error(ocean_execute("unused","unused",output,ocean_settings(action="fit")),
+  execute<-ocean_execute
+  mocked<-new.env(parent=environment(execute));environment(execute)<-mocked
+  mocked$ocean_prepare_inputs<-function(...)list()
+  mocked$ocean_select_tasks<-function(...)data.frame(module="eiv")
+  mocked$ocean_identity<-function(...)current
+  mocked$mixedgp_schedule<-function(...)stop("Fitting must not start")
+  expect_error(execute("unused","unused",output,ocean_settings(action="fit")),
     "iter: saved=100000; requested=50000",fixed=TRUE)
   expect_identical(tools::md5sum(files),hashes)
   expect_identical(sort(list.files(output,all.files=TRUE,no..=TRUE)),sort(basename(files)))
@@ -59,8 +62,9 @@ test_that("initial CLI fitting selects a new folder without changing old checkpo
   id<-list(numerics=list(iter=100000L));saveRDS(id,file.path(old,"workflow_identity.rds"))
   saveRDS(1:10,file.path(old,"fit.rds"));files<-list.files(old,full.names=TRUE)
   hashes<-tools::md5sum(files);times<-file.info(files)$mtime
-  repo<-normalizePath(testthat::test_path("../../.."),mustWork=TRUE)
-  env<-new.env(parent=globalenv());sys.source(file.path(repo,"paper/applications/ocean.R"),env)
+  repo<-normalizePath(testthat::test_path("../.."),mustWork=TRUE)
+  env<-new.env(parent=globalenv());sys.source(file.path(repo,"tools/ocean.R"),env)
+  env<-environment(env$ocean_run_cli) # Mock the isolated application bindings.
   expect_identical(env$ocean_choose_fit_output(old,id),old)
   message<-capture.output(new<-env$ocean_choose_fit_output(old,list(numerics=list(iter=50000L))))
   expect_true(dir.exists(new));expect_false(identical(new,old))
@@ -69,7 +73,7 @@ test_that("initial CLI fitting selects a new folder without changing old checkpo
   expect_true(any(grepl(paste0("--output=",shQuote(new)),message,fixed=TRUE)))
   expect_identical(tools::md5sum(files),hashes);expect_identical(file.info(files)$mtime,times)
   env$ocean_default_output<-function(...)old
-  env$ocean_resolve_path<-getFromNamespace("ocean_resolve_path","eivGP")
+  env$ocean_resolve_path<-get("ocean_resolve_path")
   saveRDS(new,paste0(old,".latest-run.rds"))
   expect_identical(env$ocean_output_dir(repo,"ocean500","paper"),new)
   expect_identical(env$ocean_output_dir(repo,"ocean500","paper",old),old)

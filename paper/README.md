@@ -9,8 +9,8 @@ Study I and application workflows are unchanged.
 |---|---|---|---|
 | Study I | [R](numerical/study1.R) | [Rmd](numerical/study1.Rmd) | [HTML](numerical/study1.html) |
 | Study II | [EIV-GP](numerical/study2-eivGP.R), [competitors](numerical/study2-competitors.R), [report](numerical/study2.R) | [Rmd](numerical/study2.Rmd) | [HTML](numerical/study2.html) |
-| Ocean | [R](applications/ocean.R) | [Rmd](applications/ocean.Rmd) | [HTML](applications/ocean.html) |
-| ADNI | [EIV-GP](applications/adni-eivGP.R), [competitors](applications/adni-competitors.R), [report](applications/adni-report.R) | [Rmd](applications/adni.Rmd) | [HTML plan](applications/adni.html) |
+| Ocean | [R](../tools/ocean.R) | [Rmd](applications/ocean.Rmd) | [HTML](applications/ocean.html) |
+| ADNI | [EIV-GP](../tools/adni-eivGP.R), [competitors](../tools/adni-competitors.R), [report](../tools/adni-report.R) | [Rmd](applications/adni.Rmd) | [HTML plan](applications/adni.html) |
 
 ## Read the selected historical results (optional)
 
@@ -54,23 +54,23 @@ results and generate HTML. See [Ocean instructions](applications/README_ocean.md
 for installation, data preparation, execution and report parameters.
 
 ```sh
-Rscript paper/applications/ocean.R --action=plan --profile=paper --dataset=ocean500 --cores=4
+Rscript tools/ocean.R --action=plan --profile=paper --dataset=ocean500 --cores=4
 # Use action=fit, then action=analyze; action=continue explicitly extends flagged chains.
 ```
 
 The default output is `results/ocean/<dataset>/<profile>/`; `--output` overrides
 it. The Rmd defaults to `action="report"` and does not fit models. Prepare the
-1000-profile folds separately with `data/ocean_silicate/prepare_folds.R`.
+1000-profile folds separately with `tools/ocean-prepare-folds.R`.
 Only `ocean.html` is versioned as the short-chain example report.
 
 ADNI uses the same three method-oriented entrypoints with separately supplied
 private prepared folds; see [ADNI instructions](applications/README_adni.md):
 
 ```sh
-Rscript paper/applications/adni-eivGP.R --plan=true --profile=paper --cores=16
-Rscript paper/applications/adni-eivGP.R --profile=paper --cores=16
-Rscript paper/applications/adni-competitors.R --profile=paper --cores=16
-Rscript paper/applications/adni-report.R --profile=paper --cores=16
+Rscript tools/adni-eivGP.R --plan=true --profile=paper --cores=16
+Rscript tools/adni-eivGP.R --profile=paper --cores=16
+Rscript tools/adni-competitors.R --profile=paper --cores=16
+Rscript tools/adni-report.R --profile=paper --cores=16
 ```
 
 ADNI inputs default to repository-relative `data/adni/inputs/`, while results go

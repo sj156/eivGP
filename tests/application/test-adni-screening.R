@@ -1,6 +1,6 @@
 # Author: Xinye Chen. Synthetic contract checks; no participant records in tests.
 repo<-Sys.getenv('EIVGP_TEST_REPO');stopifnot(nzchar(repo))
-source(file.path(repo,'paper/applications/adni.R'))
+source(file.path(repo,'tools/adni.R'))
 list2env(as.list(adni_load_api(repo)),envir=environment())
 a<-adni_screen_api(repo)
 fixture<-function(root,q=4L,plan='Plan1-6-1'){
@@ -51,9 +51,9 @@ testthat::test_that('groups separate EIV, comparators and strict saved-only repo
 })
 testthat::test_that('public scheduler lends one total pool rather than full-chain reservations',{
  testthat::expect_false(exists('mixedgp_task_budget',envir=asNamespace('eivGP'),inherits=FALSE))
- testthat::expect_equal(a$queue$ocean_stage_workers(5L,'fit',10L,4L),2L)
- testthat::expect_equal(a$queue$ocean_stage_workers(6L,'fit',10L,4L),2L)
- testthat::expect_true(is.infinite(a$queue$ocean_controls()$LVGP$max_elapsed_seconds));testthat::expect_true(a$queue$ocean_controls()$LVGP$parallel)
+ testthat::expect_equal(a$queue$mixedgp_stage_workers(5L,'fit',10L,4L),2L)
+ testthat::expect_equal(a$queue$mixedgp_stage_workers(6L,'fit',10L,4L),2L)
+ testthat::expect_true(is.infinite(a$queue$mixedgp_competitor_controls()$LVGP$max_elapsed_seconds));testthat::expect_true(a$queue$mixedgp_competitor_controls()$LVGP$parallel)
  root<-tempfile();dir.create(root);on.exit(unlink(root,recursive=TRUE));close<-a$mixedgp_budget_enter(2L);on.exit(close(),add=TRUE)
  tasks<-data.frame(plan='Plan1-6-1',fold=1:3,cell='O20',method='EIV-GP',kind='eiv',stage='S1',id=paste0('job',1:3))
  status<-adni_screen_phase(tasks,'fit',a$mixedgp_budget_cores(),a,function(t,n){stopifnot(n==a$mixedgp_budget_cores());a$mixedgp_budget_yield(function()getFromNamespace('mixedgp_stage_lapply','eivGP')(1:3,function(j)j*j));NULL},root)

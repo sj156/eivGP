@@ -1,3 +1,5 @@
+repo<-Sys.getenv('EIVGP_TEST_REPO');stopifnot(nzchar(repo))
+source(file.path(repo,'tools/ocean-tools.R'),local=TRUE)
 test_that("flat paths are consistent across incremental builders and legacy readers", {
   root<-tempfile();on.exit(unlink(root,recursive=TRUE),add=TRUE)
   ocean_storage_init(root)
@@ -48,11 +50,11 @@ test_that("migration planning is read only; fixture migration preserves fits and
 
 test_that("flat continuation and report source selection retain relative task identity", {
   root<-tempfile();on.exit(unlink(root,recursive=TRUE),add=TRUE);ocean_storage_init(root)
-  ocean_atomic_rds(list(profile="quick"),ocean_path(root,"workflow_identity.rds"))
+  mixedgp_atomic_rds(list(profile="quick"),ocean_path(root,"workflow_identity.rds"))
   for(cell in c("O0","O20","O50")) {
     p<-ocean_path(root,"smoke_class4","fold01",cell)
-    ocean_atomic_csv(data.frame(rhat=1,ess_bulk=500,ess_tail=500),ocean_path(p,"convergence_parameters.csv"))
-    ocean_atomic_csv(data.frame(score=1),ocean_path(p,"predictive_metrics.csv"))
+    mixedgp_atomic_csv(data.frame(rhat=1,ess_bulk=500,ess_tail=500),ocean_path(p,"convergence_parameters.csv"))
+    mixedgp_atomic_csv(data.frame(score=1),ocean_path(p,"predictive_metrics.csv"))
   }
   expect_equal(ocean_saved_profile(root),"quick")
   selected<-ocean_final_eiv_sources(root,"quick")
@@ -64,7 +66,7 @@ test_that("flat continuation and report source selection retain relative task id
 
 test_that("flat workflow writes receipts, reuses completed tasks and reports without fitting", {
   root<-tempfile();on.exit(unlink(root,recursive=TRUE),add=TRUE)
-  repo<-normalizePath(testthat::test_path("../../.."))
+  repo<-normalizePath(testthat::test_path("../.."))
   data<-file.path(repo,"data/ocean_silicate/n200")
   skip_if_not(dir.exists(data))
   env<-new.env(parent=environment(ocean_execute));execute<-ocean_execute;environment(execute)<-env
@@ -74,8 +76,8 @@ test_that("flat workflow writes receipts, reuses completed tasks and reports wit
     calls<<-calls+1L
     for(p in ocean_task_files(task,settings$profile,settings$action)) {
       dest<-ocean_path(output_dir,p)
-      if(grepl("[.]rds$",p))ocean_atomic_rds(list(chains=1:4),dest)
-      else ocean_atomic_csv(data.frame(rhat=1,ess_bulk=500,ess_tail=500),dest)
+      if(grepl("[.]rds$",p))mixedgp_atomic_rds(list(chains=1:4),dest)
+      else mixedgp_atomic_csv(data.frame(rhat=1,ess_bulk=500,ess_tail=500),dest)
     }
   }
   cfg<-ocean_settings(profile="pilot",action="fit",folds=1L,cells="O20",modules="eiv",cores=1L)
@@ -94,10 +96,10 @@ test_that("completed tasks import across layouts in both directions", {
   old<-file.path(parent,"old");flat<-file.path(parent,"flat");back<-file.path(parent,"back")
   dir.create(old);ocean_storage_init(flat);dir.create(back)
   identity<-list(profile="paper",code="fixture")
-  for(root in c(old,flat,back))ocean_atomic_rds(identity,ocean_path(root,"workflow_identity.rds"))
+  for(root in c(old,flat,back))mixedgp_atomic_rds(identity,ocean_path(root,"workflow_identity.rds"))
   rel<-"full5_class4/fold01/O20/fit.rds"
-  ocean_atomic_rds(list(chains=1:4),file.path(old,rel))
-  ocean_atomic_rds(list(identity=identity,files=rel,hashes=ocean_hashes(file.path(old,rel))),file.path(old,"workflow_tasks/task.done.rds"))
+  mixedgp_atomic_rds(list(chains=1:4),file.path(old,rel))
+  mixedgp_atomic_rds(list(identity=identity,files=rel,hashes=ocean_hashes(file.path(old,rel))),file.path(old,"workflow_tasks/task.done.rds"))
   ocean_combine_results(old,flat,identity)
   expect_true(ocean_verify_receipt(flat,"task",identity))
   expect_equal(readRDS(ocean_path(flat,"workflow_tasks/task.done.rds"))$files,"eiv_fold01_O20/fit.rds")
@@ -107,10 +109,10 @@ test_that("completed tasks import across layouts in both directions", {
 })
 
 test_that("standalone CLI selects its library before resolving storage paths", {
-  repo<-normalizePath(testthat::test_path("../../.."))
+  repo<-normalizePath(testthat::test_path("../.."))
   skip_if_not(dir.exists(file.path(repo,"data/ocean_silicate/n200")))
   log<-system2(file.path(R.home("bin"),"Rscript"),
-    c(shQuote(file.path(repo,"paper/applications/ocean.R")),"--action=plan","--profile=paper","--dataset=ocean200","--cores=1"),
+    c(shQuote(file.path(repo,"tools/ocean.R")),"--action=plan","--profile=paper","--dataset=ocean200","--cores=1"),
     env=paste0("EIVGP_R_LIBRARY=",shQuote(dirname(find.package("eivGP")))),stdout=TRUE,stderr=TRUE)
   expect_null(attr(log,"status"))
   expect_true(any(grepl("Total shared core budget:",log,fixed=TRUE)))

@@ -1,9 +1,12 @@
+repo<-Sys.getenv('EIVGP_TEST_REPO');stopifnot(nzchar(repo))
+source(file.path(repo,'tools/ocean-tools.R'),local=TRUE)
 method_cli_env <- function() {
-  root<-normalizePath(file.path(testthat::test_path(),'../../..'))
+  root<-normalizePath(file.path(testthat::test_path(),'../..'))
   env<-new.env(parent=globalenv())
-  sys.source(file.path(root,'paper/applications/ocean.R'),env)
-  sys.source(file.path(root,'paper/applications/ocean-workflow.R'),env)
-  env
+  sys.source(file.path(root,'tools/ocean.R'),env)
+  env<-environment(env$ocean_run_cli) # Mock the isolated application bindings.
+  sys.source(file.path(root,'tools/ocean-tools.R'),env)
+  environment(env$ocean_method_run)
 }
 
 test_that('method entrypoints isolate fitting groups and saved-only never selects fitting', {

@@ -32,7 +32,7 @@ nested measurement masks are constructed on a fixed, class-balanced cohort.
 
 - **Workflow:** `ocean-eivGP.R` and `ocean-competitors.R` each fit and analyze their method group with one shared core budget; `ocean-report.R` assembles this report from saved results. Use `--reuse-only=true` on the method scripts to prohibit fitting.
 - **Action:** `report` reads saved fits; `plan` displays the proposed analysis without fitting.
-- **Dataset:** `ocean200`, `ocean500` or `ocean1000`; prepare the 1000-profile folds once using `data/ocean_silicate/prepare_folds.R`.
+- **Dataset:** `ocean200`, `ocean500` or `ocean1000`; prepare the 1000-profile folds once using `tools/ocean-prepare-folds.R`.
 - **Selection:** `folds`, `cells` and `modules` select tasks without changing seeds or numerical settings.
 - **Results:** default to the latest run under `<repository>/results/<dataset>/` (pilot/quick roots append the profile); set `output_dir` to select a specific saved run.
 - **Distributed runs:** use separate result roots and merge compatible tasks through `import_dirs`.
@@ -49,7 +49,7 @@ if(any(nzchar(as.character(unlist(params$import_dirs)))))
 dataset<-match.arg(params$dataset,c("ocean200","ocean500","ocean1000"))
 input <- knitr::current_input(dir=TRUE)
 repository_dir <- normalizePath(file.path(dirname(input),"../.."),mustWork=TRUE)
-source(file.path(dirname(input),"ocean.R"),local=TRUE)
+source(file.path(repository_dir,"tools/ocean.R"),local=TRUE)
 ocean_load_api(repository_dir,environment())
 prediction_labels <- ocean_prediction_labels()
 settings <- ocean_settings(profile=params$profile,action=params$action,folds=params$folds,
@@ -142,7 +142,7 @@ cat(sprintf("The selected cohort contains **%d profiles from %d cruises**, with 
 
 ```{r observation-information, echo=FALSE, results="asis"}
 design_review <- ocean_design_review(inputs)
-cat(ocean_table_html(design_review$design,"Observed information per fold",
+cat(mixedgp_table_html(design_review$design,"Observed information per fold",
   "All training y observed; all test y withheld. The partial-u condition is evaluated at O20/O50 only. Test masks use seed 202609260 + fold."))
 ```
 
@@ -185,7 +185,7 @@ ocean_cohort_plot(inputs$cohort)
 <summary>Supplementary: cruise overlap</summary>
 
 ```{r cruise-overlap, echo=FALSE, results="asis"}
-cat(ocean_table_html(design_review$overlap,"Cruise overlap in held-out prediction",
+cat(mixedgp_table_html(design_review$overlap,"Cruise overlap in held-out prediction",
   "Training and test profile IDs are disjoint. Cruises can span both sets; the evaluation does not establish new-cruise or spatially independent transfer performance."))
 ```
 
@@ -254,14 +254,14 @@ if(!is.null(analysis$paper_assets$review$targets)) {
   targets <- analysis$paper_assets$review$targets
   print(ocean_target_trace_plot(targets$traces))
   cat("Target-specific checks complement the raw-coordinate screen. Function diagnostics use 256 evaluated states per chain; oxygen diagnostics use full retained chains. Conditional-mean traces do not assess all posterior uncertainty or tail precision.\n\n")
-  cat(ocean_table_html(targets$summary,"Scientific-target R-hat, ESS and Monte Carlo precision"))
+  cat(mixedgp_table_html(targets$summary,"Scientific-target R-hat, ESS and Monte Carlo precision"))
 }
 ```
 
 <details>
 <summary>Supplementary: computation and posterior approximation</summary>
 
-- **Package calls:** the `run_eiv()` routine created by `ocean_initial_functions()` in the Ocean section of `eivGP/R/helpers.R` calls `fit_eivgp()`, `predict_eivgp()` and `impute_eivgp()`; selected continuations call `continue_eivgp()`.
+- **Package calls:** the `run_eiv()` routine created by `ocean_initial_functions()` in `tools/ocean-tools.R` calls `fit_eivgp()`, `predict_eivgp()` and `impute_eivgp()`; selected continuations call `continue_eivgp()`.
 - **Native baselines:** the pinned `run_published_mixedgp_competitors()` adapter calls kergp, LVGP and EzGP fitting/prediction routines. CC `package_status.csv` retains optimizer status and warnings. A finite prediction can be returned with a flagged optimizer code; task completion alone does not establish optimizer convergence.
 - **Explicit continuation:** `ocean.R --action=continue` adds one extra round with `r paste(format(ocean_continuation_lengths(output_dir,settings$profile),big.mark=",",scientific=FALSE),collapse=" / ")` iterations per chain (saved task budgets; configurable with `--continuation-iter`) if initial maximum finite Rhat exceeds 1.01, minimum finite bulk ESS is below 400, or finite values are unavailable; `u_block_size=8`.
 - **Review:** finite diagnostics, tail ESS and undefined values are reported separately. Passing the screen does not establish model adequacy, identification or precision of every functional.
@@ -274,7 +274,7 @@ if(!is.null(saved_review)) {
   d<-saved_review$mcmc
   d$max_finite_Rhat<-sprintf("%.4f",d$max_finite_Rhat)
   d$min_finite_bulk_ESS<-round(d$min_finite_bulk_ESS); d$min_finite_tail_ESS<-round(d$min_finite_tail_ESS)
-  cat(ocean_table_html(d,"Final-fit numerical screen",
+  cat(mixedgp_table_html(d,"Final-fit numerical screen",
     "Finite screen uses Rhat <= 1.01 and bulk ESS >= 400. Tail ESS and counts of undefined diagnostics are displayed, without retroactively changing the continuation rule."))
   ex<-saved_review$exceptions
   cat(sprintf("\n\n**%d parameter-by-fit exceptions** are reviewed separately. Constant indicators include unvisited dictionary states; exploration of rare states is not established. Per-chain assessments are exported in diagnostics/refinement/exceptions.csv.\n\n",nrow(ex)))
@@ -282,7 +282,7 @@ if(!is.null(saved_review)) {
   q<-saved_review$precision
   d<-data.frame(Quantity=q$parameter,"Posterior mean"=sprintf("%.3f",q$mean),
     "Posterior SD"=sprintf("%.3f",q$posterior_sd),"MCSE of mean"=sprintf("%.4f",q$mcse),check.names=FALSE)
-  cat(ocean_table_html(d,"Focused Monte Carlo precision on complete saved chains",
+  cat(mixedgp_table_html(d,"Focused Monte Carlo precision on complete saved chains",
     sprintf("Same fit and six quantities as the trace plot: fold %d/%s. MCSE uses complete chains and measures precision of posterior means. At O0, u and cutpoints use working-model units. Individual-interval and full prediction/function precision remain unassessed.",saved_review$selected$fold,saved_review$selected$cell)))
 } else cat("Saved-chain checks are pending complete final fits.\n")
 ```
@@ -348,7 +348,7 @@ For the **same observed-\(u\) profiles and trained fit**, compare EIV-GP(`r pred
 if(!is.null(evidence) && nrow(evidence$information)) {
   d <- ocean_evidence_table(evidence,"information",eiv_only=TRUE,labels=prediction_labels)
   d <- ocean_table_columns(d,setdiff(names(d),c("Method","Mean delta SE","Mean |prediction change|")))
-  cat(ocean_table_html(d,sprintf("EIV-GP: paired %s-%s comparison",prediction_labels[["xc"]],prediction_labels[["mixed"]]),
+  cat(mixedgp_table_html(d,sprintf("EIV-GP: paired %s-%s comparison",prediction_labels[["xc"]],prediction_labels[["mixed"]]),
     "Same profiles and trained fit. Bold marks the smaller paired RMSE; negative delta CRPS favors measured u. Descriptive comparison only."))
 }
 ```
@@ -359,7 +359,7 @@ if(!is.null(evidence) && nrow(evidence$information)) {
 ```{r prediction-evidence-details, eval=settings$action!="plan" && "prediction" %in% settings$modules, echo=FALSE, results="asis"}
 if(!is.null(evidence))for(type in c("subgroups","pooled")) {
   d <- ocean_evidence_table(evidence,type,labels=prediction_labels)
-  if(nrow(d))cat(ocean_table_html(d,if(type=="subgroups")sprintf("EIV-GP(%s): test-input subset scores",prediction_labels[["mixed"]]) else sprintf("EIV-GP(%s/%s): pooled held-out scores",prediction_labels[["xc"]],prediction_labels[["mixed"]]),
+  if(nrow(d))cat(mixedgp_table_html(d,if(type=="subgroups")sprintf("EIV-GP(%s): test-input subset scores",prediction_labels[["mixed"]]) else sprintf("EIV-GP(%s/%s): pooled held-out scores",prediction_labels[["xc"]],prediction_labels[["mixed"]]),
     "Pooled RMSE takes the square root after pooling squared errors. Main tables average fold RMSEs. Evaluation subsets contain different profiles; compare the named protocols on matched profiles in the paired table."),"\n\n")
 }
 ```
@@ -420,7 +420,7 @@ on the same `r inputs$design$n_common_hidden` hidden training profiles per fold;
 ```{r imputation-display, eval=settings$action!="plan" && settings$profile!="quick" && "diagnostics" %in% settings$modules, echo=FALSE, results="asis", fig.width=13.2, fig.height=6}
 if(is.null(diagnostics)) cat("Imputation displays are pending complete final fits.\n") else {
   u_tables <- ocean_paper_u_tables(diagnostics$u$summary)
-  cat(ocean_table_html(ocean_table_columns(u_tables$main,setdiff(names(u_tables$main),"MAE")),
+  cat(mixedgp_table_html(ocean_table_columns(u_tables$main,setdiff(names(u_tables$main),"MAE")),
     "Response-informed training oxygen imputation",u_tables$note),"\n\n")
   print(diagnostics$plots$u_main)
 }
@@ -454,7 +454,7 @@ Detailed counts are provided below without clipping intervals.
 ```{r support-and-class-calibration, eval=settings$action!="plan" && settings$profile!="quick" && "diagnostics" %in% settings$modules, echo=FALSE, results="asis"}
 if(!is.null(diagnostics)) {
   d <- ocean_paper_u_tables(diagnostics$u$summary)$class
-  cat(ocean_table_html(ocean_table_columns(d,setdiff(names(d),"MAE")),"Training-U imputation by c",
+  cat(mixedgp_table_html(ocean_table_columns(d,setdiff(names(d),"MAE")),"Training-U imputation by c",
     "Entries are five-fold means (sample SDs) on common-hidden training rows. Bias, RMSE and width use micromol/kg. Aggregate bias can conceal opposing class biases."))
   z <- diagnostics$u$summary
   cov <- z[z$metric=="Coverage95" & grepl("^class[0-9]+$",z$group),]
@@ -497,7 +497,7 @@ if(!is.null(saved_review)) {
   names(d)<-c("Calibration","c","Fold-row N","Unique profiles","Interval outside c (N)",
     "Lower < 0 (N)","Upper > 180 (N)","Mean < 0 (N)")
   d$Calibration <- paste0(sub("O","",d$Calibration),"%")
-  cat(ocean_table_html(d,"Individual-U interval support checks",
+  cat(mixedgp_table_html(d,"Individual-U interval support checks",
     "Counts include repeated training appearances across folds. These endpoint-exceedance counts are not posterior tail probabilities. Intervals are not clipped."))
 }
 ```

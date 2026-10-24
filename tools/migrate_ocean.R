@@ -1,5 +1,5 @@
 # Explicit migration only; never invoked by fitting or report rendering.
-# Rscript paper/applications/migrate_ocean.R --source=/old/root --destination=/new/root [--apply=true]
+# Rscript tools/migrate_ocean.R --source=/old/root --destination=/new/root [--apply=true]
 args <- commandArgs(trailingOnly=TRUE)
 if(any(!grepl("^--(source|destination|apply)=.+$",args)))stop("Use --source=... --destination=... [--apply=true]")
 keys <- sub("^--([^=]+)=.*$","\\1",args)
@@ -8,8 +8,8 @@ p <- setNames(as.list(sub("^--[^=]+=","",args)),keys)
 if(is.null(p$source)||is.null(p$destination))stop("Supply source and destination")
 if(!is.null(p$apply)&&!p$apply%in%c("true","false"))stop("apply must be true or false")
 script <- sub("^--file=","",grep("^--file=",commandArgs(FALSE),value=TRUE)[1])
-repo <- normalizePath(file.path(dirname(script),"../.."),mustWork=TRUE)
-source(file.path(repo,"paper/applications/ocean.R"))
+repo <- normalizePath(file.path(dirname(script),".."),mustWork=TRUE)
+source(file.path(repo,"tools/ocean.R"))
 api <- new.env();ocean_load_api(repo,api)
 plan <- api$ocean_migrate_storage(p$source,p$destination,dry_run=!identical(p$apply,"true"))
 print(plan,row.names=FALSE)

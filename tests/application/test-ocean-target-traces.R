@@ -1,3 +1,5 @@
+repo<-Sys.getenv('EIVGP_TEST_REPO');stopifnot(nzchar(repo))
+source(file.path(repo,'tools/ocean-tools.R'),local=TRUE)
 test_that('target traces preserve chains, retained iteration and full oxygen diagnostics', {
   n<-40L;nc<-4L
   u<-lapply(seq_len(nc),function(c)cbind(seq_len(n)/100+c,seq_len(n)/50+c,rep(c,n)))

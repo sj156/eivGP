@@ -9133,7 +9133,7 @@ mixedgp_competitor_registry <- function() {
     implementation = c(
       "kergp::q1Symm",
       "LVGP::LVGP_fit and LVGP::LVGP_predict",
-      "EzGP::EzGP_fit and EzGP::EzGP_predict"
+      "EzGP::EzGP_fit with covariance-consistent prediction"
     ),
     stringsAsFactors = FALSE
   )
@@ -9683,9 +9683,8 @@ select_ezgp_tau_cv <- function(train_x,
           train_x[train_id, , drop = FALSE],
           y_train[train_id], p, q, m_vec, tau_grid[tt], maxeval
         )
-        pred <- EzGP::EzGP_predict(
-          train_x[validation_id, , drop = FALSE], fit,
-          MSE_on = as.integer(cv_score == "nlpd")
+        pred <- mixedgp_ezgp_predict(
+          train_x[validation_id, , drop = FALSE], fit
         )
         error <- as.numeric(pred$Y_hat) - y_train[validation_id]
         if (cv_score == "mse") {
@@ -9766,7 +9765,7 @@ mixedgp_adapter_ezgp_once <- function(X_train,
   if (length(fit$param) == 0L || any(!is.finite(fit$param))) {
     stop("EzGP returned non-finite fitted parameters.")
   }
-  pred <- EzGP::EzGP_predict(test_x, fit, MSE_on = 1)
+  pred <- mixedgp_ezgp_predict(test_x, fit)
   latent_var <- predictive_variance_diagonal(
     pred$MSE, nrow(test_x), context = "EzGP"
   )
@@ -9796,7 +9795,7 @@ mixedgp_adapter_ezgp_once <- function(X_train,
       "EzGP ", utils::packageVersion("EzGP"),
       "::EzGP_fit; nugget selected by ", cv_folds,
       "-fold training-only ", toupper(cv_score),
-      " CV over prespecified variance fractions"
+      " CV over prespecified variance fractions; covariance-consistent prediction (independent test noise)"
     )
   )
 }

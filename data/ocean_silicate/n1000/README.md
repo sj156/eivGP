@@ -8,7 +8,7 @@ are omitted. Source and selection metadata are in `cohort_metadata.json`.
 Prepare five folds before using `dataset="ocean1000"` in the Rmd:
 
 ```sh
-Rscript data/ocean_silicate/prepare_folds.R ocean1000
+Rscript tools/ocean-prepare-folds.R ocean1000
 ```
 
 Run from the repository root. Prepared files are written to

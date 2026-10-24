@@ -1,3 +1,5 @@
+repo<-Sys.getenv('EIVGP_TEST_REPO');stopifnot(nzchar(repo))
+source(file.path(repo,'tools/ocean-tools.R'),local=TRUE)
 test_that('LVGP shared dispatch preserves the author optimizer and predictions', {
   skip_if_not_installed('LVGP')
   set.seed(31)
@@ -13,7 +15,7 @@ test_that('LVGP shared dispatch preserves the author optimizer and predictions',
 test_that('Ocean retries only missing baselines with the original method seeds', {
   folder<-tempfile();dir.create(folder);on.exit(unlink(folder,recursive=TRUE))
   env<-new.env(parent=environment(ocean_initial_functions));ocean_initial_functions(env)
-  env$atomic_csv<-ocean_atomic_csv;env$atomic_rds<-ocean_atomic_rds;env$baseline_controls<-ocean_controls()
+  env$atomic_csv<-mixedgp_atomic_csv;env$atomic_rds<-mixedgp_atomic_rds;env$baseline_controls<-mixedgp_competitor_controls()
   env$probability_score<-function(draws,point,y,fold,method,cell)data.frame(fold,method,cell,RMSE=mean((point-y)^2)^.5)
   successes<-c('UC-GP','EzGP');old<-list(draws=setNames(list(matrix(1,2,3),matrix(2,2,3)),successes),means=setNames(list(1:3,2:4),successes),fits=setNames(list(list(token=1),list(token=2)),successes),status=data.frame(method=c('UC-GP','LVGP','EzGP'),status=c('success','unavailable_or_failed','success')))
   saveRDS(old,file.path(folder,'baseline_package_outputs.rds'))
@@ -39,7 +41,7 @@ test_that('Ocean retries only missing baselines with the original method seeds',
 test_that('interrupted scoring and failed retries preserve completed methods', {
   folder<-tempfile();dir.create(folder);on.exit(unlink(folder,recursive=TRUE))
   env<-new.env(parent=environment(ocean_initial_functions));ocean_initial_functions(env)
-  env$atomic_csv<-ocean_atomic_csv;env$atomic_rds<-ocean_atomic_rds;env$baseline_controls<-ocean_controls()
+  env$atomic_csv<-mixedgp_atomic_csv;env$atomic_rds<-mixedgp_atomic_rds;env$baseline_controls<-mixedgp_competitor_controls()
   env$probability_score<-function(draws,point,y,fold,method,cell)data.frame(fold,method,cell)
   methods<-c('UC-GP','LVGP','EzGP');d<-data.frame(G2salinity=1:3,log_pressure=2:4,C=1:3,Y=3:5,cohort_id=1:3)
   fit<-list(draws=setNames(rep(list(matrix(1,2,3)),3),methods),means=setNames(rep(list(1:3),3),methods),fits=setNames(rep(list(list(token=1)),3),methods),status=data.frame(method=methods,status='success'))

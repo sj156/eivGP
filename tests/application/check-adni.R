@@ -1,8 +1,8 @@
 # Author: Xinye Chen. Portable synthetic check of the three ADNI CLI entrypoints.
 script<-sub('^--file=','',grep('^--file=',commandArgs(FALSE),value=TRUE)[1])
 repo<-normalizePath(file.path(dirname(normalizePath(script)),'../..'))
-source(file.path(repo,'paper/applications/adni.R'))
-source(file.path(repo,'data/adni/prepare_folds.R'))
+source(file.path(repo,'tools/adni.R'))
+source(file.path(repo,'tools/adni-tools.R'))
 params<-adni_cli_params(commandArgs(TRUE))
 if(any(!names(params)%in%c('cores','output')))stop('Check options: --cores=N --output=results/NEW_DIRECTORY')
 cores<-adni_integer(if(is.null(params$cores))2L else params$cores,'cores')
@@ -30,7 +30,7 @@ run_cli<-function(group,label,workers=cores) {
   log<-file.path(out,paste0(label,'.log'))
   old<-getwd();setwd(tempdir());on.exit(setwd(old))
   code<-system2(file.path(R.home('bin'),'Rscript'),
-    shQuote(c(file.path(repo,'paper/applications',paste0('adni-',group,'.R')),common,paste0('--cores=',workers))),
+    shQuote(c(file.path(repo,'tools',paste0('adni-',group,'.R')),common,paste0('--cores=',workers))),
     stdout=log,stderr=log)
   if(code!=0L)stop('CLI failed: ',label,'; inspect ',log)
 }

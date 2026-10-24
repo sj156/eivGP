@@ -1,5 +1,7 @@
+repo<-Sys.getenv('EIVGP_TEST_REPO');stopifnot(nzchar(repo))
+source(file.path(repo,'tools/ocean-tools.R'),local=TRUE)
 testthat::test_that("frozen Ocean cohorts retain matched observation protocols", {
-  root<-normalizePath(testthat::test_path("../../.."),mustWork=TRUE)
+  root<-normalizePath(testthat::test_path("../.."),mustWork=TRUE)
   for(spec in list(c("ocean_silicate/n200",200,160,40,32,80,8,20),
                   c("ocean_silicate/n500",500,400,100,80,200,20,50))) {
     dir<-file.path(root,"data",spec[1]);testthat::skip_if_not(dir.exists(dir))
@@ -17,7 +19,7 @@ testthat::test_that("frozen Ocean cohorts retain matched observation protocols",
 })
 
 testthat::test_that("Ocean validation rejects a changed held-out response or frozen mask", {
-  root<-normalizePath(testthat::test_path("../../.."),mustWork=TRUE)
+  root<-normalizePath(testthat::test_path("../.."),mustWork=TRUE)
   source<-file.path(root,"data/ocean_silicate/n500");testthat::skip_if_not(dir.exists(source))
   target<-tempfile("ocean-input-audit-");dir.create(target)
   on.exit(unlink(target,recursive=TRUE),add=TRUE)
@@ -32,7 +34,7 @@ testthat::test_that("Ocean validation rejects a changed held-out response or fro
 })
 
 testthat::test_that("the 1000-profile source is an unpartitioned cohort", {
-  root<-normalizePath(testthat::test_path("../../.."),mustWork=TRUE)
+  root<-normalizePath(testthat::test_path("../.."),mustWork=TRUE)
   path<-file.path(root,"data/ocean_silicate/n1000")
   testthat::skip_if_not(dir.exists(path))
   cohort<-ocean_read_inputs(path)

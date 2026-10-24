@@ -31,7 +31,6 @@ export(report_table)
 export(read_fit)
 export(save_fit)
 export(run_ocean_analysis)
-export(run_adni_analysis)
 
 import(dplyr)
 import(tidyr)
@@ -61,8 +60,6 @@ export(prune_study_checkpoints)
 
 export(report_numerical_convergence)
 
-export(adni_workflow_api)
-export(run_adni_application)
 
 export(report_study1_eivgp)
 export(continue_eivgp_until_ess)

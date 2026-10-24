@@ -72,7 +72,6 @@ __pycache__/
 /data/adni/*
 !/data/adni/README.md
 !/data/adni/DATASET.example.json
-!/data/adni/prepare_folds.R
 !/data/adni/inputs/
 /data/adni/inputs/**
 !/data/adni/inputs/.gitkeep

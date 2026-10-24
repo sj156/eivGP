@@ -24,5 +24,4 @@ for(engine in c('univariate','multivariate')) {
  unlink(c(path,old))
 }
 
-expect_identical(adni_make_C(data.frame(c_ab42_ab40_3=c(1,3),c_gfap_3=c(2,1)))$c_gfap_3, ordered(c(2,1),levels=1:3))
 })

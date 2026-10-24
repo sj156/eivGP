@@ -2,17 +2,22 @@
 
 Use the same three method-oriented entrypoints as Ocean:
 
-The application file layout matches Ocean: three method entrypoints, `adni.R`,
-`adni-workflow.R`, `adni.Rmd` and `adni.html`. Scientific implementation is in
-the installed package's existing `helpers.R`, exposed by `adni_workflow_api()`
-and `run_adni_application()`. Rebuild and reinstall this checkout before using
-these entrypoints (eivGP 0.4.0.9014 or later with matching module hashes).
+All executable scripts are directly in `tools/`. The method entrypoints load
+`tools/adni-tools.R`, which contains all ADNI-specific functions, including
+fold preparation, fitting orchestration, evaluation, and reporting. The Rmd
+report, HTML, and this guide remain under `paper/applications/`.
+The installed package supplies general numerical functions; it contains no ADNI
+workflow functions. Changes to ADNI scripts do not require reinstalling eivGP.
+The former package exports `adni_workflow_api`, `run_adni_application`, and
+`run_adni_analysis` are now application functions available after sourcing
+`tools/adni.R`. Install the refactored package once to remove the
+old package-owned implementation.
 
 ```sh
-Rscript paper/applications/adni-eivGP.R --plan=true --profile=paper --cores=16
-Rscript paper/applications/adni-eivGP.R --profile=paper --cores=16
-Rscript paper/applications/adni-competitors.R --profile=paper --cores=16
-Rscript paper/applications/adni-report.R --profile=paper --cores=16
+Rscript tools/adni-eivGP.R --plan=true --profile=paper --cores=16
+Rscript tools/adni-eivGP.R --profile=paper --cores=16
+Rscript tools/adni-competitors.R --profile=paper --cores=16
+Rscript tools/adni-report.R --profile=paper --cores=16
 ```
 
 Run these sequentially against the same input and output directories. The first
@@ -60,9 +65,9 @@ MEMORY3, MEMORY8 and DIVATT3, in that order. Place its prepared inputs in
 `data/adni/3C/inputs/` and use the same dataset flag on all three entrypoints:
 
 ```sh
-Rscript paper/applications/adni-eivGP.R --profile=paper --dataset=3C --cores=16
-Rscript paper/applications/adni-competitors.R --profile=paper --dataset=3C --cores=16
-Rscript paper/applications/adni-report.R --profile=paper --dataset=3C --cores=16
+Rscript tools/adni-eivGP.R --profile=paper --dataset=3C --cores=16
+Rscript tools/adni-competitors.R --profile=paper --dataset=3C --cores=16
+Rscript tools/adni-report.R --profile=paper --dataset=3C --cores=16
 ```
 
 Results are saved in `results/3C_paper/`; with `--profile=pilot`, they are saved
@@ -72,9 +77,9 @@ have different eligible populations; they are not a paired comparison of C sets.
 ## Rebuild the ADNI report without fitting
 
 ```sh
-Rscript paper/applications/adni-eivGP.R --reuse-only=true --profile=paper --cores=16
-Rscript paper/applications/adni-competitors.R --reuse-only=true --profile=paper --cores=16
-Rscript paper/applications/adni-report.R --profile=paper --cores=16
+Rscript tools/adni-eivGP.R --reuse-only=true --profile=paper --cores=16
+Rscript tools/adni-competitors.R --reuse-only=true --profile=paper --cores=16
+Rscript tools/adni-report.R --profile=paper --cores=16
 ```
 
 These commands read compatible saved results. They do not fit missing models,
@@ -100,9 +105,9 @@ of the public Ocean executor. CPU allocation does not change seeds or chains.
 Parameters can be supplied through `--config=FILE` or explicit flags. For example:
 
 ```sh
-Rscript paper/applications/adni-eivGP.R --profile=paper --cores=16 --iter=20000 --burn=2000 --stages=10000,20000 --output=results/adni_20k
-Rscript paper/applications/adni-competitors.R --profile=paper --cores=16 --iter=20000 --burn=2000 --stages=10000,20000 --output=results/adni_20k
-Rscript paper/applications/adni-report.R --profile=paper --output=results/adni_20k
+Rscript tools/adni-eivGP.R --profile=paper --cores=16 --iter=20000 --burn=2000 --stages=10000,20000 --output=results/adni_20k
+Rscript tools/adni-competitors.R --profile=paper --cores=16 --iter=20000 --burn=2000 --stages=10000,20000 --output=results/adni_20k
+Rscript tools/adni-report.R --profile=paper --output=results/adni_20k
 ```
 
 `--chains`, `--draws-per-chain`, `--first-checkpoint`, `--checkpoint-step`,
@@ -123,7 +128,7 @@ inputs. Changing Y/U definitions requires an explicit scientific design; the
 software does not choose a candidate by prediction error.
 
 ```sh
-Rscript paper/applications/adni-eivGP.R --profile=paper --data-root=data/adni/other/inputs --output=results/adni_other_paper --cores=16
+Rscript tools/adni-eivGP.R --profile=paper --data-root=data/adni/other/inputs --output=results/adni_other_paper --cores=16
 ```
 
 Prepared input protocols record all row counts, coordinate labels, native levels,
@@ -232,3 +237,19 @@ silently relabeled.
 
 For `--manifest=...`, declare `ess_min` in the manifest; any CLI `--ess-min`
 value must match it. This avoids silently changing a frozen workflow identity.
+
+
+### Memory and CPU scheduling
+
+Keep the existing scientific arguments and add
+`--cores=12 --fit-jobs=1 --evaluation-jobs=1` to limit resident fits independently
+of the shared CPU budget. Four chains are retained; one fitting job can run its
+four chains concurrently. Increase `--fit-jobs=2` only after measuring peak
+memory. Omitting the limits preserves the previous scheduling policy. These
+resource settings are excluded from the scientific manifest identity.
+Continuation loads each checkpoint once and validates it before use.
+
+Application provenance hashes the ADNI scripts separately from package modules.
+Existing results created before this refactor retain their original identity;
+source identity checks are not bypassed. Use a fresh output directory for a new
+run; migrating existing results requires a separate compatibility audit.

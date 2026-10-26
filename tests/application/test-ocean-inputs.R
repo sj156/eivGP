@@ -24,6 +24,8 @@ testthat::test_that("Ocean validation rejects a changed held-out response or fro
   target<-tempfile("ocean-input-audit-");dir.create(target)
   on.exit(unlink(target,recursive=TRUE),add=TRUE)
   files<-list.files(source,"[.]csv$",full.names=TRUE);file.copy(files,target)
+  file.copy(file.path(source,"freeze_manifest.json"),target)
+  testthat::expect_silent(ocean_prepare_inputs(target))
   p<-file.path(target,"fold01_test.csv");d<-read.csv(p);d$Y[1]<-d$Y[1]+1
   write.csv(d,p,row.names=FALSE)
   testthat::expect_error(ocean_prepare_inputs(target))
@@ -42,4 +44,18 @@ testthat::test_that("the 1000-profile source is an unpartitioned cohort", {
   testthat::expect_equal(as.integer(table(cohort$C)),rep(250L,4))
   testthat::expect_false("fold" %in% names(cohort))
   testthat::expect_length(list.files(path,"^fold"),0L)
+})
+
+testthat::test_that("Ocean inputs require the declared approximate Latin protocol", {
+  source<-file.path(repo,'data/ocean_silicate/n500')
+  target<-tempfile('ocean-calibration-contract-');dir.create(target)
+  on.exit(unlink(target,recursive=TRUE),add=TRUE)
+  files<-list.files(source,full.names=TRUE);file.copy(files,target)
+  manifest<-file.path(target,'freeze_manifest.json')
+  metadata<-jsonlite::read_json(manifest)
+  metadata$calibration_design$method<-'unsupported selector'
+  jsonlite::write_json(metadata,manifest,auto_unbox=TRUE)
+  testthat::expect_error(ocean_prepare_inputs(target),'class-stratified approximate Latin')
+  unlink(manifest)
+  testthat::expect_error(ocean_prepare_inputs(target),'Missing freeze_manifest.json')
 })

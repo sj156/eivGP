@@ -10,7 +10,7 @@
   "dataset1000_candidate": "seed_144069_oxygen_interleaved",
   "dataset1000_stage": "raw selected cohort",
   "data_layout": "data/ocean_silicate/n200, n500, n1000",
-  "fold_preparation": "data/ocean_silicate/prepare_folds.R (R assignment, calibration and test masks)",
+  "fold_preparation": "tools/ocean-prepare-folds.R (functions in tools/ocean-tools.R)",
   "merged_upstream_commit": "ebc297b4f7901f0acbb4329658753327204122a5",
   "workflow_entrypoints": {
     "fit": "ocean.R --action=fit (fit + serial analyze + HTML)",
@@ -30,5 +30,6 @@
   "default_output": "~/eivGP-ocean/<dataset>/<profile>/",
   "initial_sampling_cli_overrides": false,
   "public_base_commit": "a501571f31c7044726a477fa7061bb75a4da0838",
-  "integrated_private_commit": "9eab51beef9b3e7f06ca8a7a9475d61fe936d3d5"
+  "integrated_private_commit": "9eab51beef9b3e7f06ca8a7a9475d61fe936d3d5",
+  "calibration": "Class-stratified nested approximate Latin coverage of salinity/log pressure; recorded C/X only"
 }

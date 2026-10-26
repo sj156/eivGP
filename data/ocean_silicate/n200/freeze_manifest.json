@@ -1,0 +1,59 @@
+{
+  "n": 200,
+  "source": "GLODAPv2.2023",
+  "n_classes": 4,
+  "class_cuts": [
+    50,
+    100,
+    150
+  ],
+  "calibration_design": {
+    "method": "C-stratified nested empirical-rank X coverage v1",
+    "selection_variables": ["C", "G2salinity", "log(G2pressure)"],
+    "optimizer": "three fixed-budget seeded exchange searches; marginal occupancy loss only",
+    "strict_LHS_guaranteed": false,
+    "seed_by_fold": [202610261, 202610262, 202610263, 202610264, 202610265]
+  },
+  "calibration_seed_base": 202610260,
+  "calibration_seed_rule": "calibration_seed_base+fold; class stream adds C",
+  "calibration_uses_U": false,
+  "calibration_uses_Y": false,
+  "calibration_uses_cell": false,
+  "data_stage": "five-fold inputs with nested approximate Latin calibration",
+  "preparation_implementation": "base-R-X-calibration-v1",
+  "R_version": "4.5.1",
+  "RNG_kind": ["Mersenne-Twister", "Inversion", "Rejection"],
+  "preparation_script_md5": "423969bff5ca5f01294b50e53fe3e5e6",
+  "source_files_md5": {
+    "cohort_manifest.csv": "49fe602168d2f0fc5af1ea80379431f2",
+    "fold01_test.csv": "57fb192075e29065e54363323d97df16",
+    "fold01_test_U_masks.csv": "49d5673d78943bfba8d35c154a069acd",
+    "fold02_test.csv": "ddf8f0de09a6b87c754f160c12216d2a",
+    "fold02_test_U_masks.csv": "ffceb82d554d0b8d6827dd528782a1c1",
+    "fold03_test.csv": "f3767b6c1831287c343ea4eda58c840f",
+    "fold03_test_U_masks.csv": "9b3c519eb62b3c194a3912431c794268",
+    "fold04_test.csv": "ca404a683e44224ac68548796f7d9b7b",
+    "fold04_test_U_masks.csv": "f2aaf78895da79afe4421c7437b0b725",
+    "fold05_test.csv": "e04707d95034c697f8189ccd338635f7",
+    "fold05_test_U_masks.csv": "6ef6aece89a2e592a7061562a0edbbfb"
+  },
+  "files_md5": {
+    "calibration_X_coverage.csv": "53da807038ffa659e358b8a19e2516d0",
+    "cohort_manifest.csv": "49fe602168d2f0fc5af1ea80379431f2",
+    "fold01_test.csv": "57fb192075e29065e54363323d97df16",
+    "fold01_test_U_masks.csv": "49d5673d78943bfba8d35c154a069acd",
+    "fold01_train.csv": "8235f13dadc08d1748c3bb0c883c3af8",
+    "fold02_test.csv": "ddf8f0de09a6b87c754f160c12216d2a",
+    "fold02_test_U_masks.csv": "ffceb82d554d0b8d6827dd528782a1c1",
+    "fold02_train.csv": "ed144f3ed8463ce06c37b594a5a7859d",
+    "fold03_test.csv": "f3767b6c1831287c343ea4eda58c840f",
+    "fold03_test_U_masks.csv": "9b3c519eb62b3c194a3912431c794268",
+    "fold03_train.csv": "4bfae842fbbecc04e4964a72bf3602ea",
+    "fold04_test.csv": "ca404a683e44224ac68548796f7d9b7b",
+    "fold04_test_U_masks.csv": "f2aaf78895da79afe4421c7437b0b725",
+    "fold04_train.csv": "ba17c3f59cbbf701d7ec7da8b16d69ec",
+    "fold05_test.csv": "e04707d95034c697f8189ccd338635f7",
+    "fold05_test_U_masks.csv": "6ef6aece89a2e592a7061562a0edbbfb",
+    "fold05_train.csv": "26aaea3019f050040089076d40ba92d4"
+  }
+}

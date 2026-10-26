@@ -1,12 +1,11 @@
-# Ocean calibration design review
+# Ocean calibration design
 
 ## Scope and rule
 
-The revised selector changes training calibration only. In the recommended
-`--calibration-only` route it preserves the supplied 500-profile cohort, all five
-train/test partitions, every measured record and the test-U availability masks.
-The historical source files and fitted results are not overwritten. This does
-not introduce a new participant-selection or fold-screening exercise.
+The supplied 200/500 five-fold inputs use the selector described below. The
+cohort, train/test partitions, measured records and test-U availability are
+fixed. Preparation computes nested training-calibration indicators from recorded
+class and X coordinates. It does not select a new cohort or screen model fits.
 
 Within each recorded C class, allocate 20%/50% of training profiles. For the
 current 500 cohort this means 20/50 of 100 training profiles per class, or 80/200
@@ -22,8 +21,7 @@ max(2000, 30 * class size) proposals. Early exit occurs only at zero occupancy
 loss. Seeds are fixed before fitting and are not selected using U, Y, convergence
 or predictive/imputation scores. Stable row identifiers determine reproducible
 ordering, not a physical-distance criterion. This heuristic does not prove a
-global optimum. There is no boundary-anchor requirement and no use of the
-historical oxygen-quartile `cell` column.
+global optimum. Selection uses recorded C/X without oxygen-derived groups.
 
 ## Why this is not guaranteed strict LHS
 
@@ -54,11 +52,11 @@ the new mask is a function of X, C, fixed identifiers and independent random
 numbers, and does not depend on missing U or model parameters. Consequently the
 mask probability can be omitted from the missing-input likelihood under those
 conditions. Optimization of observed-X coverage does not change that argument.
-Selecting oxygen-quantile or oxygen-boundary anchors would not meet this rule.
+The mask is selected without unrevealed within-category input values.
 
 The draft's synthetic LHS generates X; it is not its calibration algorithm.
 Study I uses independent random calibration prefixes; Study II uses randomized
-(C1,C2) strata. The proposed Ocean rule follows the same observable-information
+(C1,C2) strata. The Ocean rule follows the same observable-information
 restriction but is not an exact replication of either simulation design.
 
 The draft's consistency theorem uses a separate iid experiment and calibration
@@ -69,16 +67,16 @@ identification over unobserved regions.
 
 ## Remaining design concerns
 
-- The cohort and original folds were selected/balanced using exact oxygen. This
-  revision addresses the calibration-mask mechanism conditional on those records;
+- The supplied cohort and folds were selected/balanced using exact oxygen. This
+  design addresses the calibration-mask mechanism conditional on those records;
   it does not establish a representative ocean population or external transfer.
-- Existing source metadata records development screening. Retain that provenance;
+- Source metadata records development screening. Retain that provenance;
   do not describe the frozen cohort as selected without prior exploration.
 - Changing calibration requires refitting EIV-GP and CC comparators. The original
   categorical fits use unchanged X/C/Y, but result reuse must pass the workflow's
   provenance checks; do not overwrite old identities to force reuse.
-- Use a new input/output root and the same explicit paths for every method and
-  report stage. Bare commands still select the versioned historical inputs.
+- Default commands use the supplied calibration inputs. Custom prepared inputs
+  use the same explicit input/output paths for every method and report stage.
 - The preparation and coverage checks validate an implementation, not statistical
   performance or MCMC convergence. Mask sensitivity can be considered separately;
   a seed must not be chosen because it produces better model scores.

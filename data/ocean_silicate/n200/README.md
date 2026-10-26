@@ -9,7 +9,7 @@ This semi-real application predicts silicate y from salinity/log-pressure x and 
 - `fold01_test.csv` through `fold05_test.csv`: five held-out sets, 40 profiles each. Each cohort profile is tested once.
 - `fold01_test_U_masks.csv` through `fold05_test_U_masks.csv`: fixed nested test-u masks; 8/20 observed-u test profiles, generated using seed 202609260 + fold. Masks are identical across methods.
 
-Training calibration sizes are 0/32/80. The imputation comparison uses the same 80 common-hidden training profiles under O20/O50 (20 per c). Hidden reference U and test Y remain in the files for validation and offline evaluation; the fitting/prediction workflow excludes them as specified in the report.
+Training calibration sizes are 0/32/80. Within each c, the selector uses salinity/log-pressure empirical quantiles for approximate Latin coverage, without exact oxygen or silicate; O20 is nested in O50. Seeds and coverage checks are recorded in `freeze_manifest.json` and `calibration_X_coverage.csv`. The imputation comparison uses the same 80 common-hidden training profiles under O20/O50 (20 per c). Hidden reference U and test Y remain in the files for validation and offline evaluation; the fitting/prediction workflow excludes them as specified in the report.
 
 ## Protocols
 
@@ -21,7 +21,7 @@ O0 has an unanchored model coordinate and no physical-scale U recovery score. Ma
 
 ## Run
 
-Use `dataset="ocean200"` in [the executable Ocean report](../../../paper/applications/ocean.Rmd). See [Ocean instructions](../../../paper/applications/README_ocean.md). The package validates frozen rows, class counts, calibration masks, nested test masks and train/test separation. Existing masks are never regenerated into a different experimental design.
+Use `dataset="ocean200"` in [the executable Ocean report](../../../paper/applications/ocean.Rmd). See [Ocean instructions](../../../paper/applications/README_ocean.md). The package validates frozen rows, class counts, calibration masks, nested test masks and train/test separation. Regenerate masks reproducibly in a separate directory with `Rscript tools/ocean-prepare-folds.R ocean200 /external/ocean200-inputs`.
 
 ## Data attribution
 

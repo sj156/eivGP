@@ -2,23 +2,21 @@
 
 Use three method-oriented scripts. Each method script fits missing compatible
 tasks and immediately analyzes its own results; no separate analysis action is needed.
-The paper budget is four chains and 50,000 iterations. For the revised
-C/X-only calibration, prepare a new input root and use it throughout:
+The paper budget is four chains and 50,000 iterations. Calibration selects
+20%/50% of training profiles within each ordinal class, with nested subsets and
+approximate Latin coverage of salinity and log pressure. Prepare the inputs and
+use the same paths throughout:
 
 ```sh
-Rscript tools/ocean-prepare-folds.R ocean500 --calibration-only
-OCEAN_DATA="reproduction/ocean/prepared/ocean500_xcalibration_v1"
-OCEAN_RESULTS="results/ocean500_xcalibration_v1"
-Rscript tools/ocean-eivGP.R --cores=16 --data-root="$OCEAN_DATA" --output="$OCEAN_RESULTS"
-Rscript tools/ocean-competitors.R --cores=16 --data-root="$OCEAN_DATA" --output="$OCEAN_RESULTS"
-Rscript tools/ocean-report.R --cores=16 --data-root="$OCEAN_DATA" --output="$OCEAN_RESULTS"
+Rscript tools/ocean-eivGP.R --cores=16
+Rscript tools/ocean-competitors.R --cores=16
+Rscript tools/ocean-report.R --cores=16
 ```
 
-Preparation runs once and refuses to overwrite an existing destination. The
-supplied cohort, folds and test masks stay fixed; only training calibration is
-replaced. Without `--data-root`, method scripts still select the historical
-versioned masks. See [the preparation details](#prepare-calibration-and-folds-separately)
-for the approximate Latin rule and coverage audit.
+The supplied 200/500 five-fold inputs include these calibration masks and their
+coverage audit. No preparation command is required for these cohorts. See
+[the preparation details](#prepare-calibration-and-folds-separately) for the
+sampling rule and optional regeneration.
 
 Run these sequentially against the same result directory. `ocean-eivGP.R` owns
 EIV-GP prediction, oxygen imputation, m/f summaries and scientific-target traces.
@@ -101,7 +99,7 @@ certifies MCMC convergence. Raw scores and diagnostics remain beside these expor
 The notebook uses the same package computations; exports do not depend on executing
 an interactive notebook. Nothing is copied into Overleaf automatically.
 
-The revised manuscript uses the **500-profile** cohort. The six registered
+The manuscript uses the **500-profile** cohort. The six registered
 LaTeX tables include all three original categorical competitors, the two
 complete-case comparison panels, and the common-hidden oxygen summaries.
 The full predictive appendix has separate point/distribution panels with
@@ -168,53 +166,47 @@ training/test files and masks are not versioned. See the [data guide](../../data
 
 ## Prepare calibration and folds separately
 
-The supplied 200/500 files retain their historical calibration masks, which used
-exact oxygen boundary anchors. For the revised 500-profile calibration, preserve
-those cohort/fold/test assignments and select training calibration from recorded
-C, salinity and log pressure only:
+The 200/500 cohorts include ready-to-run five-fold inputs. Their calibration
+indicators use the same class-stratified approximate Latin selector. To generate
+an independent input directory from the supplied partitions:
 
 ```sh
-Rscript tools/ocean-prepare-folds.R ocean500 --calibration-only
-OCEAN_DATA="reproduction/ocean/prepared/ocean500_xcalibration_v1"
-OCEAN_RESULTS="results/ocean500_xcalibration_v1"
-Rscript tools/ocean-eivGP.R --plan=true --data-root="$OCEAN_DATA" --output="$OCEAN_RESULTS" --cores=16
-Rscript tools/ocean-eivGP.R --data-root="$OCEAN_DATA" --output="$OCEAN_RESULTS" --cores=16
-Rscript tools/ocean-competitors.R --data-root="$OCEAN_DATA" --output="$OCEAN_RESULTS" --cores=16
-Rscript tools/ocean-report.R --data-root="$OCEAN_DATA" --output="$OCEAN_RESULTS" --cores=16
+Rscript tools/ocean-prepare-folds.R ocean500 /external/ocean500-inputs
 ```
 
-Use the same explicit input/output roots for every stage; bare method commands
-still select the historical versioned inputs. A new calibration requires new
-fits and must not reuse old calibration-dependent results. The preparation tool
-refuses nonempty destinations; a second positional argument selects a new one.
+For `ocean200` and `ocean500`, preparation retains the supplied cohort, train/test
+partitions and test-U masks, and computes the calibration indicators. An optional
+`--calibration-only` flag selects the same operation explicitly. Use
+`--data-root=/external/ocean500-inputs` on every method/report command, or
+`data_dir` in the Rmd, to select that directory. Preparation refuses nonempty
+destinations. Without `--data-root`, the method scripts use the bundled inputs.
 
-Within each C class, the revised selector allocates 20%/50% quotas and minimizes
-marginal empirical-quantile occupancy imbalance in salinity and log pressure.
-Membership exchanges preserve O20 within O50. A fixed seeded search budget uses
-no U, Y, model scores or U-derived cells. Equal recorded X values remain tied.
-Because profiles are a finite correlated candidate set and quotas must be nested,
-this is **approximate Latin coverage**, not guaranteed strict LHS or joint-grid
-coverage. `calibration_X_coverage.csv` reports each fold/class/axis/level's occupied
-bins, maximum bin occupancy and exact-margin status. The original records and
-all held-out masks are unchanged by `--calibration-only`.
+Within each C class, the selector allocates 20%/50% quotas and minimizes marginal
+empirical-quantile occupancy imbalance in salinity and log pressure. Membership
+exchanges preserve O20 within O50. A seeded search with a fixed budget uses
+recorded class and X coordinates, without exact oxygen, silicate or model scores.
+Equal recorded X values remain tied. Finite candidates and nesting mean this is
+**approximate Latin coverage**, not guaranteed strict LHS or joint-grid coverage.
+`calibration_X_coverage.csv` reports occupied bins, maximum bin occupancy and
+exact-margin status for each fold/class/axis/calibration level.
 
-For the raw 1000-profile cohort, prepare the folds separately:
+For the raw 1000-profile cohort, prepare the folds once:
 
 ```sh
 Rscript tools/ocean-prepare-folds.R ocean1000
 ```
 
 This writes `reproduction/ocean/prepared/ocean1000`, automatically selected by
-`--dataset=ocean1000`. Full preparation retains the earlier input-balanced fold
-assignment but uses the revised C/X-only calibration. The 500 fold method forms
-oxygen quintiles and pressure-ordered groups of five within C; the 1000 method
-uses oxygen-ordered groups of five. Assignment balances oxygen, log pressure and
-salinity moments. These are historical cohort/fold choices, separate from the
-revised calibration mechanism. Test masks retain the seeded class-balanced rule.
+`--dataset=ocean1000`. Full preparation includes input-balanced fold assignment
+and the same training-calibration selector. The 500 fold method forms oxygen
+quintiles and pressure-ordered groups of five within C; the 1000 method uses
+oxygen-ordered groups of five. Assignment balances oxygen, log pressure and
+salinity moments. Fold assignment and calibration are separate steps: oxygen is
+used in fold balancing, while calibration selection uses recorded C and X only.
+Test masks use a seeded class-balanced rule.
 
-The [calibration design review](OCEAN_CALIBRATION_DESIGN.md) explains finite-sample
-likelihood alignment and limits of the theoretical claims. Custom Rmd rendering
-uses `data_dir` and `output_dir` with the same paths.
+The [calibration design](OCEAN_CALIBRATION_DESIGN.md) describes the algorithm,
+finite-sample likelihood alignment and limits of the theoretical claims.
 
 ## Fitting and explicit continuation
 
@@ -225,7 +217,7 @@ Select a new `--output` for new fits or the original environment to resume old f
 Chain extension remains an explicit advanced operation:
 
 ```sh
-Rscript tools/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=16 --data-root="$OCEAN_DATA" --output="$OCEAN_RESULTS"
+Rscript tools/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=16
 ```
 
 Results default to `<repository>/results/<dataset>/` for paper runs; pilot and quick use `results/<dataset>_pilot/` and `results/<dataset>_quick/`. Use `--output` to select any custom or existing directory. Existing results are not moved. To read an older default run, explicitly pass its `~/eivGP-ocean/<dataset>/<profile>/` path.
@@ -268,7 +260,7 @@ Each fit supports one extension, with paper default +20,000 iterations per chain
 and pilot default +80. `--continuation-iter` may choose another added length:
 
 ```sh
-Rscript tools/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=10000 --cores=16 --data-root="$OCEAN_DATA" --output="$OCEAN_RESULTS"
+Rscript tools/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=10000 --cores=16
 ```
 
 Passing fits are skipped; conflicting saved extension lengths are rejected.
@@ -322,8 +314,8 @@ assembles the combined manuscript report from saved fits and scores. Use
 ```r
 rmarkdown::render("paper/applications/ocean.Rmd",
   params=list(dataset="ocean500",profile="paper",action="report",
-    data_dir="reproduction/ocean/prepared/ocean500_xcalibration_v1",
-    output_dir="results/ocean500_xcalibration_v1",
+    data_dir="",
+    output_dir="",
     run_id="ocean500_paper_report",appendix=TRUE))
 ```
 

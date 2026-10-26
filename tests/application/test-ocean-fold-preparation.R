@@ -112,3 +112,27 @@ testthat::test_that("calibration-only preparation preserves frozen inputs and pr
   testthat::expect_false(meta$calibration_uses_cell)
   testthat::expect_equal(meta$calibration_design$seed_by_fold,465200L+1:5)
 })
+
+testthat::test_that("bundled 200/500 inputs reproduce the sole calibration selector", {
+  for(N in c(200L,500L)) {
+    dir<-file.path(repo,'data/ocean_silicate',paste0('n',N))
+    meta<-jsonlite::read_json(file.path(dir,'freeze_manifest.json'),simplifyVector=TRUE)
+    testthat::expect_false(meta$calibration_uses_U)
+    testthat::expect_equal(meta$preparation_implementation,'base-R-X-calibration-v1')
+    for(f in 1:5) {
+      tr<-read.csv(file.path(dir,sprintf('fold%02d_train.csv',f)))
+      expected<-ocean_fold_calibration(tr,meta$calibration_seed_base+f)
+      testthat::expect_identical(tr$calib_o20,expected$calib_o20)
+      testthat::expect_identical(tr$calib_o50,expected$calib_o50)
+    }
+    out<-tempfile('ocean-bundled-regeneration-');on.exit(unlink(out,recursive=TRUE),add=TRUE)
+    # Dataset defaults preserve the supplied partitions, without a special flag.
+    testthat::expect_message(prepare_ocean_folds(paste0('ocean',N),out,repo),'Prepared')
+    for(f in 1:5) {
+      original<-read.csv(file.path(dir,sprintf('fold%02d_train.csv',f)))
+      regenerated<-read.csv(file.path(out,sprintf('fold%02d_train.csv',f)))
+      testthat::expect_identical(original$calib_o20,regenerated$calib_o20)
+      testthat::expect_identical(original$calib_o50,regenerated$calib_o50)
+    }
+  }
+})

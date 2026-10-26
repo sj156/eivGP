@@ -68,9 +68,6 @@ import_dirs <- as.character(unlist(params$import_dirs)); import_dirs <- import_d
 import_dirs <- ocean_resolve_path(import_dirs,repository_dir)
 cc_output_dir <- if(nzchar(params$cc_output_dir)) ocean_resolve_path(params$cc_output_dir,repository_dir) else output_dir
 inputs <- ocean_prepare_inputs(data_dir)
-calibration_metadata_path <- file.path(data_dir,"freeze_manifest.json")
-calibration_metadata <- if(file.exists(calibration_metadata_path))jsonlite::read_json(calibration_metadata_path)else list()
-recorded_X_calibration <- identical(calibration_metadata$preparation_implementation,"base-R-X-calibration-v1")
 selected <- ocean_select_tasks(settings)
 ```
 
@@ -144,7 +141,7 @@ cat(sprintf("The selected cohort contains **%d profiles from %d cruises**, with 
 - **Separation:** test \(y\) is excluded from fitting/tuning. Transformations use training data; \(u\) scaling uses training calibration measurements. Hidden reference \(u\) is excluded from fitting and retained for evaluation and offline plots.
 
 ```{r calibration-design, echo=FALSE, results="asis"}
-if(recorded_X_calibration)cat("**Calibration design:** class quotas with nested empirical-quantile coverage of salinity and log pressure. Selection does not use exact oxygen, silicate or oxygen-derived cells. This is an approximate finite-cohort Latin design; strict LHS is not guaranteed. The original cohort, folds and test masks are preserved when using `--calibration-only`. See `calibration_X_coverage.csv` beside the prepared inputs.\n\n")else cat("**Calibration design:** supplied historical masks. These inputs have not been replaced by the C/X-only preparation; historical Ocean designs used exact-oxygen boundary anchors.\n\n")
+cat("**Calibration design:** class quotas with nested empirical-quantile coverage of salinity and log pressure. Selection uses recorded class and X coordinates, without exact oxygen or silicate. This is an approximate finite-cohort Latin design; strict LHS is not guaranteed. See `calibration_X_coverage.csv` beside the inputs.\n\n")
 ```
 
 ```{r observation-information, echo=FALSE, results="asis"}

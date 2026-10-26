@@ -214,6 +214,16 @@ ocean_read_inputs <- function(data_dir) {
 }
 
 ocean_prepare_inputs <- function(data_dir) {
+  manifest<-file.path(data_dir,"freeze_manifest.json")
+  if(!file.exists(manifest))stop("Missing freeze_manifest.json; prepare Ocean calibration inputs before fitting.")
+  metadata<-jsonlite::read_json(manifest,simplifyVector=TRUE)
+  if(!identical(metadata$calibration_design$method,"C-stratified nested empirical-rank X coverage v1"))
+    stop("Inputs must use class-stratified approximate Latin calibration; prepare them with tools/ocean-prepare-folds.R.")
+  if(length(metadata$files_md5)) {
+    expected<-unlist(metadata$files_md5,use.names=TRUE)
+    actual<-unname(tools::md5sum(file.path(data_dir,names(expected))))
+    if(anyNA(actual)||!identical(actual,unname(expected)))stop("Prepared Ocean input checksums differ from freeze_manifest.json.")
+  }
   cohort<-ocean_read_inputs(data_dir);N<-nrow(cohort);ntrain<-as.integer(.8*N);ntest<-N-ntrain
   stopifnot(all(table(factor(cohort$C,levels=1:4))==N/4))
   folds<-list();held<-character();audit<-list()
@@ -2877,7 +2887,7 @@ ocean_export_application <- function(output_dir,analysis,settings,data_dir,
   if(settings$profile!="paper")registry$status<-paste0("workflow_check_",registry$status)
   mixedgp_atomic_csv(registry,file.path(dest,"artifact_manifest.csv"))
   state<-if(settings$profile!="paper")"WORKFLOW_CHECK" else if(!all(registry$available))"INCOMPLETE_ARTIFACTS" else if(any(!status$status %in% c("scored","success")))"COMPLETE_WITH_METHOD_FAILURES" else "COMPLETE"
-  ocean_atomic_lines(c(paste("state:",state),paste("cohort:",inputs$design$N),paste("profile:",settings$profile),paste("generated:",sum(registry$available),"/",nrow(registry)),notes,"Workflow completion does not establish convergence. Nothing is copied to Overleaf.","The revised manuscript uses ocean500. Other cohorts and quick/pilot profiles are distinct analyses; exact historical values require the matching saved fits and environment."),file.path(dest,"SUMMARY.txt"))
+  ocean_atomic_lines(c(paste("state:",state),paste("cohort:",inputs$design$N),paste("profile:",settings$profile),paste("generated:",sum(registry$available),"/",nrow(registry)),notes,"Workflow completion does not establish convergence. Nothing is copied to Overleaf.","The manuscript uses ocean500. Other cohorts and quick/pilot profiles are distinct analyses; exact historical values require the matching saved fits and environment."),file.path(dest,"SUMMARY.txt"))
   mixedgp_atomic_rds(list(baseline_recovery=if(file.exists(file.path(output_dir,"baseline_recovery.rds")))readRDS(file.path(output_dir,"baseline_recovery.rds")) else NULL,identity=readRDS(ocean_path(output_dir,"workflow_identity.rds")),analysis_code=eivgp_module_identity(),analysis_package=as.character(utils::packageVersion("eivGP")),settings=settings,input_hashes=tools::md5sum(list.files(data_dir,"[.]csv$",full.names=TRUE)),artifact_manifest=registry,method_status=status,time=Sys.time()),file.path(dest,"provenance.rds"))
   result<-list(manifest=registry,status=state,method_status=status,review=review,path=dest)
   mixedgp_atomic_rds(list(signature=signature,result=result),cache)
@@ -3633,6 +3643,7 @@ ocean_calibration_select <- function(x,k,seed) {
 ocean_fold_calibration <- function(train,seed) {
   # Access is deliberately limited to recorded class, salinity/log-pressure,
   # and fixed row identifiers. Hidden oxygen and U-derived `cell` are ignored.
+  if(!"C"%in%names(train)&&"band"%in%names(train))train$C<-train$band
   required<-c("C","G2salinity","G2pressure")
   if(!all(required%in%names(train)))stop("Calibration requires C, G2salinity and G2pressure.")
   if(anyNA(train[,required])||any(!is.finite(as.matrix(train[,required])))||any(train$G2pressure<=0))
@@ -3672,13 +3683,14 @@ ocean_fold_test_masks <- function(test,fold) {
     observed_U_O50=o50,mask_seed=202609260L+fold)
 }
 
-prepare_ocean_folds <- function(dataset="ocean1000",output_dir=NULL,repository_dir=getwd(),calibration_only=FALSE) {
-  dataset<-match.arg(dataset,c("ocean500","ocean1000"))
+prepare_ocean_folds <- function(dataset="ocean1000",output_dir=NULL,repository_dir=getwd(),calibration_only=NULL) {
+  dataset<-match.arg(dataset,c("ocean200","ocean500","ocean1000"))
+  if(is.null(calibration_only))calibration_only<-dataset!="ocean1000"
+  if(dataset=="ocean200"&&!isTRUE(calibration_only))stop("ocean200 uses the supplied frozen folds.")
   if(!requireNamespace("jsonlite",quietly=TRUE))stop("Install the R package jsonlite for metadata.")
   root<-normalizePath(repository_dir,mustWork=TRUE)
   input<-file.path(root,"data/ocean_silicate",sub("ocean","n",dataset))
-  if(is.null(output_dir))output_dir<-file.path(root,"reproduction/ocean/prepared",
-    paste0(dataset,if(calibration_only)"_xcalibration_v1"else""))
+  if(is.null(output_dir))output_dir<-file.path(root,"reproduction/ocean/prepared",dataset)
   output_dir<-normalizePath(path.expand(output_dir),mustWork=FALSE)
   if(identical(normalizePath(input),output_dir))stop("Choose an output directory separate from the source cohort.")
   if(dir.exists(output_dir)&&length(list.files(output_dir,all.files=TRUE,no..=TRUE)))
@@ -3686,7 +3698,8 @@ prepare_ocean_folds <- function(dataset="ocean1000",output_dir=NULL,repository_d
   meta_file<-file.path(input,if(dataset=="ocean1000")"cohort_metadata.json" else "freeze_manifest.json")
   metadata<-jsonlite::read_json(meta_file,simplifyVector=FALSE)
   cohort<-read.csv(file.path(input,"cohort_manifest.csv"),stringsAsFactors=FALSE)
-  n<-nrow(cohort);seed<-as.integer(metadata$sample_seed)
+  n<-nrow(cohort)
+  seed_base<-if(!is.null(metadata$calibration_seed_base))as.integer(metadata$calibration_seed_base)else as.integer(metadata$sample_seed)+200L
   stopifnot(n==as.integer(sub("ocean","",dataset)))
   source_files<-file.path(input,"cohort_manifest.csv")
   if(calibration_only) {
@@ -3697,7 +3710,7 @@ prepare_ocean_folds <- function(dataset="ocean1000",output_dir=NULL,repository_d
   } else {
     cohort$fold<-NULL
     rule<-if(n==500L)"joint_quintile_pressure" else "oxygen_interleaved"
-    folded<-ocean_assign_folds(cohort,rule,seed+if(n==500L)100L else 120L)
+    folded<-ocean_assign_folds(cohort,rule,as.integer(metadata$sample_seed)+if(n==500L)100L else 120L)
     cohort<-folded$cohort
   }
   dir.create(output_dir,recursive=TRUE,showWarnings=FALSE)
@@ -3713,7 +3726,7 @@ prepare_ocean_folds <- function(dataset="ocean1000",output_dir=NULL,repository_d
       tr<-cohort[cohort$fold!=f,,drop=FALSE];test<-cohort[cohort$fold==f,,drop=FALSE]
       masks<-ocean_fold_test_masks(test,f)
     }
-    train<-ocean_fold_calibration(tr,seed+200L+f)
+    train<-ocean_fold_calibration(tr,seed_base+f)
     design<-attr(train,"calibration_design");audits[[f]]<-cbind(fold=f,design$audit)
     stopifnot(!length(intersect(train$profile,test$profile)),
       sum(masks$observed_U_O20)==.2*nrow(test),sum(masks$observed_U_O50)==.5*nrow(test),
@@ -3728,16 +3741,20 @@ prepare_ocean_folds <- function(dataset="ocean1000",output_dir=NULL,repository_d
   }
   audit<-do.call(rbind,audits);write.csv(audit,file.path(output_dir,"calibration_X_coverage.csv"),row.names=FALSE)
   metadata[names(folded$design)]<-folded$design
-  metadata$data_stage<-"five-fold inputs with C/X-only nested calibration"
+  metadata$data_stage<-"five-fold inputs with nested approximate Latin calibration"
   metadata$train<-.8*n;metadata$test<-n/5L
   metadata$calibration_design<-design[!names(design)%in%c("audit","seed")]
-  metadata$calibration_design$seed_by_fold<-seed+200L+1:5
+  metadata$calibration_design$seed_by_fold<-seed_base+1:5
+  metadata$calibration_seed_base<-seed_base
   metadata$calibration_uses_U<-FALSE;metadata$calibration_uses_Y<-FALSE;metadata$calibration_uses_cell<-FALSE
-  metadata$calibration_seed_rule<-"sample_seed+200+fold; class stream adds C"
+  metadata$calibration_seed_rule<-"calibration_seed_base+fold; class stream adds C"
   metadata$test_mask_seed_rule<-"202609260+fold"
   metadata$preparation_implementation<-"base-R-X-calibration-v1"
   metadata$R_version<-as.character(getRversion());metadata$RNG_kind<-RNGkind()
-  metadata$source_files_md5<-as.list(setNames(unname(tools::md5sum(source_files)),basename(source_files)))
+  reference_files<-source_files[!grepl("_train[.]csv$",source_files)]
+  metadata$source_files_md5<-as.list(setNames(unname(tools::md5sum(reference_files)),basename(reference_files)))
+  prepared_csv<-list.files(output_dir,"[.]csv$",full.names=TRUE)
+  metadata$files_md5<-as.list(setNames(unname(tools::md5sum(prepared_csv)),basename(prepared_csv)))
   metadata$preparation_script_md5<-unname(tools::md5sum(file.path(root,"tools/ocean-tools.R")))
   jsonlite::write_json(metadata,file.path(output_dir,"freeze_manifest.json"),auto_unbox=TRUE,pretty=TRUE,digits=16)
   # Run the same reader used by fitting before advertising a prepared directory.
@@ -3751,16 +3768,16 @@ prepare_ocean_folds <- function(dataset="ocean1000",output_dir=NULL,repository_d
 ocean_prepare_main <- function(args,repository_dir) {
   if(identical(args,"--help")) {
     cat("Rscript tools/ocean-prepare-folds.R ocean500 [OUTPUT_DIR] --calibration-only\n",
-      "  Preserve the supplied cohort, folds and test masks; replace training calibration using recorded C/X.\n",
+      "  Prepare nested approximate Latin calibration on supplied cohort/folds/test masks.\n",
       "Rscript tools/ocean-prepare-folds.R ocean1000 [OUTPUT_DIR]\n",
-      "  Prepare all folds and C/X-only calibration from the raw selected cohort.\n",sep="")
+      "  Prepare folds and nested approximate Latin calibration from the raw cohort.\n",sep="")
     return(invisible(NULL))
   }
   flag<-args=="--calibration-only";if(sum(flag)>1L)stop("Repeated --calibration-only")
   positional<-args[!flag]
   if(length(positional)>2L||any(startsWith(positional,"--")))stop("Use --help for Ocean preparation arguments.")
   prepare_ocean_folds(if(length(positional))positional[1]else"ocean1000",
-    if(length(positional)>1L)positional[2]else NULL,repository_dir=repository_dir,calibration_only=any(flag))
+    if(length(positional)>1L)positional[2]else NULL,repository_dir=repository_dir,calibration_only=if(any(flag))TRUE else NULL)
 }
 
 

@@ -32,7 +32,6 @@ data/adni/
 paper/
   numerical/    # study1 and study2: one .R, .Rmd, and .html each
   applications/ # Ocean and ADNI Rmd reports, HTML and guides
-  config/       # Ocean dataset/compute parameter templates
   manifests/    # selected numerical runs and frozen Ocean input identities
 tools/          # flat application scripts; no application subdirectories
   adni-tools.R  # all ADNI application functions

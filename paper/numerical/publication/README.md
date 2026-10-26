@@ -1,8 +1,8 @@
 # Manuscript follow-up simulations
 
-`study1.R` and `study2.R` are complete fresh-run entrypoints. Our additions use
-`temp-study1-followup.R` and `study2-eivGP.R` and `study2-competitors.R`, which call the same package
-implementation and can be deleted after the follow-up work is complete.
+`study1.R` and `study2.R` are complete fresh-run entrypoints. Follow-up work uses
+`study1.R --component=follow-up`, `study2-eivGP.R`, and `study2-competitors.R`.
+These permanent entrypoints call the same package implementation.
 
 The follow-up grid does not rerun either original core experiment or the
 original categorical-only competitors. It adds 600 Study I complete-case fits
@@ -19,8 +19,14 @@ the existing paper displays. FULL is saved-fit evaluation, CUT is the secondary
 feedback comparison, and the competitor lane fits the published complete-case
 adaptations independently. Keep their output roots separate across machines.
 
-Study I continues to use `temp-study1-followup.R` with the documented original
-budgets; its workflow is unchanged by the Study II split.
+Run Study I follow-up work through the permanent launcher:
+
+```sh
+Rscript paper/numerical/study1.R --component=follow-up --action=plan --profile=paper --cores=4
+```
+
+Use `--action=run` to execute, preserving the existing output, replication and
+scientific options when resuming. The documented original budgets still apply.
 
 ### Automatic replication parallelism
 

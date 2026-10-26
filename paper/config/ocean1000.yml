@@ -1,6 +1,0 @@
-dataset: "ocean1000"
-profile: "paper"
-action: "report"
-cores: 1
-output_dir: ""
-run_id: "ocean1000_paper"

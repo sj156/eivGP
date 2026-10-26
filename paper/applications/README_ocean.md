@@ -314,8 +314,9 @@ The method scripts create predictions after fitting in the same invocation. Save
 The Rmd defaults to `report`, also accepts `plan`, and rejects fitting actions.
 Custom package libraries must also be on the R session's `.libPaths()`.
 
-`paper/config/ocean200.yml`, `ocean500.yml` and `ocean1000.yml` are report parameter
-templates. Read one with `yaml::read_yaml()` and pass it as `params`.
+Use `tools/ocean-report.R --dataset=ocean200`, `--dataset=ocean500`, or
+`--dataset=ocean1000` to select the saved dataset report. For direct rendering,
+set `dataset` in the `params` list above; separate YAML presets are unnecessary.
 
 OI/CC/MI protocols and scoring scopes are defined in the report. Masks, counts
 and eligible best-score emphasis are computed from inputs/results. Keep fitted

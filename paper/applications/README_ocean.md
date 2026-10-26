@@ -2,10 +2,8 @@
 
 Use three method-oriented scripts. Each method script fits missing compatible
 tasks and immediately analyzes its own results; no separate analysis action is needed.
-The paper budget is four chains and 50,000 iterations. Calibration selects
-20%/50% of training profiles within each ordinal class, with nested subsets and
-approximate Latin coverage of salinity and log pressure. Prepare the inputs and
-use the same paths throughout:
+The paper budget is four chains and 50,000 iterations. The supplied 200/500
+five-fold inputs are ready to run:
 
 ```sh
 Rscript tools/ocean-eivGP.R --cores=16
@@ -166,9 +164,7 @@ training/test files and masks are not versioned. See the [data guide](../../data
 
 ## Prepare calibration and folds separately
 
-The 200/500 cohorts include ready-to-run five-fold inputs. Their calibration
-indicators use the same class-stratified approximate Latin selector. To generate
-an independent input directory from the supplied partitions:
+To regenerate the supplied 200/500 inputs in a separate directory:
 
 ```sh
 Rscript tools/ocean-prepare-folds.R ocean500 /external/ocean500-inputs
@@ -181,14 +177,12 @@ partitions and test-U masks, and computes the calibration indicators. An optiona
 `data_dir` in the Rmd, to select that directory. Preparation refuses nonempty
 destinations. Without `--data-root`, the method scripts use the bundled inputs.
 
-Within each C class, the selector allocates 20%/50% quotas and minimizes marginal
-empirical-quantile occupancy imbalance in salinity and log pressure. Membership
-exchanges preserve O20 within O50. A seeded search with a fixed budget uses
-recorded class and X coordinates, without exact oxygen, silicate or model scores.
-Equal recorded X values remain tied. Finite candidates and nesting mean this is
-**approximate Latin coverage**, not guaranteed strict LHS or joint-grid coverage.
-`calibration_X_coverage.csv` reports occupied bins, maximum bin occupancy and
-exact-margin status for each fold/class/axis/calibration level.
+Within each ordinal class, seeded selection assigns 20%/50% of training profiles
+and keeps O20 nested in O50. Membership exchanges balance empirical-quantile
+coverage of salinity and log pressure, using recorded class and X without exact
+oxygen or silicate. Finite candidates, tied values and nesting make this
+**approximate Latin coverage**, not guaranteed strict LHS.
+`calibration_X_coverage.csv` records the achieved coverage.
 
 For the raw 1000-profile cohort, prepare the folds once:
 
@@ -204,9 +198,6 @@ oxygen-ordered groups of five. Assignment balances oxygen, log pressure and
 salinity moments. Fold assignment and calibration are separate steps: oxygen is
 used in fold balancing, while calibration selection uses recorded C and X only.
 Test masks use a seeded class-balanced rule.
-
-The [calibration design](OCEAN_CALIBRATION_DESIGN.md) describes the algorithm,
-finite-sample likelihood alignment and limits of the theoretical claims.
 
 ## Fitting and explicit continuation
 

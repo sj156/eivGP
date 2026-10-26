@@ -166,18 +166,10 @@ See [Study I reproduction](paper/numerical/study1-README.md),
 ### B. Ocean application
 
 **B1. Select the inputs.** `ocean500` is the main paper cohort and the default.
-The supplied five-fold inputs in `data/ocean_silicate/n500/` are ready to run.
-Within each ordinal class, calibration selects 20%/50% of training profiles with
-approximate Latin coverage of salinity and log pressure; O20 is nested in O50.
-Selection uses recorded class and X, without exact oxygen or silicate. Finite
-candidates, tied values and nesting mean that strict LHS is not guaranteed.
-`calibration_X_coverage.csv` records the achieved coverage.
-
-`ocean200` includes the same calibration protocol. For the raw `ocean1000`
-cohort, prepare inputs once with `Rscript tools/ocean-prepare-folds.R ocean1000`.
-See the [calibration design](paper/applications/OCEAN_CALIBRATION_DESIGN.md) and
-[preparation guide](paper/applications/README_ocean.md#prepare-calibration-and-folds-separately)
-for the algorithm and optional regeneration.
+The supplied five-fold inputs in `data/ocean_silicate/n500/` are ready to run;
+`ocean200` is also included. Prepare the raw `ocean1000` cohort once with
+`Rscript tools/ocean-prepare-folds.R ocean1000`. See the
+[Ocean guide](paper/applications/README_ocean.md) for data preparation and sampling details.
 
 **B2. Fit and analyze EIV-GP.** Preview the workload, then run it:
 

@@ -18,5 +18,4 @@ The `cores` argument is a shared CPU budget. Default paper outputs are under
 
 Input/provenance validation, a completed workflow and MCMC convergence are
 separate checks. See the [Ocean guide](../../applications/README_ocean.md) for
-commands and the [calibration design](../../applications/OCEAN_CALIBRATION_DESIGN.md)
-for statistical scope.
+commands, sampling details and coverage checks.

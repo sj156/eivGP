@@ -223,8 +223,8 @@ failures and nonconvergence are disclosed, not silently reclassified.
 `--ess-min=100` on `adni-eivGP.R` enables saved-state continuation after the
 initial sampling budget until every monitored scientific bulk and tail ESS is
 strictly greater than 100. The default is `NULL`; `--ess-min=NULL` keeps the
-fixed budget. Four chains are required, so this option is unavailable with the
-one-chain quick profile. No new warmup or thinning is introduced. Checks use a
+fixed budget. Four chains are required, so this option is unavailable for
+runs with fewer than four allocated cores. No new warmup or thinning is introduced. Checks use a
 fixed five-point test-input panel (without test responses), 64 fixed latent
 integration samples, and all retained MCMC draws. Calibrated cells additionally
 monitor physical-surface targets. ESS is a precision criterion, not a proof of
@@ -254,13 +254,19 @@ value must match it. This avoids silently changing a frozen workflow identity.
 
 ### Memory and CPU scheduling
 
-Keep the existing scientific arguments and add
-`--cores=12 --fit-jobs=1 --evaluation-jobs=1` to limit resident fits independently
-of the shared CPU budget. Four chains are retained; one fitting job can run its
-four chains concurrently. Increase `--fit-jobs=2` only after measuring peak
-memory. Omitting the limits preserves the previous scheduling policy. These
-resource settings are excluded from the scientific manifest identity.
-Continuation loads each checkpoint once and validates it before use.
+Specify only `--cores=N`. New eivGP fits use `min(N,4)` chains and
+`floor(N / min(N,4))` concurrent jobs, capped by pending work. Thus 2 cores
+run one two-chain fit, 6 cores run one four-chain fit, 8 cores run two, and
+12 cores run three. Prefer multiples of four above four cores. The same
+resident-fit limit applies during evaluation. Competitors use one core per
+job, allowing up to N concurrent jobs. Ocean follows the same policy.
+
+On a 24 GB Mac, start with `--cores=4`; reduce to 2 if necessary, which changes
+the fit to two chains. No automatic RAM guarantee is provided. Changing the
+chain count requires a new output directory; saved reports retain the original
+chain count. Scientific ESS stopping requires four chains. The former
+`--fit-jobs` and `--evaluation-jobs` options are retired. Continuation still
+loads each checkpoint once and validates it before use.
 
 Application provenance hashes the ADNI scripts separately from package modules.
 Existing results created before this refactor retain their original identity;

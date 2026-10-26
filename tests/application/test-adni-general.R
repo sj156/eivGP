@@ -23,7 +23,7 @@ testthat::test_that('ADNI pilot matches screening and paper accepts explicit bud
  testthat::expect_identical(p$sampler_o0,'HMC');testthat::expect_identical(p$sampler_o20,'HMC');testthat::expect_identical(p$sampler_o50,'ESS')
  paper<-adni_settings('paper',cores=12L)
  testthat::expect_identical(paper$chains,4L);testthat::expect_identical(paper$iter,50000L);testthat::expect_identical(paper$burn,5000L)
- custom<-adni_settings('paper',iter=20000L,burn=2000L,stages='10000,20000',chains=3L)
+ custom<-adni_settings('paper',iter=20000L,burn=2000L,stages='10000,20000',chains=3L,cores=3L)
  testthat::expect_identical(custom$stages,c(10000L,20000L));testthat::expect_gt(custom$first_checkpoint,custom$burn)
  testthat::expect_error(adni_settings('paper',iter=1000L,burn=2000L),'exceed burn')
  testthat::expect_error(adni_settings('pilot',first_checkpoint=500L),'first-checkpoint')
@@ -94,7 +94,7 @@ testthat::test_that('general entrypoint freezes custom settings and resumes with
  e<-adni_load_api(repo)
  # The runner is exercised; expensive HTML functionals are tested separately from saved files.
  e$adni_render_report<-function(...)invisible(NULL)
- args<-list(profile='quick',cores=2L,data_root=input,output=out,iter=32L,burn=8L,stages=c(24L,32L),
+ args<-list(profile='quick',cores=4L,data_root=input,output=out,iter=32L,burn=8L,stages=c(24L,32L),
    folds=1L,cells='O20',chains=4L,draws_per_chain=5L)
  e$adni_method_run(repo,args,'eivGP')
  manifest<-jsonlite::fromJSON(adni_path(out,'application_manifest.json'),simplifyVector=FALSE)
@@ -106,7 +106,7 @@ testthat::test_that('general entrypoint freezes custom settings and resumes with
  testthat::expect_true(file.exists(file.path(out,'eiv_fold01_O20/prediction_metrics.csv')))
  testthat::expect_false(any(dir.exists(file.path(out,c('fits','S24','S32','workflow','receipts')))))
  fit<-adni_plan_fit_path(out,list(fold=1L,cell='O20'));before<-tools::md5sum(fit)
- args$cores<-1L;testthat::expect_error(e$adni_method_run(repo,args,'eivGP'),NA)
+ args$cores<-8L;testthat::expect_error(e$adni_method_run(repo,args,'eivGP'),NA)
  testthat::expect_identical(tools::md5sum(fit),before)
  args$burn<-9L;testthat::expect_error(e$adni_method_run(repo,args,'eivGP'),'settings/inputs differ')
  saved<-e$adni_saved_source(out)

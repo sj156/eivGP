@@ -76,7 +76,7 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 VECLIB_MAXIMUM
 ```
 
 `--cores=N` is a shared CPU budget for chains, prediction, diagnostics and figure
-export, capped at detected CPU capacity. It does not alter chains, seeds or
+export, capped at detected CPU capacity. For ADNI/Ocean, new EIV fits use min(N,4) chains; it does not alter seeds or
 numerical settings. Waiting coordinators release slots; resident fits have a
 separate memory limit. macOS/Linux use forked workers; Windows uses the serial
 fallback. HTML assembly remains serial.
@@ -177,7 +177,7 @@ Rscript tools/ocean-eivGP.R --plan=true --profile=paper --cores=16
 Rscript tools/ocean-eivGP.R --profile=paper --cores=16
 ```
 
-Paper sampling is fixed at four chains, initially 50,000 iterations per chain
+Paper sampling uses min(cores,4) chains, initially 50,000 iterations per chain
 including 5,000 burn-in. Optional `--ess-min=100` continues saved states until all
 monitored scientific bulk and tail ESS exceed 100; its default is `NULL`.
 For a separate explicit fixed-length extension, use
@@ -240,7 +240,7 @@ Rscript tools/adni-eivGP.R --plan=true --profile=paper --cores=16
 Rscript tools/adni-eivGP.R --profile=paper --cores=16
 ```
 
-Paper runs use five folds, four chains and initially 50,000 iterations per chain
+Paper runs use five folds, min(cores,4) chains and initially 50,000 iterations per chain
 including 5,000 burn-in. Defaults are HMC at O0/O20, ESS at O50, 250 prediction
 states per chain and full competitor controls. Explicit numerical overrides are
 recorded in the run identity. Optional `--ess-min=100` enables scientific-target
@@ -254,8 +254,9 @@ Rscript tools/adni-competitors.R --profile=paper --cores=16
 ```
 
 This covers original ordinal-input UC-GP/LVGP/EzGP and matched complete-case
-comparisons. `--fit-jobs` and `--evaluation-jobs` can limit resident fits
-independently of the total shared CPU budget; see the ADNI guide.
+comparisons. Specify only `--cores` for resource allocation. Fitting and evaluation
+use complete chain-sized groups for eivGP and one core per competitor job; lower the budget if memory pressure is
+high. See the ADNI guide.
 
 **C4. Assemble and inspect the paper report.**
 

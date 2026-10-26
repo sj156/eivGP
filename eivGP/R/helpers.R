@@ -10345,9 +10345,22 @@ mixedgp_atomic_csv <- function(x, path) {
 # Preview the first wave of EIV fits; idle resources require pending work.
 # This changes execution concurrency only, never the requested chain count.
 # The single CLI budget bounds active workers; outer limits bound resident fit objects.
+# Application CPU budgets select up to four chains and only complete job groups.
+mixedgp_application_allocation <- function(cores) {
+  requested<-mixedgp_as_integer_strict(cores,"cores",1L,1L)
+  chains<-min(4L,requested)
+  jobs<-max(1L,requested %/% chains)
+  list(requested_cores=requested,cores=as.integer(jobs*chains),
+       chains=as.integer(chains),jobs=as.integer(jobs))
+}
+
 mixedgp_stage_workers <- function(cores,stage,n_tasks,chains=4L) {
-  per_fit <- if(stage %in% c("fit","continue")) chains else 2L
-  as.integer(max(1L,min(n_tasks,ceiling(cores/per_fit))))
+  cores<-mixedgp_as_integer_strict(cores,"cores",1L,1L)
+  n_tasks<-mixedgp_as_integer_strict(n_tasks,"n_tasks",0L,1L)
+  chains<-mixedgp_as_integer_strict(chains,"chains",1L,1L)
+  # All stages use the same chain-sized resident-job groups. Keep a one-slot
+  # scheduler capacity for an empty queue; it launches no work.
+  as.integer(max(1L,min(n_tasks,floor(cores/chains))))
 }
 
 mixedgp_core_plan <- function(cores,n_fits,chains=4L) {

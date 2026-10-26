@@ -10,7 +10,7 @@ test_that("cores-only CLI requests the full workflow and no arguments remain a p
   p<-ocean_stage_plan(ocean_settings(cores=16))
   expect_identical(p$stage,c('fit','predict','functionals','paper_assets','html'))
   expect_equal(mixedgp_stage_workers(16,'fit',15,4),4)
-  expect_equal(mixedgp_stage_workers(16,'analyze',15,4),8)
+  expect_equal(mixedgp_stage_workers(16,'analyze',15,4),4)
   expect_equal(mixedgp_stage_workers(1,'analyze',15,4),1)
 })
 

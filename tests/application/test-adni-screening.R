@@ -51,8 +51,8 @@ testthat::test_that('groups separate EIV, comparators and strict saved-only repo
 })
 testthat::test_that('public scheduler lends one total pool rather than full-chain reservations',{
  testthat::expect_false(exists('mixedgp_task_budget',envir=asNamespace('eivGP'),inherits=FALSE))
- testthat::expect_equal(a$queue$mixedgp_stage_workers(5L,'fit',10L,4L),2L)
- testthat::expect_equal(a$queue$mixedgp_stage_workers(6L,'fit',10L,4L),2L)
+ testthat::expect_equal(a$queue$mixedgp_stage_workers(5L,'fit',10L,4L),1L)
+ testthat::expect_equal(a$queue$mixedgp_stage_workers(6L,'fit',10L,4L),1L)
  testthat::expect_true(is.infinite(a$queue$mixedgp_competitor_controls()$LVGP$max_elapsed_seconds));testthat::expect_true(a$queue$mixedgp_competitor_controls()$LVGP$parallel)
  root<-tempfile();dir.create(root);on.exit(unlink(root,recursive=TRUE));close<-a$mixedgp_budget_enter(2L);on.exit(close(),add=TRUE)
  tasks<-data.frame(plan='Plan1-6-1',fold=1:3,cell='O20',method='EIV-GP',kind='eiv',stage='S1',id=paste0('job',1:3))
@@ -61,7 +61,7 @@ testthat::test_that('public scheduler lends one total pool rather than full-chai
 })
 testthat::test_that('real four-chain q4 smoke continues same states and exports valid scores',{
  root<-tempfile();dir.create(root);on.exit(unlink(root,recursive=TRUE));path<-fixture(root)
- adni_screen_run(repo,list(manifest=path,cores=2L,plan=FALSE,reuse_only=FALSE),'eivGP')
+ adni_screen_run(repo,list(manifest=path,cores=4L,plan=FALSE,reuse_only=FALSE),'eivGP')
  t<-data.frame(fold=1L,cell='O20');fit<-a$adni_plan_read_fit(a$adni_plan_fit_path(file.path(root,'results'),t))
  testthat::expect_identical(fit$checkpoint$iteration,32L);testthat::expect_identical(fit$checkpoint$burn,8L)
  testthat::expect_equal(length(fit$checkpoint$states),4L);testthat::expect_equal(fit$data$q,4L);testthat::expect_identical(fit$control$sampler,'HMC')
@@ -89,7 +89,7 @@ testthat::test_that('CC competitors train only on calibration and resume scoring
  e$baseline_cell(t,inp,out,s,TRUE)
  z<-inp$cells[['1/O20']];dir<-file.path(out,'CC/O20/baselines/fold01/LVGP');scores<-read.csv(file.path(dir,'metrics.csv'))
  testthat::expect_equal(nrow(captured$X),6L);testthat::expect_equal(ncol(captured$X),4L);testthat::expect_equal(ncol(captured$C),4L)
- testthat::expect_true(captured$controls$parallel);testthat::expect_true(is.infinite(captured$controls$max_elapsed_seconds))
+ testthat::expect_false(captured$controls$parallel);testthat::expect_true(is.infinite(captured$controls$max_elapsed_seconds))
  expected<-sqrt(mean((mean(z$train$Y[z$train$calibration==1])-z$test$Y[z$available])^2))/sd(z$train$Y)
  testthat::expect_equal(scores$RMSE_SD,expected);testthat::expect_equal(scores$n,sum(z$available));testthat::expect_equal(scores$training_N,6L)
  model<-tools::md5sum(file.path(dir,'fit.rds'));unlink(file.path(dir,'metrics.csv'))

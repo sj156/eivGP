@@ -60,12 +60,19 @@ The dependency stages are:
 | Paper assets | Scores → tables, cohort/imputation/surface figures, MCMC review | Independent figure files run concurrently |
 | HTML | Completed analysis and exports → reader report | Serial assembly; no fitting |
 
+New eivGP fits use `min(N,4)` chains with `--cores=N`, and only complete
+chain groups run concurrently: 2 cores run one two-chain job, 6 run one
+four-chain job, 8 run two, and 12 run three. Prefer multiples of four above
+four. The same resident-fit limit applies during evaluation. Competitors use
+one core per job, with up to N concurrent jobs. ADNI uses the same policy.
+Lower the core budget if memory pressure is high; this is not a RAM guarantee.
+Changing chain count requires a new output; saved fits retain their chains.
+
 `--cores=N` caps active computation across all these stages; it does not promise
 100% utilization during I/O or serial work. Waiting coordinators release slots.
 The application holds `.application.lock` through rendering to prevent concurrent writers.
 The per-invocation `core-events/` logs record acquired/released slots; task logs
-record completion and failures. Seeds, chains, iterations and evaluation budgets
-are independent of the allocation. The CLI caps workers to detected CPU capacity.
+record completion and failures. Seeds, iterations and evaluation budgets remain unchanged; chain count follows the core budget for new fits. The CLI caps workers to detected CPU capacity.
 macOS/Linux use forked workers; Windows currently falls back to serial execution.
 Parallel PNG exports use Cairo instead of the fork-unsafe macOS Quartz device;
 PDF uses the standard PDF device. Without Cairo on macOS, graphics export is serial.
@@ -217,18 +224,18 @@ Sampling is fixed by profile:
 
 | Profile | Chains | Initial iterations per chain | Burn-in |
 |---|---:|---:|---:|
-| paper | 4 | 50,000 | 5,000 |
-| pilot | 4 | 80 | 30 |
-| quick | 1 | 80 | 30 |
+| paper | min(cores,4) | 50,000 | 5,000 |
+| pilot | min(cores,4) | 80 | 30 |
+| quick | min(cores,4) | 80 | 30 |
 
 Initial iterations include burn-in. The CLI does not accept `--chains`, `--iter`
 or `--burn`. Use `pilot` or `quick` for workflow checks, not formal results.
 
 `cores` is a shared workflow budget for chains, prediction blocks, diagnostics,
-scoring and independent figure files. Four paper chains remain fixed. Waiting
+scoring and independent figure files. New fits use up to four chains. Waiting
 coordinators release slots, and completed chains return their slots immediately;
 subsequent stages can borrow all available slots. Simultaneously resident fits
-are bounded separately for memory. Analysis and report calculations retain the
+follow the same chain-sized grouping rule in every phase. Analysis and report calculations retain the
 requested budget; HTML assembly is serial. Windows currently uses serial
 execution. `run` aliases `fit`; fitting and analysis remain separate stages.
 
@@ -329,8 +336,8 @@ are recorded in `paper/manifests/ocean/`.
 `--ess-min=100` on `ocean-eivGP.R` enables saved-state continuation after the
 initial sampling budget until every monitored scientific bulk and tail ESS is
 strictly greater than 100. The default is `NULL`; `--ess-min=NULL` keeps the
-fixed budget. Four chains are required, so this option is unavailable with the
-one-chain quick profile. No new warmup or thinning is introduced. Checks use a
+fixed budget. Four chains are required, so this option is unavailable for
+runs with fewer than four allocated cores. No new warmup or thinning is introduced. Checks use a
 fixed five-point test-input panel (without test responses), 64 fixed latent
 integration samples, and all retained MCMC draws. Calibrated cells additionally
 monitor physical-surface targets. ESS is a precision criterion, not a proof of

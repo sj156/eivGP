@@ -513,6 +513,7 @@ adni_plan_baseline <- function(task, inputs, out, s) {
             if (task$method == "LVGP") list(n_starts=1L,max_retries=1L,max_iter_ini=10L,max_iter_lat=3L,
                 rescue_iter_ini=10L,rescue_iter_lat=3L,max_elapsed_seconds=120,parallel=TRUE) else
                 list(n_starts=1L,rescue_starts=integer())
+        if(task$method == "LVGP") controls$parallel <- FALSE
         ans <- do.call(fit_mixedgp_competitor, c(list(method = task$method, X = xc, y = yt, C = ct, new_X = xs,
             new_C = cs, m_vec = mvec, n_draw = 4L * s$draws_per_chain, seed = p$seeds[[if (task$method == "UC-GP") "UC_GP" else "LVGP"]]),
             controls))
@@ -871,9 +872,9 @@ adni_screen_args <- function(args) {
   for(a in args){
     if(!grepl('^--[^=]+=.+$',a))stop('Use --name=value: ',a)
     k<-gsub('-','_',sub('^--([^=]+)=.*$','\\1',a));v<-sub('^[^=]+=','',a)
-    if(!k%in%c('manifest','cores','fit_jobs','evaluation_jobs','plan','reuse_only'))stop('Unknown screening option: ',k)
+    if(!k%in%c('manifest','cores','plan','reuse_only'))stop('Unknown screening option: ',k)
     if(k%in%c('plan','reuse_only')){if(!v%in%c('true','false'))stop(k,' must be true or false');v<-v=='true'}
-    if(k%in%c('cores','fit_jobs','evaluation_jobs')){n<-suppressWarnings(as.numeric(v));if(!is.finite(n)||n<1||n!=floor(n)||n>.Machine$integer.max)stop('cores must be a positive integer');v<-as.integer(n)}
+    if(k%in%c('cores')){n<-suppressWarnings(as.numeric(v));if(!is.finite(n)||n<1||n!=floor(n)||n>.Machine$integer.max)stop('cores must be a positive integer');v<-as.integer(n)}
     if(k%in%names(p)&&!k%in%c('cores','plan','reuse_only'))stop('Repeated option: ',k)
     p[[k]]<-v
   }
@@ -949,16 +950,19 @@ adni_screen_verified <- function(path,identity) {
   TRUE
 }
 
-adni_resident_workers <- function(cores,phase,n_tasks,chains=4L,limit=NULL) {
-  workers<-mixedgp_stage_workers(cores,if(phase=='fit')'fit'else'analyze',n_tasks,chains)
-  if(!is.null(limit))workers<-min(workers,adni_integer(limit,paste0(phase,' jobs')))
-  as.integer(workers)
+adni_resident_workers <- function(cores,phase,n_tasks,chains=4L) {
+  phase<-match.arg(phase,c('fit','evaluate'))
+  cores<-adni_integer(cores,'cores');chains<-adni_integer(chains,'chains')
+  n_tasks<-adni_integer(n_tasks,'n_tasks',0L)
+  # One resident job per chain-sized group in either phase; the shared pool
+  # lends unused CPU slots to other jobs, including a complete group.
+  as.integer(min(n_tasks,mixedgp_stage_workers(cores,phase,n_tasks,chains)))
 }
 
-adni_screen_phase <- function(tasks,phase,cores,api,FUN,status_dir,chains=4L,resident_limit=NULL) {
+adni_screen_phase <- function(tasks,phase,cores,api,FUN,status_dir,chains=4L) {
   dir.create(status_dir,recursive=TRUE,showWarnings=FALSE)
   status<-tasks;status$state<-'PENDING';status$detail<-'';status$worker_pid<-NA_integer_;status$seconds<-NA_real_
-  outer<-adni_resident_workers(cores,phase,nrow(tasks),chains,resident_limit)
+  outer<-adni_resident_workers(cores,phase,nrow(tasks),chains)
   publish<-function()api$atomic_csv(status,adni_path(status_dir,paste0(phase,'_status.csv')))
   publish()
   # Match the public Ocean executor: resident jobs share the full active-worker pool.
@@ -967,7 +971,7 @@ adni_screen_phase <- function(tasks,phase,cores,api,FUN,status_dir,chains=4L,res
       logpath<-adni_path(status_dir,paste0(phase,'_',make.names(tasks$id[i]),'.log'));con<-file(logpath,'at')
       old_message<-getConnection(sink.number(type='message'));sink(con);sink(con,type='message')
       on.exit({sink(old_message,type='message');sink();close(con)},add=TRUE);t<-proc.time()[3]
-      err<-tryCatch({FUN(tasks[i,,drop=FALSE],cores);NULL},error=function(e)conditionMessage(e))
+      err<-tryCatch({FUN(tasks[i,,drop=FALSE],min(cores,chains));NULL},error=function(e)conditionMessage(e))
       if(!is.null(err))cat('FAILED:',err,'\n')
       list(state=if(is.null(err))'DONE'else'FAILED',detail=if(is.null(err))''else err,seconds=as.numeric(proc.time()[3]-t))
     }),
@@ -1031,9 +1035,12 @@ adni_screen_run <- function(repo,p,group) {
   cases<-setNames(m$cases,vapply(m$cases,`[[`,'','id'));api$B<-dirname(normalizePath(p$manifest))
   if(p$plan){
     for(g in if(group=='report')c('eivGP','competitors')else group){x<-adni_screen_tasks(m,g);print(x,row.names=FALSE)}
-    cat('Public shared CPU pool:',p$cores,'; fit resident limit:',adni_resident_workers(p$cores,'fit',100L,if(is.null(m$chains))4L else m$chains,p$fit_jobs),
-      '; evaluation resident limit:',adni_resident_workers(p$cores,'evaluate',100L,limit=p$evaluation_jobs),'; full-chain reservations/backfill disabled.\n');return(invisible(bundle))
+    cat('Public shared CPU pool:',p$cores,'; fit resident limit:',adni_resident_workers(p$cores,'fit',100L,if(is.null(m$chains))4L else m$chains),
+      '; evaluation resident limit:',adni_resident_workers(p$cores,'evaluate',100L,if(is.null(m$chains))4L else m$chains),'; full-chain reservations/backfill disabled.\n');return(invisible(bundle))
   }
+  if(group=='eivGP' && !isTRUE(p$reuse_only) &&
+     (if(is.null(m$chains))4L else m$chains)!=mixedgp_application_allocation(p$cores)$chains)
+    stop('Saved/manifest chains must equal min(--cores,4); use a matching core budget or a new output.')
   root<-m$output_root
   adni_output_check(root,repo)
   dir.create(root,recursive=TRUE,showWarnings=FALSE);lock<-adni_path(root,if(adni_storage_flat(root))'.application.lock'else'.adni-application.lock')
@@ -1096,11 +1103,11 @@ adni_screen_run <- function(repo,p,group) {
       files<-if(is.null(folder))character()else sort(list.files(folder,recursive=TRUE,full.names=TRUE))
       api$atomic_rds(list(identity=id,task=t,files=files,md5=unname(tools::md5sum(files)),finished=as.character(Sys.time())),receipt)
     }
-    nchains<-if(is.null(m$chains))4L else as.integer(m$chains)
-    status<-adni_screen_phase(tasks,'fit',cores,api,function(t,n)work(t,n),adni_path(job,stage),nchains,p$fit_jobs)
+    nchains<-if(group=='competitors')1L else if(is.null(m$chains))4L else as.integer(m$chains)
+    status<-adni_screen_phase(tasks,'fit',cores,api,function(t,n)work(t,n),adni_path(job,stage),nchains)
     if(group=='eivGP'&&any(status$state=='FAILED'))stop('EIV stage incomplete; checkpoints retained. Inspect ',job)
     if(group=='eivGP'){
-      status<-adni_screen_phase(tasks,'evaluate',cores,api,function(t,n)work(t,n,TRUE),adni_path(job,stage),nchains,p$evaluation_jobs)
+      status<-adni_screen_phase(tasks,'evaluate',cores,api,function(t,n)work(t,n,TRUE),adni_path(job,stage),nchains)
       if(any(status$state=='FAILED'))stop('EIV evaluation incomplete; continuation not started. Inspect ',job)
     }else if(any(status$state=='FAILED'))warning('Comparator failures retained; saved results remain available.')
     adni_screen_collect(m,api)
@@ -2726,7 +2733,7 @@ adni_resolve_path <- function(path,repo) {
 }
 
 adni_cli_params <- function(args) {
-  allowed<-c('fit_jobs','evaluation_jobs','cores','profile','dataset','data_root','data_dir','output','output_dir','config','manifest',
+  allowed<-c('cores','profile','dataset','data_root','data_dir','output','output_dir','config','manifest',
     'chains','iter','burn','stages','folds','cells','draws_per_chain','first_checkpoint','checkpoint_step',
     'baseline_profile','sampler_o0','sampler_o20','sampler_o50','representative_fold','appendix',
     'plan','reuse_only','report_source','report_dir','functional_draws_per_chain','n_latent','run_id','ess_min')
@@ -2763,9 +2770,12 @@ adni_integer_list <- function(value,name) {
 
 adni_settings <- function(profile='pilot',cores=4L,...) {
   overrides<-list(...);profile<-match.arg(profile,c('pilot','paper','quick'))
-  defaults<-switch(profile,paper=list(chains=4L,iter=50000L,burn=5000L,stages=50000L),
-    pilot=list(chains=4L,iter=1500L,burn=500L,stages=c(1000L,1500L)),
-    quick=list(chains=1L,iter=80L,burn=30L,stages=80L))
+  allocation<-mixedgp_application_allocation(adni_integer(cores,"cores"));cores<-allocation$requested_cores
+  if(!is.null(overrides$chains) && adni_integer(overrides$chains,'chains')!=allocation$chains)
+    stop('For a new ADNI run, chains must equal min(--cores, 4); use a matching core budget.')
+  defaults<-switch(profile,paper=list(chains=allocation$chains,iter=50000L,burn=5000L,stages=50000L),
+    pilot=list(chains=allocation$chains,iter=1500L,burn=500L,stages=c(1000L,1500L)),
+    quick=list(chains=allocation$chains,iter=80L,burn=30L,stages=80L))
   s<-modifyList(c(defaults,list(profile=profile,cores=cores,folds=if(profile=='quick')1L else 1:5,
     cells=c('O50','O20','O0'),draws_per_chain=if(profile=='quick')10L else 250L,
     checkpoint_step=1000L,baseline_profile=if(profile=='quick')'quick'else'paper',
@@ -2799,8 +2809,8 @@ adni_method_run <- function(repo,params,group) {
     params<-modifyList(config,params)
   }
   get<-function(n,default)if(is.null(params[[n]]))default else params[[n]]
-  fit_jobs<-if(is.null(params$fit_jobs))NULL else adni_integer(params$fit_jobs,'fit-jobs')
-  evaluation_jobs<-if(is.null(params$evaluation_jobs))NULL else adni_integer(params$evaluation_jobs,'evaluation-jobs')
+  if(any(c('fit_jobs','evaluation_jobs')%in%names(params)))
+    stop('Resident-job options have been retired; specify only --cores for resource allocation.')
   if(!is.null(params$manifest)) {
     if(!is.null(params$ess_min)) {
       declared<-jsonlite::fromJSON(adni_resolve_path(params$manifest,repo))$ess_min
@@ -2809,7 +2819,7 @@ adni_method_run <- function(repo,params,group) {
     }
     env<-adni_load_api(repo)
     return(env$adni_screen_run(repo,list(manifest=adni_resolve_path(params$manifest,repo),
-      cores=adni_integer(get('cores',4L),'cores'),fit_jobs=fit_jobs,evaluation_jobs=evaluation_jobs,plan=isTRUE(params$plan),reuse_only=isTRUE(params$reuse_only)),group))
+      cores=adni_integer(get('cores',4L),'cores'),plan=isTRUE(params$plan),reuse_only=isTRUE(params$reuse_only)),group))
   }
   fields<-c('chains','iter','burn','stages','folds','cells','draws_per_chain','first_checkpoint','checkpoint_step',
     'baseline_profile','sampler_o0','sampler_o20','sampler_o50','representative_fold','appendix',
@@ -2820,6 +2830,10 @@ adni_method_run <- function(repo,params,group) {
   default_input<-adni_default_input(dataset,repo)
   input<-adni_resolve_path(get('data_root',get('data_dir',default_input)),repo)
   out<-adni_resolve_path(get('output',get('output_dir',adni_default_output(dataset,s$profile,repo))),repo)
+  if(group=='competitors' && file.exists(adni_path(out,'application_manifest.json'))) {
+    saved<-jsonlite::fromJSON(adni_path(out,'application_manifest.json'))
+    s$chains<-as.integer(saved$chains)
+  }
   if(isTRUE(params$plan)&&(!dir.exists(input)||!all(file.exists(adni_input_files(adni_plan_input_root(input),1L,'O0'))))) {
     cat('Dataset:',dataset,'; data:',input,'\n');print(s[c('profile','chains','iter','burn','cores')])
     cat('Supply private inputs before fitting. No computation started.\n');return(invisible(s))
@@ -2853,8 +2867,8 @@ adni_method_run <- function(repo,params,group) {
     e<-adni_load_api(repo)
     tasks<-e$adni_screen_tasks(m,group)
     print(tasks,row.names=FALSE);print(s[c('profile','chains','iter','burn','cores')])
-    cat('Resident fit jobs:',adni_resident_workers(s$cores,'fit',nrow(tasks),s$chains,fit_jobs),
-      '; resident evaluation jobs:',adni_resident_workers(s$cores,'evaluate',nrow(tasks),s$chains,evaluation_jobs),'\n')
+    cat('Resident fit jobs:',adni_resident_workers(s$cores,'fit',nrow(tasks),if(group=='competitors')1L else s$chains),
+      '; resident evaluation jobs:',adni_resident_workers(s$cores,'evaluate',nrow(tasks),if(group=='competitors')1L else s$chains),'\n')
     return(invisible(m))
   }
   dir.create(out,recursive=TRUE,showWarnings=FALSE);manifest<-adni_path(out,'application_manifest.json')
@@ -2866,7 +2880,7 @@ adni_method_run <- function(repo,params,group) {
         paste(all.equal(canonical(a),canonical(b)),collapse='; '))
   }else api$atomic_json(m,manifest)
   e<-adni_load_api(repo)
-  result<-e$adni_screen_run(repo,list(manifest=manifest,cores=s$cores,fit_jobs=fit_jobs,evaluation_jobs=evaluation_jobs,plan=FALSE,reuse_only=FALSE),group)
+  result<-e$adni_screen_run(repo,list(manifest=manifest,cores=s$cores,plan=FALSE,reuse_only=FALSE),group)
   adni_render_report(repo,input,out,s,report_dir=adni_path(out,'reports',group),group=group,
     filename=if(adni_storage_flat(out))'index.html'else'adni.html')
   invisible(result)
@@ -2991,8 +3005,8 @@ adni_method_main <- function(group,args=commandArgs(TRUE)) {
   if(identical(args,'--help')) {
     cat('Rscript tools/adni-',group,'.R --profile=paper --cores=4\n',
       '  --profile=pilot|paper|quick; --dataset=NAME; --data-root=PATH; --output=PATH\n',
-      '  --fit-jobs=N --evaluation-jobs=N (resident-job caps; CPU budget unchanged)\n',
-      '  --config=FILE; --iter=N --burn=N --chains=N --stages=N,N\n',
+      '  --cores=N: shared CPU budget; resident jobs are derived automatically in both phases.\n',
+      '  --config=FILE; --iter=N --burn=N --stages=N,N\n',
       '  --folds=1:5 --cells=O0,O20,O50; --plan=true; --reuse-only=true; --report-source=FILE\n',
       '  Run EIV-GP and competitors sequentially; report reads saved results.\n',sep='')
     return(invisible(NULL))

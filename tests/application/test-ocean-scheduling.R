@@ -10,10 +10,10 @@ test_that("Ocean resource plans accept different machines and configurable chain
   expect_identical(vapply(c(12L,16L,56L),function(x)mixedgp_core_plan(x,15L)$concurrent_fits,integer(1)),c(3L,4L,14L))
   expect_equal(mixedgp_core_plan(56,5,4)$active_cores,20)
   expect_identical(mixedgp_core_plan(56,5,12)$task_cores,c(12L,12L,12L,12L,8L))
-  expect_identical(ocean_settings(profile="pilot",chains=8)$chains,8L)
+  expect_error(ocean_settings(profile="pilot",chains=8),"chains=min")
   expect_error(ocean_settings(chains=0),"chains")
   expect_error(ocean_settings(chains=1.5),"chains")
-  expect_error(ocean_settings(profile="quick",chains=4),"quick")
+  expect_identical(ocean_settings(profile="quick",cores=2)$chains,2L)
   expect_identical(mixedgp_core_plan(56,0,4)$task_cores,integer())
 })
 
@@ -60,4 +60,36 @@ test_that("imports retain both fitting and analysis receipts", {
   ocean_combine_results(source,output,identity)
   expect_true(ocean_verify_receipt(output,"fit_eiv_fold01_O20",identity))
   expect_true(ocean_verify_receipt(output,"eiv_fold01_O20",identity))
+})
+
+
+test_that("ADNI and Ocean use identical cores-only resident allocations", {
+  adni<-new.env(parent=globalenv())
+  sys.source(file.path(repo,'tools/adni-tools.R'),adni)
+  for(cores in 1:16)for(chains in c(1L,4L,8L))for(tasks in c(1L,3L,15L)) {
+    expected<-as.integer(min(tasks,max(1L,floor(cores/chains))))
+    for(stage in c('fit','continue','analyze','functionals','predict'))
+      expect_identical(mixedgp_stage_workers(cores,stage,tasks,chains),expected)
+    for(phase in c('fit','evaluate'))
+      expect_identical(adni$adni_resident_workers(cores,phase,tasks,chains),expected)
+  }
+})
+
+
+test_that("core budgets select actual chains and leave competitors single-core", {
+  adni<-new.env(parent=globalenv());sys.source(file.path(repo,'tools/adni-tools.R'),adni)
+  for(n in c(1L,2L,3L,4L,6L,8L,10L,12L)) {
+    for(profile in c('quick','pilot','paper')) {
+      expect_identical(adni$adni_settings(profile,cores=n)$chains,min(n,4L))
+      expect_identical(ocean_settings(profile,cores=n)$chains,min(n,4L))
+      expect_identical(ocean_settings(profile,cores=n)$cores,n)
+    }
+    expect_equal(mixedgp_application_allocation(n)$jobs,n %/% min(n,4L))
+    expect_equal(mixedgp_stage_workers(n,'fit',30L,1L),n)
+  }
+  expect_false(ocean_cc_controls('paper')$LVGP$parallel)
+  expect_error(ocean_settings('paper',cores=2,ess_min=100),'four chains')
+  expect_error(adni$adni_settings('paper',cores=2,ess_min=100),'four chains')
+  expect_identical(ocean_settings('paper',action='report',cores=2,chains=4)$chains,4L)
+  expect_error(ocean_settings('paper',action='continue',cores=2,chains=4),'chains=min')
 })

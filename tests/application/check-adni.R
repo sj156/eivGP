@@ -39,7 +39,7 @@ fit<-api$adni_plan_fit_path(result,list(fold=1L,cell='O50'));fit_before<-tools::
 scores<-api$adni_path(result,'S80/analysis/fold01/O50/prediction_metrics.csv')
 before<-tools::md5sum(scores)
 combined<-file.path(result,'adni.html');combined_before<-tools::md5sum(combined)
-run_cli('eivGP','04_core_only_reuse',1L)
+run_cli('eivGP','04_core_only_reuse',if(cores>=4L)4L else cores)
 stopifnot(identical(tools::md5sum(combined),combined_before))
 run_cli('eivGP','05_saved_only',1L,'--reuse-only=true')
 stopifnot(identical(tools::md5sum(combined),combined_before))

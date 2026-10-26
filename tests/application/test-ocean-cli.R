@@ -75,14 +75,14 @@ test_that("one-click fitting and continuation retain the shared core budget befo
       imports<<-c(imports,import);chains<<-c(chains,settings$chains);list()
     }
     render<-function() {stages<<-c(stages,"render");"report.html"}
-    settings<-ocean_settings(profile="pilot",action=action,cores=12,chains=8)
+    settings<-ocean_settings(profile="pilot",action=action,cores=12,chains=4)
     result<-env$ocean_cli_workflow(settings,execute,render)
     expected<-if(action%in%c("fit","continue"))c(action,"analyze","render") else
       if(action=="plan")"plan" else c(action,"render")
     expect_identical(stages,expected)
     if(action%in%c("fit","continue")) {
       expect_identical(budgets,c(12L,12L));expect_identical(imports,c(TRUE,FALSE))
-      expect_identical(chains,c(8L,8L))
+      expect_identical(chains,c(4L,4L))
     }
   }
   fitted<-FALSE;rendered<-FALSE
@@ -96,9 +96,9 @@ test_that("one-click fitting and continuation retain the shared core budget befo
 test_that("paper sampling settings are fixed and CLI exposes profiles instead of sampling knobs", {
   expect_identical(c(ocean_settings()$chains,ocean_settings()$iter,ocean_settings()$burn),c(4L,50000L,5000L))
   for(action in c("plan","fit","continue")) {
-    expect_error(ocean_settings(action=action,iter=100000),"paper fixes")
-    expect_error(ocean_settings(action=action,chains=8),"paper fixes")
-    expect_error(ocean_settings(action=action,burn=1000),"paper fixes")
+    expect_error(ocean_settings(action=action,iter=100000),"paper fixes|chains=min")
+    expect_error(ocean_settings(action=action,chains=8),"paper fixes|chains=min")
+    expect_error(ocean_settings(action=action,burn=1000),"paper fixes|chains=min")
   }
   root<-normalizePath(testthat::test_path("../.."),mustWork=TRUE)
   env<-new.env(parent=globalenv());sys.source(file.path(root,"tools/ocean.R"),env)

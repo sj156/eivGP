@@ -27,13 +27,15 @@ ocean_settings <- function(profile = "paper", action = "plan", folds = 1:5,
   iter<-mixedgp_as_integer_strict(iter,"iter",1L,1L)
   burn<-mixedgp_as_integer_strict(burn,"burn",0L,1L)
   if(burn>=iter)stop("burn must be smaller than iter.")
-  if(is.null(chains))chains<-if(profile=="quick")1L else 4L
+  allocation<-mixedgp_application_allocation(cores);cores<-allocation$requested_cores
+  if(is.null(chains))chains<-allocation$chains
+  if(action%in%c("plan","fit","continue") && any(modules%in%c("eiv","continuation")) && chains!=allocation$chains)
+    stop("New or continued fits require chains=min(--cores,4); a saved fit must retain its original chains.")
   chains<-mixedgp_as_integer_strict(chains,"chains",1L,1L)
   if(!is.null(ess_min) && chains<4L)stop("Scientific ESS requires at least four chains.")
-  if(profile=="quick" && chains!=1L)stop("quick uses one chain; choose pilot or paper for multiple chains.")
   if(profile=="paper" && action%in%c("plan","fit","continue") &&
-     !identical(c(chains,iter,burn),c(4L,50000L,5000L)))
-    stop("paper fixes chains=4, iter=50000 and burn=5000; use the profile settings.")
+     !identical(c(iter,burn),c(50000L,5000L)))
+    stop("paper fixes iter=50000 and burn=5000; chains follow --cores; use the profile settings.")
   if(!is.null(continuation_iter))
     continuation_iter <- ocean_continuation_policy(profile,continuation_iter)$n_iter
   folds <- as.integer(unlist(folds)); cells <- as.character(unlist(cells))
@@ -347,7 +349,7 @@ ocean_run_task <- function(task,repository_dir,output_dir,settings,inputs,identi
   env$out <- ocean_path(output_dir,if(env$smoke) "smoke_class4" else "full5_class4")
   env$ess_min <- settings$ess_min
   env$iter <- settings$iter; env$burn <- settings$burn; env$chains <- settings$chains
-  env$cores <- if(env$smoke) 1L else settings$cores; env$u_block <- 8L
+  env$cores <- settings$cores; env$u_block <- 8L
   env$baseline_controls <- ocean_cc_controls(settings$profile)
   env$continuation_iter <- ocean_continuation_iterations(output_dir,settings$profile,
     task$fold,task$cell,settings$continuation_iter)
@@ -530,12 +532,15 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
       event(i,"FINISH",active);publish("RUNNING",ids[i])
     }
     caps<-ifelse(selected$module[pending]%in%c("eiv","continuation"),settings$chains,1L)
-    # Bound simultaneously resident fits, but allow each stage to borrow all
-    # free slots. A waiting fit coordinator releases its slot to chain workers.
-    outer <- mixedgp_stage_workers(settings$cores,stage,length(pending),settings$chains)
-    mixedgp_budget_yield(function() mixedgp_schedule(pending,rep(1L,length(pending)),outer,
-      function(i,allocated) mixedgp_budget_worker(function() work(i,settings$cores)),
-      start_task,finish_task))
+    # Complete chain groups for EIV; one core per competitor task. Separate
+    # queues keep a partial EIV group from starting on leftover cores.
+    for(cap in unique(caps)) {
+      queue<-pending[caps==cap]
+      outer<-mixedgp_stage_workers(settings$cores,stage,length(queue),cap)
+      mixedgp_budget_yield(function() mixedgp_schedule(queue,rep(1L,length(queue)),outer,
+        function(i,allocated) mixedgp_budget_worker(function() work(i,min(settings$cores,cap))),
+        start_task,finish_task))
+    }
     publish(if(any(status$state=="FAILED")) "SELECTED_COMPLETE_WITH_FAILURES" else "SELECTED_COMPLETE")
     ocean_atomic_lines(capture.output(print(status,row.names=FALSE)),ocean_path(job,"SUMMARY.txt"))
     failed <- status$state=="FAILED"
@@ -657,7 +662,7 @@ run_eiv <- function(fold, cell, train, test, fold_out) {
       X = x_train, y = train$Y, C = c_train, U_obs = u_obs,
       engine = "univariate", m_vec = 4L, standardize_U = TRUE,
       kernel = "se", n_iter = iter, burn = burn, thin = 1L,
-      n_chains = chains, parallel = !smoke, n_cores = cores,
+      n_chains = chains, parallel = cores > 1L, n_cores = cores,
       sampler_control = list(u_block_size = u_block),
       seed = 2026092680L + fold * 100L + seed_offset,
       verbose = TRUE
@@ -913,7 +918,10 @@ run_one <- function(fold, cell) {
 }
 
 ocean_cc_controls <- function(profile="paper") {
-  if(profile=="paper") return(mixedgp_competitor_controls())
+  if(profile=="paper") {
+    controls<-mixedgp_competitor_controls();controls$LVGP$parallel<-FALSE
+    return(controls)
+  }
   list(`UC-GP`=list(n_starts=1L),
     LVGP=list(n_starts=1L,max_retries=1L,max_iter_ini=20L,max_iter_lat=5L,
       rescue_iter_ini=30L,rescue_iter_lat=10L,max_elapsed_seconds=120,parallel=FALSE),
@@ -2200,8 +2208,11 @@ ocean_build_diagnostics <- function(output_dir, data_dir = ocean_path(output_dir
     dir.create(ocean_path(report_dir, subdir), recursive = TRUE, showWarnings = FALSE)
   run_one <- function(i) ocean_diag_functionals(i, sources, output_dir, inputs, grids, settings,
     cache_dir = ocean_path(report_dir, "cache"), overwrite = overwrite)
+  identity_path<-ocean_path(output_dir,"workflow_identity.rds")
+  saved_chains<-if(file.exists(identity_path))readRDS(identity_path)$numerics$chains else NULL
+  if(is.null(saved_chains))saved_chains<-4L
   parts <- mixedgp_stage_lapply(seq_len(nrow(sources)), run_one,
-    workers=mixedgp_stage_workers(mixedgp_budget_cores(),"functionals",nrow(sources)))
+    workers=mixedgp_stage_workers(mixedgp_budget_cores(),"functionals",nrow(sources),saved_chains))
   m <- do.call(rbind, lapply(parts, `[[`, "m"))
   f <- do.call(rbind, lapply(parts, `[[`, "f"))
   checks <- do.call(rbind, lapply(parts, `[[`, "integration_check"))
@@ -2997,7 +3008,8 @@ ocean_build_target_traces <- function(output_dir,inputs,settings,
     z<-ocean_target_trace_fit(fit,train,s$fold,s$cell,settings$burn,spec,
       if(file.exists(dp))utils::read.csv(dp) else NULL)
     mixedgp_atomic_rds(list(signature=signature,source=s,result=z),cache);cache
-  },workers=min(4L,mixedgp_budget_cores()))
+  },workers=mixedgp_stage_workers(mixedgp_budget_cores(),"functionals",nrow(sources),
+    if(is.null(settings$chains))4L else settings$chains))
   z<-lapply(paths,function(p)readRDS(p)$result)
   out<-list(traces=mixedgp_bind(lapply(z,`[[`,'traces')),summary=mixedgp_bind(lapply(z,`[[`,'summary')),
     integration_check=mixedgp_bind(lapply(z,`[[`,'integration_check')),
@@ -3227,10 +3239,11 @@ ocean_restore_fit_settings <- function(params,output_dir) {
   path<-ocean_path(output_dir,"workflow_identity.rds")
   if(!file.exists(path))return(params)
   # New fits always use their profile, never inherit old numerical settings.
-  if(params$action%in%c("fit","run","plan"))return(params)
+  if(params$action%in%c("fit","run","plan") &&
+     (is.null(params$modules)||any(params$modules%in%c("eiv","continuation"))))return(params)
   saved<-readRDS(path)$numerics
   if(params$action=="continue" && identical(params$profile,"paper") &&
-     !identical(as.integer(unlist(saved[c("chains","iter","burn")])),c(4L,50000L,5000L)))
+     !identical(as.integer(unlist(saved[c("iter","burn")])),c(50000L,5000L)))
     stop("This saved run does not use the fixed paper sampling settings; use analyze/report to inspect it or start a new paper fit.")
   for(key in c("chains","iter","burn","ess_min"))params[[key]]<-saved[[key]]
   params
@@ -3325,7 +3338,7 @@ ocean_run_cli <- function(repository_dir,params=list()) {
     result<-execute(settings)
     print(result$tasks,row.names=FALSE)
     print(result$stages,row.names=FALSE)
-    print(api$mixedgp_core_plan(settings$cores,sum(result$tasks$module=="eiv"),settings$chains))
+    print(api$mixedgp_core_plan(mixedgp_application_allocation(settings$cores)$cores,sum(result$tasks$module=="eiv"),settings$chains))
     cat("Total shared core budget:",settings$cores,"; up to",settings$chains,
       "chain workers per EIV fit; prediction, diagnostics and plots share the same budget; HTML assembly is serial.\n")
   } else {
@@ -3480,6 +3493,7 @@ ocean_method_main <- function(group,args=commandArgs(TRUE)) {
   if(identical(args,'--help')) {
     cat('Rscript tools/ocean-',group,'.R --cores=16 --profile=paper --dataset=ocean500 --output=/path/to/results\n',
       '  --reuse-only=true: require saved fits and predictions; never fit or continue.\n',
+      '  --cores=N: eivGP uses min(N,4) chains and complete groups; competitors use one core/job.\n',
       '  --plan=true: list selected tasks. --folds=1:5 --cells=O0,O20,O50 --diagnostics-dir=...\n',
       '  EIV-GP and competitors each fit and analyze their own group; report only assembles saved results.\n',sep='')
     return(invisible(NULL))

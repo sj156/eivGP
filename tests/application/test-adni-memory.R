@@ -36,16 +36,17 @@ testthat::test_that('legacy ADNI category encoding is preserved',{
 expect_identical(adni_make_C(data.frame(c_ab42_ab40_3=c(1,3),c_gfap_3=c(2,1)))$c_gfap_3, ordered(c(2,1),levels=1:3))
 })
 
-testthat::test_that('resident caps preserve CPU budgets and validate limits',{
- testthat::expect_identical(adni_resident_workers(12,'fit',15,4),3L)
- testthat::expect_identical(adni_resident_workers(12,'evaluate',15,4),6L)
- testthat::expect_identical(adni_resident_workers(12,'fit',15,4,1),1L)
- testthat::expect_identical(adni_resident_workers(12,'evaluate',15,4,1),1L)
- testthat::expect_identical(adni_resident_workers(12,'fit',15,4,2),2L)
- testthat::expect_identical(adni_resident_workers(2,'fit',15,4,9),1L)
- for(v in c('0','-1','1.5','bad')) testthat::expect_error(adni_resident_workers(12,'fit',15,4,v),'integer')
- p<-adni_cli_params(c('--cores=12','--fit-jobs=1','--evaluation-jobs=2'))
- testthat::expect_identical(p,list(cores='12',fit_jobs='1',evaluation_jobs='2'))
+testthat::test_that('one core budget determines both phase allocations',{
+ for(cores in 1:16)for(chains in c(1L,4L,8L))for(tasks in c(0L,1L,15L)) {
+  expected<-as.integer(min(tasks,max(1L,floor(cores/chains))))
+  for(phase in c('fit','evaluate'))testthat::expect_identical(
+    adni_resident_workers(cores,phase,tasks,chains),expected)
+ }
+ testthat::expect_identical(adni_resident_workers(6,'fit',15,4),1L)
+ for(v in c('0','-1','1.5','bad'))testthat::expect_error(adni_resident_workers(v,'fit',15,4),'integer')
+ testthat::expect_identical(adni_cli_params('--cores=12'),list(cores='12'))
+ for(flag in c('--fit-jobs=1','--evaluation-jobs=1'))testthat::expect_error(adni_cli_params(flag),'Unknown')
+ testthat::expect_error(adni_method_run(repo,list(fit_jobs=1),'eivGP'),'only --cores')
 })
 
 testthat::test_that('continuation reads a checkpoint once and preserves validation',{

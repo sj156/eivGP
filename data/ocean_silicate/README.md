@@ -34,12 +34,28 @@ reproducible within this R implementation; the supplied 200/500 folds are preser
 The 500 method forms oxygen quintiles and pressure-ordered quintets within each c;
 the 1000 method forms successive oxygen-ordered quintets. Every quintet contributes
 one profile per fold. Assignment and within-quintet swaps balance U, log pressure
-and salinity moments. Calibration covers classes/cells and oxygen cutpoint anchors,
-with nested 20%/50% masks. Test masks use R seed `202609260 + fold` and class-balanced
+and salinity moments. The supplied 200/500 calibration files retain their historical
+oxygen-boundary anchors. New preparation uses C-stratified, nested empirical-rank
+coverage in salinity and log pressure only; no exact U, Y or U-derived cell is
+used to choose calibration. Finite candidates, ties and nesting can prevent strict
+Latin margins; `calibration_X_coverage.csv` discloses the achieved coverage. Test masks use R seed `202609260 + fold` and class-balanced
 20%/50% quotas; the 500 design alternates the 12/13 O50 class quotas.
 
 See [Ocean instructions](../../paper/applications/README_ocean.md) for installation
 and fitting/report commands.
+
+## Revised 500-profile calibration
+
+```sh
+Rscript tools/ocean-prepare-folds.R ocean500 --calibration-only
+```
+
+This preserves supplied cohort/fold assignments and test masks, replacing only
+`calib_o20`/`calib_o50` in copied training files. Output defaults to
+`reproduction/ocean/prepared/ocean500_xcalibration_v1`; existing destinations are
+not overwritten. Use this path with `--data-root` and a new `--output` for all
+method/report commands. The source CSVs are unchanged. The application guide
+contains the complete command sequence.
 
 ## Data attribution
 

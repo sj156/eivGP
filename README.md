@@ -170,24 +170,40 @@ Its frozen five-fold inputs are supplied in `data/ocean_silicate/n500/`.
 `ocean200` is also supplied; prepare `ocean1000` separately with
 `Rscript tools/ocean-prepare-folds.R ocean1000`.
 
+For revised C/X-only calibration, preserve those folds and prepare a separate
+input root, then pass both paths to **every** B2–B4 command:
+
+```sh
+Rscript tools/ocean-prepare-folds.R ocean500 --calibration-only
+OCEAN_DATA="reproduction/ocean/prepared/ocean500_xcalibration_v1"
+OCEAN_RESULTS="results/ocean500_xcalibration_v1"
+```
+
+The selector balances salinity/log-pressure empirical quantiles within C and
+keeps O20 nested in O50, without reading exact oxygen or responses. This is
+approximate Latin coverage. Supplied historical masks remain unchanged; bare
+commands without `--data-root` still select that design. See the
+[design review](paper/applications/OCEAN_CALIBRATION_DESIGN.md) and
+[complete revised command sequence](paper/applications/README_ocean.md#prepare-calibration-and-folds-separately).
+
 **B2. Fit and analyze EIV-GP.** Preview the workload, then run it:
 
 ```sh
-Rscript tools/ocean-eivGP.R --plan=true --profile=paper --cores=16
-Rscript tools/ocean-eivGP.R --profile=paper --cores=16
+Rscript tools/ocean-eivGP.R --plan=true --profile=paper --cores=16 --data-root="$OCEAN_DATA" --output="$OCEAN_RESULTS"
+Rscript tools/ocean-eivGP.R --profile=paper --cores=16 --data-root="$OCEAN_DATA" --output="$OCEAN_RESULTS"
 ```
 
 Paper sampling is fixed at four chains, initially 50,000 iterations per chain
 including 5,000 burn-in. Optional `--ess-min=100` continues saved states until all
 monitored scientific bulk and tail ESS exceed 100; its default is `NULL`.
 For a separate explicit fixed-length extension, use
-`tools/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=16`.
+`tools/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=16 --data-root="$OCEAN_DATA" --output="$OCEAN_RESULTS"`.
 Neither operation repeats warmup. Reporting never starts continuation.
 
 **B3. Fit and analyze competitors.** Run against the same input/output root:
 
 ```sh
-Rscript tools/ocean-competitors.R --profile=paper --cores=16
+Rscript tools/ocean-competitors.R --profile=paper --cores=16 --data-root="$OCEAN_DATA" --output="$OCEAN_RESULTS"
 ```
 
 This includes original categorical UC-GP/LVGP/EzGP and complete-case comparisons.
@@ -197,7 +213,7 @@ nonconvergence remain visible.
 **B4. Assemble and inspect the paper report.**
 
 ```sh
-Rscript tools/ocean-report.R --profile=paper --cores=16
+Rscript tools/ocean-report.R --profile=paper --cores=16 --data-root="$OCEAN_DATA" --output="$OCEAN_RESULTS"
 ```
 
 The combined report reads saved fits and scores. `reports/paper/` contains the
@@ -210,7 +226,8 @@ is also available.
 | Path | Contents |
 | --- | --- |
 | `data/ocean_silicate/n500/` | Frozen main cohort, five-fold inputs and masks |
-| `results/ocean500/` | Paper fits, predictions, diagnostics and `ocean.html` |
+| `reproduction/ocean/prepared/ocean500_xcalibration_v1/` | Revised C/X-only calibration; original cohort/folds/test masks |
+| `results/ocean500_xcalibration_v1/` | Revised fits, predictions, diagnostics and `ocean.html` |
 | `results/ocean500_pilot/` | Separate short-chain workflow check |
 | `paper/applications/ocean.html` | Versioned 200-profile example report |
 

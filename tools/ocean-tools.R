@@ -3547,45 +3547,114 @@ ocean_assign_folds <- function(cohort,rule,seed) {
     accepted_input_only_swaps=accepted))
 }
 
-# 2. Nested training calibration with class/cell coverage and cutpoint anchors.
-ocean_fold_calibration <- function(train,seed) {
+# 2. Nested calibration from recorded C and X only. No U, Y or U-derived cell.
+ocean_calibration_bins <- function(x,k) {
+  # Average empirical ranks keep equal recorded values together. Splitting ties
+  # into artificial strata would overstate coverage in the observed X space.
+  n<-nrow(x)
+  vapply(seq_len(ncol(x)),function(j)
+    as.integer(pmin(k,1L+floor(k*(rank(x[,j],ties.method="average")-.5)/n))),integer(n))
+}
+ocean_calibration_select <- function(x,k,seed) {
+  n<-nrow(x);stopifnot(length(k)==2L,all(k>0L),k[1]<k[2],k[2]<=n)
   RNGkind("Mersenne-Twister","Inversion","Rejection");set.seed(seed)
-  anchors20<-anchors50<-integer()
-  for(cut in c(50,100,150))for(side in list(train$U<cut,train$U>=cut)) {
-    ids<-which(side)
-    near<-head(ids[order(abs(train$U[ids]-cut),train$source_row[ids])],2L)
-    stopifnot(length(near)==2L)
-    anchors20<-c(anchors20,near[1]);anchors50<-c(anchors50,near)
-  }
-  fill<-function(initial,target,min_cell) {
-    picked<-unique(initial)
-    for(class in 1:4) {
-      for(cell in sort(unique(train$cell[train$C==class]))) {
-        while(sum(train$cell[picked]==cell)<min_cell) {
-          ids<-setdiff(which(train$cell==cell),picked)
-          stopifnot(length(ids)>0L)
-          picked<-c(picked,ids[sample.int(length(ids),1L)])
-        }
+  bins<-lapply(k,function(size)ocean_calibration_bins(x,size))
+  included<-function(label,stage)if(stage==1L)label==2L else label>0L
+  counts<-function(label)lapply(1:2,function(stage)
+    vapply(seq_len(ncol(x)),function(j)tabulate(bins[[stage]][included(label,stage),j],nbins=k[stage]),integer(k[stage])))
+  loss<-function(ct)sum(vapply(ct,function(z)sum((z-1L)^2),0))
+  # Return changes in marginal occupancy loss for exchanges of membership labels.
+  # Labels: 0 hidden at both levels; 1 O50 only; 2 O20 and O50.
+  delta<-function(i,j,label,ct) {
+    ans<-numeric(length(i))
+    for(stage in 1:2) {
+      sign<-as.integer(included(label[i],stage))-as.integer(included(label[j],stage))
+      for(axis in seq_len(ncol(x))) {
+        a<-bins[[stage]][i,axis];b<-bins[[stage]][j,axis]
+        ans<-ans+ifelse(a==b,0,2*sign*(ct[[stage]][b,axis]-ct[[stage]][a,axis])+2*sign^2)
       }
-      while(sum(train$C[picked]==class)<target) {
-        ids<-setdiff(which(train$C==class),picked)
-        ratio<-vapply(ids,function(i)
-          sum(train$cell[picked]==train$cell[i])/sum(train$cell==train$cell[i]),numeric(1))
-        chosen<-order(ratio,runif(length(ids)))[1]
-        picked<-c(picked,ids[chosen])
-      }
-      stopifnot(sum(train$C[picked]==class)==target)
     }
-    picked
+    ans
   }
-  scale<-nrow(train)/400L
-  o20<-fill(anchors20,20L*scale,2L*scale)
-  o50<-fill(c(o20,anchors50),50L*scale,6L*scale)
-  train$calib_o20<-as.integer(seq_len(nrow(train)) %in% o20)
-  train$calib_o50<-as.integer(seq_len(nrow(train)) %in% o50)
-  stopifnot(all(train$calib_o20<=train$calib_o50),
-    all(tapply(train$calib_o20,train$C,sum)==20L*scale),
-    all(tapply(train$calib_o50,train$C,sum)==50L*scale))
+  exchange<-function(i,j,label,ct) {
+    for(stage in 1:2) {
+      sign<-as.integer(included(label[i],stage))-as.integer(included(label[j],stage))
+      if(sign!=0L)for(axis in seq_len(ncol(x))) {
+        a<-bins[[stage]][i,axis];b<-bins[[stage]][j,axis]
+        ct[[stage]][a,axis]<-ct[[stage]][a,axis]-sign
+        ct[[stage]][b,axis]<-ct[[stage]][b,axis]+sign
+      }
+    }
+    old<-label[i];label[i]<-label[j];label[j]<-old
+    list(label=label,ct=ct)
+  }
+  best<-NULL;best_loss<-Inf;attempts<-0L;steps<-max(2000L,30L*n)
+  # Fixed design-only search budget, never a search over Y, U or model scores.
+  for(restart in 1:3) {
+    attempts<-restart;label<-integer(n);order<-sample.int(n)
+    label[order[seq_len(k[2])]]<-1L;label[order[seq_len(k[1])]]<-2L
+    ct<-counts(label);value<-loss(ct)
+    remember<-function() {
+      if(value<best_loss){best<<-label;best_loss<<-value}
+    }
+    remember()
+    for(step in seq_len(steps)) {
+      if(best_loss==0)break
+      pair<-sample.int(n,2L);i<-pair[1];j<-pair[2]
+      if(label[i]==label[j])next
+      change<-delta(i,j,label,ct);temperature<-2*(.01/2)^((step-1)/max(1,steps-1))
+      if(change<=0||runif(1)<exp(-change/temperature)) {
+        state<-exchange(i,j,label,ct);label<-state$label;ct<-state$ct;value<-value+change;remember()
+      }
+    }
+    # Polish the best candidate using the best improving membership exchange.
+    label<-best;ct<-counts(label);value<-loss(ct)
+    repeat {
+      if(value==0)break
+      pairs<-which(outer(label,label,"!=") & upper.tri(matrix(FALSE,n,n)),arr.ind=TRUE)
+      changes<-delta(pairs[,1],pairs[,2],label,ct);minimum<-min(changes)
+      if(minimum>=0)break
+      tied<-which(changes==minimum);take<-tied[sample.int(length(tied),1L)]
+      state<-exchange(pairs[take,1],pairs[take,2],label,ct);label<-state$label;ct<-state$ct;value<-value+minimum;remember()
+    }
+    if(best_loss==0)break
+  }
+  ct<-counts(best)
+  audit<-do.call(rbind,lapply(1:2,function(stage)do.call(rbind,lapply(seq_len(ncol(x)),function(j) {
+    occupancy<-ct[[stage]][,j]
+    data.frame(calibration=c("O20","O50")[stage],axis=colnames(x)[j],n_available=n,n_selected=k[stage],
+      quantile_bins=k[stage],occupied_bins=sum(occupancy>0L),max_bin_count=max(occupancy),
+      squared_occupancy_loss=sum((occupancy-1L)^2),exact_latin_margin=all(occupancy==1L),
+      distinct_X_values=length(unique(x[,j])),search_restarts=attempts)
+  }))))
+  stopifnot(sum(best==2L)==k[1],sum(best>0L)==k[2],identical(loss(ct),best_loss))
+  list(o20=best==2L,o50=best>0L,audit=audit)
+}
+ocean_fold_calibration <- function(train,seed) {
+  # Access is deliberately limited to recorded class, salinity/log-pressure,
+  # and fixed row identifiers. Hidden oxygen and U-derived `cell` are ignored.
+  required<-c("C","G2salinity","G2pressure")
+  if(!all(required%in%names(train)))stop("Calibration requires C, G2salinity and G2pressure.")
+  if(anyNA(train[,required])||any(!is.finite(as.matrix(train[,required])))||any(train$G2pressure<=0))
+    stop("Calibration requires finite recorded C/X and positive pressure.")
+  if(!all(train$C%in%1:4)||!all(1:4%in%train$C))stop("Expected four recorded classes.")
+  stable<-if("cohort_id"%in%names(train))train$cohort_id else if("source_row"%in%names(train))train$source_row else seq_len(nrow(train))
+  if(anyNA(stable)||anyDuplicated(stable))stop("Calibration row identifiers must be unique.")
+  o20<-o50<-rep(FALSE,nrow(train));audit<-list()
+  for(class in 1:4) {
+    ids<-which(train$C==class);ids<-ids[order(stable[ids])];n<-length(ids)
+    k<-as.integer(floor(n*c(.2,.5)+.5))
+    x<-cbind(salinity=train$G2salinity[ids],log_pressure=log(train$G2pressure[ids]))
+    selected<-ocean_calibration_select(x,k,seed+class)
+    o20[ids]<-selected$o20;o50[ids]<-selected$o50
+    audit[[class]]<-cbind(C=class,selected$audit)
+  }
+  train$calib_o20<-as.integer(o20);train$calib_o50<-as.integer(o50)
+  attr(train,"calibration_design")<-list(method="C-stratified nested empirical-rank X coverage v1",
+    selection_variables=c("C","G2salinity","log(G2pressure)"),seed=seed,
+    optimizer="three fixed-budget seeded exchange searches; marginal occupancy loss only",
+    strict_LHS_guaranteed=FALSE,audit=do.call(rbind,audit))
+  stopifnot(all(train$calib_o20<=train$calib_o50))
   train
 }
 
@@ -3603,50 +3672,97 @@ ocean_fold_test_masks <- function(test,fold) {
     observed_U_O50=o50,mask_seed=202609260L+fold)
 }
 
-prepare_ocean_folds <- function(dataset="ocean1000",output_dir=NULL,repository_dir=getwd()) {
+prepare_ocean_folds <- function(dataset="ocean1000",output_dir=NULL,repository_dir=getwd(),calibration_only=FALSE) {
   dataset<-match.arg(dataset,c("ocean500","ocean1000"))
   if(!requireNamespace("jsonlite",quietly=TRUE))stop("Install the R package jsonlite for metadata.")
   root<-normalizePath(repository_dir,mustWork=TRUE)
   input<-file.path(root,"data/ocean_silicate",sub("ocean","n",dataset))
-  if(is.null(output_dir))output_dir<-file.path(root,"reproduction/ocean/prepared",dataset)
-  dir.create(output_dir,recursive=TRUE,showWarnings=FALSE)
-  output_dir<-normalizePath(output_dir,mustWork=TRUE)
+  if(is.null(output_dir))output_dir<-file.path(root,"reproduction/ocean/prepared",
+    paste0(dataset,if(calibration_only)"_xcalibration_v1"else""))
+  output_dir<-normalizePath(path.expand(output_dir),mustWork=FALSE)
   if(identical(normalizePath(input),output_dir))stop("Choose an output directory separate from the source cohort.")
+  if(dir.exists(output_dir)&&length(list.files(output_dir,all.files=TRUE,no..=TRUE)))
+    stop("Prepared output already exists; use a new directory: ",output_dir)
   meta_file<-file.path(input,if(dataset=="ocean1000")"cohort_metadata.json" else "freeze_manifest.json")
   metadata<-jsonlite::read_json(meta_file,simplifyVector=FALSE)
   cohort<-read.csv(file.path(input,"cohort_manifest.csv"),stringsAsFactors=FALSE)
-  cohort$fold<-NULL
-  cohort$C<-as.integer(findInterval(cohort$U,c(50,100,150))+1L)
   n<-nrow(cohort);seed<-as.integer(metadata$sample_seed)
   stopifnot(n==as.integer(sub("ocean","",dataset)))
-  rule<-if(n==500L)"joint_quintile_pressure" else "oxygen_interleaved"
-  folded<-ocean_assign_folds(cohort,rule,seed+if(n==500L)100L else 120L)
-  cohort<-folded$cohort
-  write.csv(cohort,file.path(output_dir,"cohort_manifest.csv"),row.names=FALSE)
+  source_files<-file.path(input,"cohort_manifest.csv")
+  if(calibration_only) {
+    # Validate the existing partitions once, then preserve all rows and test masks.
+    frozen<-ocean_prepare_inputs(input)
+    source_files<-c(source_files,list.files(input,"^fold[0-9]+_(train|test|test_U_masks)[.]csv$",full.names=TRUE))
+    folded<-list(design=list(fold_preparation="Preserved supplied frozen folds; only training calibration replaced"))
+  } else {
+    cohort$fold<-NULL
+    rule<-if(n==500L)"joint_quintile_pressure" else "oxygen_interleaved"
+    folded<-ocean_assign_folds(cohort,rule,seed+if(n==500L)100L else 120L)
+    cohort<-folded$cohort
+  }
+  dir.create(output_dir,recursive=TRUE,showWarnings=FALSE)
+  if(calibration_only)stopifnot(file.copy(file.path(input,"cohort_manifest.csv"),output_dir))
+  else write.csv(cohort,file.path(output_dir,"cohort_manifest.csv"),row.names=FALSE)
+  audits<-list()
   for(f in 1:5) {
-    train<-ocean_fold_calibration(cohort[cohort$fold!=f,,drop=FALSE],seed+200L+f)
-    test<-cohort[cohort$fold==f,,drop=FALSE]
-    masks<-ocean_fold_test_masks(test,f)
+    if(calibration_only) {
+      tr<-read.csv(file.path(input,sprintf("fold%02d_train.csv",f)),stringsAsFactors=FALSE)
+      test<-read.csv(file.path(input,sprintf("fold%02d_test.csv",f)),stringsAsFactors=FALSE)
+      masks<-read.csv(file.path(input,sprintf("fold%02d_test_U_masks.csv",f)),stringsAsFactors=FALSE)
+    } else {
+      tr<-cohort[cohort$fold!=f,,drop=FALSE];test<-cohort[cohort$fold==f,,drop=FALSE]
+      masks<-ocean_fold_test_masks(test,f)
+    }
+    train<-ocean_fold_calibration(tr,seed+200L+f)
+    design<-attr(train,"calibration_design");audits[[f]]<-cbind(fold=f,design$audit)
     stopifnot(!length(intersect(train$profile,test$profile)),
       sum(masks$observed_U_O20)==.2*nrow(test),sum(masks$observed_U_O50)==.5*nrow(test),
       all(masks$observed_U_O20<=masks$observed_U_O50))
     write.csv(train,file.path(output_dir,sprintf("fold%02d_train.csv",f)),row.names=FALSE)
-    write.csv(test,file.path(output_dir,sprintf("fold%02d_test.csv",f)),row.names=FALSE)
-    write.csv(masks,file.path(output_dir,sprintf("fold%02d_test_U_masks.csv",f)),row.names=FALSE)
+    if(calibration_only) {
+      for(suffix in c("test","test_U_masks"))stopifnot(file.copy(file.path(input,sprintf("fold%02d_%s.csv",f,suffix)),output_dir))
+    } else {
+      write.csv(test,file.path(output_dir,sprintf("fold%02d_test.csv",f)),row.names=FALSE)
+      write.csv(masks,file.path(output_dir,sprintf("fold%02d_test_U_masks.csv",f)),row.names=FALSE)
+    }
   }
+  audit<-do.call(rbind,audits);write.csv(audit,file.path(output_dir,"calibration_X_coverage.csv"),row.names=FALSE)
   metadata[names(folded$design)]<-folded$design
-  metadata$data_stage<-"five-fold inputs"
+  metadata$data_stage<-"five-fold inputs with C/X-only nested calibration"
   metadata$train<-.8*n;metadata$test<-n/5L
-  metadata$calibration_seed_rule<-"sample_seed+200+fold"
+  metadata$calibration_design<-design[!names(design)%in%c("audit","seed")]
+  metadata$calibration_design$seed_by_fold<-seed+200L+1:5
+  metadata$calibration_uses_U<-FALSE;metadata$calibration_uses_Y<-FALSE;metadata$calibration_uses_cell<-FALSE
+  metadata$calibration_seed_rule<-"sample_seed+200+fold; class stream adds C"
   metadata$test_mask_seed_rule<-"202609260+fold"
-  metadata$preparation_implementation<-"base-R-v1"
-  metadata$R_version<-as.character(getRversion())
-  metadata$RNG_kind<-RNGkind()
+  metadata$preparation_implementation<-"base-R-X-calibration-v1"
+  metadata$R_version<-as.character(getRversion());metadata$RNG_kind<-RNGkind()
+  metadata$source_files_md5<-as.list(setNames(unname(tools::md5sum(source_files)),basename(source_files)))
   metadata$preparation_script_md5<-unname(tools::md5sum(file.path(root,"tools/ocean-tools.R")))
   jsonlite::write_json(metadata,file.path(output_dir,"freeze_manifest.json"),auto_unbox=TRUE,pretty=TRUE,digits=16)
-  message("Prepared ",n,"-profile data using R: ",output_dir)
+  # Run the same reader used by fitting before advertising a prepared directory.
+  validated<-ocean_prepare_inputs(output_dir)
+  message("Prepared ",n," profiles: ",output_dir,
+    "\nCalibration uses C and recorded X only; O20 is nested in O50.",
+    "\nExact empirical Latin margins: ",sum(audit$exact_latin_margin),"/",nrow(audit),
+    "; see calibration_X_coverage.csv. Strict LHS is not guaranteed.")
   invisible(output_dir)
 }
+ocean_prepare_main <- function(args,repository_dir) {
+  if(identical(args,"--help")) {
+    cat("Rscript tools/ocean-prepare-folds.R ocean500 [OUTPUT_DIR] --calibration-only\n",
+      "  Preserve the supplied cohort, folds and test masks; replace training calibration using recorded C/X.\n",
+      "Rscript tools/ocean-prepare-folds.R ocean1000 [OUTPUT_DIR]\n",
+      "  Prepare all folds and C/X-only calibration from the raw selected cohort.\n",sep="")
+    return(invisible(NULL))
+  }
+  flag<-args=="--calibration-only";if(sum(flag)>1L)stop("Repeated --calibration-only")
+  positional<-args[!flag]
+  if(length(positional)>2L||any(startsWith(positional,"--")))stop("Use --help for Ocean preparation arguments.")
+  prepare_ocean_folds(if(length(positional))positional[1]else"ocean1000",
+    if(length(positional)>1L)positional[2]else NULL,repository_dir=repository_dir,calibration_only=any(flag))
+}
+
 
 
   },e)

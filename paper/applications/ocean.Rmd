@@ -68,6 +68,9 @@ import_dirs <- as.character(unlist(params$import_dirs)); import_dirs <- import_d
 import_dirs <- ocean_resolve_path(import_dirs,repository_dir)
 cc_output_dir <- if(nzchar(params$cc_output_dir)) ocean_resolve_path(params$cc_output_dir,repository_dir) else output_dir
 inputs <- ocean_prepare_inputs(data_dir)
+calibration_metadata_path <- file.path(data_dir,"freeze_manifest.json")
+calibration_metadata <- if(file.exists(calibration_metadata_path))jsonlite::read_json(calibration_metadata_path)else list()
+recorded_X_calibration <- identical(calibration_metadata$preparation_implementation,"base-R-X-calibration-v1")
 selected <- ocean_select_tasks(settings)
 ```
 
@@ -136,9 +139,13 @@ cat(sprintf("The selected cohort contains **%d profiles from %d cruises**, with 
 ### Training and test information
 
 - **Per fold:** `r inputs$design$n_train` training and `r inputs$design$n_test` test profiles, with `r inputs$design$n_train/4`/`r inputs$design$n_test/4` per \(c\) level.
-- **Training:** \((x,c,y)\) observed for all `r inputs$design$n_train` profiles. O0/O20/O50 additionally reveal \(u\) for `r paste(inputs$design$train_exact,collapse="/")` profiles; nested subsets retain cut-side anchors.
+- **Training:** \((x,c,y)\) observed for all `r inputs$design$n_train` profiles. O0/O20/O50 additionally reveal \(u\) for `r paste(inputs$design$train_exact,collapse="/")` profiles; O20 is nested in O50.
 - **Testing:** either \((x,c)\) for all profiles, or \((x,u)\) for `r paste(inputs$design$test_exact[-1],collapse="/")` profiles and \((x,c)\) for the remainder. Test masks are nested, class-balanced up to integer rounding, and identical across methods.
-- **Separation:** test \(y\) is excluded from fitting/tuning. Transformations use training data; \(u\) scaling uses training calibration measurements. Hidden reference \(u\) is used only for design, evaluation and offline plots.
+- **Separation:** test \(y\) is excluded from fitting/tuning. Transformations use training data; \(u\) scaling uses training calibration measurements. Hidden reference \(u\) is excluded from fitting and retained for evaluation and offline plots.
+
+```{r calibration-design, echo=FALSE, results="asis"}
+if(recorded_X_calibration)cat("**Calibration design:** class quotas with nested empirical-quantile coverage of salinity and log pressure. Selection does not use exact oxygen, silicate or oxygen-derived cells. This is an approximate finite-cohort Latin design; strict LHS is not guaranteed. The original cohort, folds and test masks are preserved when using `--calibration-only`. See `calibration_X_coverage.csv` beside the prepared inputs.\n\n")else cat("**Calibration design:** supplied historical masks. These inputs have not been replaced by the C/X-only preparation; historical Ocean designs used exact-oxygen boundary anchors.\n\n")
+```
 
 ```{r observation-information, echo=FALSE, results="asis"}
 design_review <- ocean_design_review(inputs)

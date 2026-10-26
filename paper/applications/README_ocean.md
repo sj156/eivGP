@@ -74,8 +74,10 @@ The application holds `.application.lock` through rendering to prevent concurren
 The per-invocation `core-events/` logs record acquired/released slots; task logs
 record completion and failures. Seeds, iterations and evaluation budgets remain unchanged; chain count follows the core budget for new fits. The CLI caps workers to detected CPU capacity.
 macOS/Linux use forked workers; Windows currently falls back to serial execution.
-Parallel PNG exports use Cairo instead of the fork-unsafe macOS Quartz device;
-PDF uses the standard PDF device. Without Cairo on macOS, graphics export is serial.
+PNG exports use `ragg` when installed (`install.packages("ragg")`), otherwise
+the R Cairo/bitmap device. PDF uses the standard PDF device. Graphics export
+is serial on macOS to avoid font initialization in forked workers. A PNG device that cannot start raises
+an explicit error rather than leaving missing images for the report.
 
 A failed native competitor is disclosed and does not prevent analysis of valid
 EIV fits. Missing/invalid EIV prerequisites and incompatible provenance still

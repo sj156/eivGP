@@ -207,6 +207,16 @@ reports without fitting, add `--reuse-only=true` to the corresponding method
 command. Direct saved-result rendering through `paper/applications/ocean.Rmd`
 is also available.
 
+**B5. Short workflow check.** Use the supplied `ocean200` cohort and a separate
+output root. These commands run the same fitting, analysis and reporting
+entrypoints with short chains:
+
+```sh
+Rscript tools/ocean-eivGP.R --profile=quick --dataset=ocean200 --cores=8 --output=results/ocean200_check
+Rscript tools/ocean-competitors.R --profile=quick --dataset=ocean200 --cores=12 --output=results/ocean200_check
+Rscript tools/ocean-report.R --profile=quick --dataset=ocean200 --cores=8 --output=results/ocean200_check
+```
+
 | Path | Contents |
 | --- | --- |
 | `data/ocean_silicate/n500/` | Frozen main cohort, five-fold inputs and masks |

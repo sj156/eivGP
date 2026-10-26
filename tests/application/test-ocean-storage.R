@@ -74,6 +74,14 @@ test_that("flat workflow writes receipts, reuses completed tasks and reports wit
   calls<-0L
   env$ocean_run_task<-function(task,repository_dir,output_dir,settings,inputs,identity) {
     calls<<-calls+1L
+    reader<-new.env(parent=environment(ocean_execute))
+    reader$root<-output_dir
+    ocean_initial_functions(reader)
+    copied<-reader$read_fold(task$fold)
+    expect_identical(copied$train$cohort_id,
+      inputs$folds[[paste(task$fold,"O20",sep="/")]]$train$cohort_id)
+    expect_identical(ocean_hashes(file.path(output_dir,"data","freeze_manifest.json")),
+      ocean_hashes(file.path(data,"freeze_manifest.json")))
     for(p in ocean_task_files(task,settings$profile,settings$action)) {
       dest<-ocean_path(output_dir,p)
       if(grepl("[.]rds$",p))mixedgp_atomic_rds(list(chains=1:4),dest)

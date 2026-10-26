@@ -427,8 +427,10 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
       mixedgp_atomic_rds(identity,idfile)
     }
     dir.create(ocean_path(output_dir,"data"),showWarnings=FALSE)
-    csv <- list.files(data_dir,"[.]csv$",full.names=TRUE)
-    for(f in csv) {
+    # Task readers validate the frozen calibration design and CSV checksums.
+    input_files <- c(list.files(data_dir,"[.]csv$",full.names=TRUE),
+      file.path(data_dir,"freeze_manifest.json"))
+    for(f in input_files) {
       to <- ocean_path(output_dir,"data",basename(f))
       if(file.exists(to)) stopifnot(identical(ocean_hashes(f),ocean_hashes(to))) else stopifnot(file.copy(f,to))
     }
@@ -1584,8 +1586,8 @@ ocean_cc_prediction_tables <- function(output_dir,inputs,legacy,cc_output_dir=""
   if(!nrow(cc))cc<-data.frame(fold=integer(),cell=character(),method=character())
   for(cell in c("O20","O50")) {
     groups<-lapply(c("UC-GP(CC)","LVGP(CC)","EzGP(CC)"),function(m)cc$fold[cc$cell==cell & cc$method==m])
-    eiv_folds<-roots$fold[roots$cell==cell & roots$available]
-    matched<-Reduce(intersect,c(groups,list(eiv_folds)))
+    # Competitor-only runs must not require a completed EIV prediction.
+    matched<-Reduce(intersect,groups)
     if(!length(matched))next
     for(f in matched) {
       z<-cc[cc$cell==cell & cc$fold==f,]
@@ -1593,7 +1595,9 @@ ocean_cc_prediction_tables <- function(output_dir,inputs,legacy,cc_output_dir=""
       sp<-z$source_profile[1]
       add(z,"CC matched subset",paste0(sub("O","",cell),"% CC: ",inputs$design$train_exact[[cell]]," rows"),
         paste0(inputs$design$test_exact[[cell]]," (x,u,c)"),sp)
-      s<-roots[roots$cell==cell & roots$fold==f,];dir<-ocean_path(output_dir,s$source)
+      s<-roots[roots$cell==cell & roots$fold==f & roots$available,]
+      if(!nrow(s))next
+      dir<-ocean_path(output_dir,s$source)
       saved<-readRDS(ocean_path(dir,"prediction_distributions.rds"));k<-saved$known
       pred<-read.csv(ocean_path(dir,"mixed_predictions.csv"));d<-inputs$folds[[paste(f,cell,sep="/")]]
       stopifnot(identical(as.logical(k),as.logical(d$observed_test_mixed)),
@@ -1624,7 +1628,10 @@ ocean_cc_prediction_tables <- function(output_dir,inputs,legacy,cc_output_dir=""
   summary<-mixedgp_bind(summary)
   dir.create(dest,recursive=TRUE,showWarnings=FALSE)
   mixedgp_atomic_csv(raw,ocean_path(dest,"fold_metrics.csv"));mixedgp_atomic_csv(summary,ocean_path(dest,"summary.csv"))
-  pooled_cc<-summary[summary$scope=="CC matched subset",c("cell","method","source_profile","n_folds","fold_ids","complete_folds","N_total","RMSE_mean","RMSE_sd","pooled_RMSE")]
+  pooled_cc<-data.frame(cell=character(),method=character(),source_profile=character(),
+    n_folds=integer(),fold_ids=character(),complete_folds=logical(),N_total=integer(),
+    RMSE_mean=numeric(),RMSE_sd=numeric(),pooled_RMSE=numeric())
+  if(nrow(summary))pooled_cc<-summary[summary$scope=="CC matched subset",names(pooled_cc),drop=FALSE]
   mixedgp_atomic_csv(pooled_cc,ocean_path(dest,"cc_pooled_rmse.csv"))
   list(raw=raw,summary=summary,cc=cc,dest=dest,pooled_cc=pooled_cc,computation_details=mixedgp_bind(details),expected_folds=expected_folds)
 }

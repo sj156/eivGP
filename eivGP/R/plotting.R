@@ -1980,6 +1980,19 @@ save_mixing_plots <- function(path, output_dir=file.path(path,"mixing-plots"),
 }
 
 # Each figure/format owns its graphics device and destination.
+# Prefer the fork-safe raster backend when installed. Some macOS R builds
+# advertise Cairo support even when the required XQuartz libraries are absent.
+mixedgp_png_device <- function(filename,width,height,bg="white",res=180,...) {
+  if(requireNamespace("ragg",quietly=TRUE))
+    return(ragg::agg_png(filename,width=width,height=height,units="in",res=res,background=bg))
+  previous<-grDevices::dev.cur()
+  grDevices::png(filename,width=width,height=height,units="in",res=res,bg=bg,
+    type=if(capabilities("cairo"))"cairo" else getOption("bitmapType"))
+  if(identical(grDevices::dev.cur(),previous))
+    stop("Could not start the PNG device. Install ragg or configure a working Cairo graphics backend.")
+  invisible(NULL)
+}
+
 mixedgp_save_plot_jobs <- function(plots,dest,dimensions) {
   jobs <- expand.grid(ext=c("png","pdf"),name=names(plots),stringsAsFactors=FALSE)
   if(!nrow(jobs))return(invisible(character()))
@@ -1987,14 +2000,13 @@ mixedgp_save_plot_jobs <- function(plots,dest,dimensions) {
   paths <- mixedgp_stage_lapply(seq_len(nrow(jobs)),function(i) {
     name <- jobs$name[i];size <- dimensions(name)
     path <- file.path(dest,paste0(name,".",jobs$ext[i]))
-    # Quartz is unsafe in forked macOS workers. Use Cairo for PNG and base PDF.
+    # macOS font initialization can enter Objective-C with any device.
     device <- if(jobs$ext[i]=="png")function(filename,width,height,bg,...) {
-      grDevices::png(filename,width=width,height=height,units="in",res=180,bg=bg,
-        type=if(capabilities("cairo"))"cairo" else getOption("bitmapType"))
+      mixedgp_png_device(filename,width,height,bg,res=180)
     } else grDevices::pdf
     ggplot2::ggsave(path,plots[[name]],device=device,width=size[1],height=size[2],dpi=180,bg="white")
     path
-  },workers=if(Sys.info()[["sysname"]]=="Darwin" && !capabilities("cairo"))1L else mixedgp_budget_cores())
+  },workers=if(Sys.info()[["sysname"]]=="Darwin")1L else mixedgp_budget_cores())
   invisible(unlist(paths,use.names=FALSE))
 }
 
@@ -2306,8 +2318,7 @@ mixedgp_study1_save_trace_figures <- function(selection,run_dir,data_root,output
     for(ext in c('pdf','png')) {
       dest<-paste0(base,'.',ext)
       device<-if(ext=='pdf')grDevices::pdf else function(filename,width,height,bg,...) {
-        grDevices::png(filename,width=width,height=height,units='in',res=150,bg=bg,
-          type=if(capabilities('cairo'))'cairo'else getOption('bitmapType'))
+        mixedgp_png_device(filename,width,height,bg,res=150)
       }
       ggplot2::ggsave(dest,p,device=device,width=11,height=3*ceiling(length(unique(d$panel))/2)+1.6,bg='white')
       paths<-c(paths,dest)
@@ -2414,8 +2425,7 @@ mixedgp_save_scientific_trace_plots <- function(index,output_dir,formats=c("png"
     for(ext in formats) {
       dest<-file.path(output_dir,paste0("scientific_traces_",kind,".",ext))
       device<-if(ext=="png")function(filename,width,height,bg,...) {
-        grDevices::png(filename,width=width,height=height,units="in",res=150,bg=bg,
-          type=if(capabilities("cairo"))"cairo"else getOption("bitmapType"))
+        mixedgp_png_device(filename,width,height,bg,res=150)
       }else grDevices::pdf
       ggplot2::ggsave(dest,p,device=device,width=13,height=7.5,dpi=150);paths<-c(paths,dest)
     }

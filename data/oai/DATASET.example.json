@@ -1,0 +1,129 @@
+{
+  "title": "OAI cartilage morphology and fixed-location radiographic joint-space width",
+  "population": "Women; one right-first fixed knee per participant before endpoint/C completeness; baseline MRI09B project subset",
+  "Y": "V00JSW225: baseline medial radiographic joint-space width at fixed location x=0.225 (mm)",
+  "X_order": [
+    "V00AGE",
+    "P01BMI",
+    "P01HEIGHT"
+  ],
+  "X_labels": [
+    "Age (years)",
+    "BMI (kg/m^2)",
+    "Height (mm)"
+  ],
+  "U_order": "V00WMTFMTH",
+  "C_order": [
+    "V00XROSFM",
+    "V00XROSTM",
+    "V00XRSCFM",
+    "V00XRSCTM",
+    "V00XROSFL",
+    "V00XROSTL",
+    "V00XRSCFL",
+    "V00XRSCTL"
+  ],
+  "C_labels": {
+    "V00XROSFM": "Medial femoral osteophytes",
+    "V00XROSTM": "Medial tibial osteophytes",
+    "V00XRSCFM": "Medial femoral sclerosis",
+    "V00XRSCTM": "Medial tibial sclerosis",
+    "V00XROSFL": "Lateral femoral osteophytes",
+    "V00XROSTL": "Lateral tibial osteophytes",
+    "V00XRSCFL": "Lateral femoral sclerosis (native 2/3 combined)",
+    "V00XRSCTL": "Lateral tibial sclerosis"
+  },
+  "m_vec": [
+    4,
+    4,
+    3,
+    3,
+    4,
+    4,
+    3,
+    3
+  ],
+  "grade_encoding": {
+    "C1": {
+      "1": "native 0",
+      "2": "native 1",
+      "3": "native 2",
+      "4": "native 3"
+    },
+    "C2": {
+      "1": "native 0",
+      "2": "native 1",
+      "3": "native 2",
+      "4": "native 3"
+    },
+    "C3": {
+      "1": "native 0",
+      "2": "native 1",
+      "3": "native 2"
+    },
+    "C4": {
+      "1": "native 0",
+      "2": "native 1",
+      "3": "native 2"
+    },
+    "C5": {
+      "1": "native 0",
+      "2": "native 1",
+      "3": "native 2",
+      "4": "native 3"
+    },
+    "C6": {
+      "1": "native 0",
+      "2": "native 1",
+      "3": "native 2",
+      "4": "native 3"
+    },
+    "C7": {
+      "1": "native 0",
+      "2": "native 1",
+      "3": "native 2/3"
+    },
+    "C8": {
+      "1": "native 0",
+      "2": "native 1",
+      "3": "native 2"
+    }
+  },
+  "C_preprocessing": {
+    "V00XRSCFL": "Adjacent native grades 2/3 combined; retain three classes; original grades preserved",
+    "others": "Observed native grades retained; no continuous variable discretization"
+  },
+  "excluded_C": [
+    "Medial JSN",
+    "Lateral JSN",
+    "KL (not added)"
+  ],
+  "stratification_columns": [
+    "C1",
+    "C2"
+  ],
+  "measurement_units": "Y/U mm; age years; BMI kg/m^2; height mm",
+  "measurement_definition": "U MFTC.ThCtAB = MT.ThCtAB + cMF.ThCtAB, MRI09B DESS 75% femoral ROI; Y fixed-location Xray JSW, project16; ordinal Xray project15",
+  "interpretation": "Cross-modality structural assessment of joint-space preservation and cartilage morphology; distinct contemporaneous Y/U",
+  "scientific_question": "Can native ordinal structural signs support prediction of quantitative joint-space width through partially observed quantitative MRI cartilage morphology?",
+  "source_url": "https://nda.nih.gov/oai/image-assessments",
+  "sources": [
+    "https://pubmed.ncbi.nlm.nih.gov/28065381/",
+    "https://pubmed.ncbi.nlm.nih.gov/26376884/"
+  ],
+  "limitations": "Exploratory selected imaging subset, complete-case women, unweighted. Y and U remain closely related structural constructs. Correlated C/shared Xray reading errors and possible C-Y associations beyond U require scrutiny. Cross-sectional prediction is not causal or knee-replacement prediction.",
+  "dataset_id": "oai",
+  "Y_label": "Medial fixed-location joint-space width (mm)",
+  "U_labels": {
+    "V00WMTFMTH": "Medial femorotibial cartilage thickness (mm)"
+  },
+  "fold_seed": 202610271,
+  "calibration_seed": 202610272,
+  "test_seed": 202610273,
+  "model_seed": 202610274,
+  "test_U_design": "Fixed C1/C2-proportional random revelation; nested 20/50; shared by all CC methods",
+  "test_U_selection": {
+    "outcome_selected": false
+  },
+  "imputation_display_fold": 4
+}

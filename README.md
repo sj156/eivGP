@@ -2,11 +2,11 @@
 
 Gaussian process regression with ordinal proxies and partially observed continuous
 inputs. This repository provides the package and the paper's numerical studies,
-Ocean application and ADNI application.
+Ocean, ADNI and OAI applications.
 
 Follow the numbered sections to locate the code, set up the environment, review
 model settings, reproduce an experiment and check its results. Experiment groups
-in Section 4 use letters A–C; their steps use A1–A4, B1–B4 and C1–C4.
+in Section 4 use letters A–D; each application has numbered preparation, fitting and reporting steps.
 
 1. [Repository structure](#1-repository-structure)
 2. [Install and configure](#2-install-and-configure)
@@ -29,16 +29,19 @@ data/ocean_silicate/
   n1000/        # raw selected 1000-profile cohort
 data/adni/
   inputs/       # local prepared ADNI folds; only .gitkeep is versioned
+data/oai/       # private flat fold files; only contract and example are versioned
 paper/
   numerical/    # study1 and study2: one .R, .Rmd, and .html each
-  applications/ # Ocean and ADNI Rmd reports, HTML and guides
+  applications/ # Ocean, ADNI and OAI Rmd reports, data-free HTML and guides
   manifests/    # selected numerical runs and frozen Ocean input identities
 tools/          # flat application scripts; no application subdirectories
   adni-tools.R  # all ADNI application functions
   ocean-tools.R # all Ocean application functions
+  oai-tools.R   # OAI adapter reusing the prepared-fold workflow
   adni-eivGP.R, adni-competitors.R, adni-report.R
   ocean-eivGP.R, ocean-competitors.R, ocean-report.R
-  adni-prepare-folds.R, ocean-prepare-folds.R
+  oai-eivGP.R, oai-competitors.R, oai-report.R
+  adni-prepare-folds.R, ocean-prepare-folds.R, oai-prepare-folds.R
   build_package.R
   render_reports.R
 ```
@@ -76,7 +79,7 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 VECLIB_MAXIMUM
 ```
 
 `--cores=N` is a shared CPU budget for chains, prediction, diagnostics and figure
-export, capped at detected CPU capacity. For ADNI/Ocean, new EIV fits use min(N,4) chains; it does not alter seeds or
+export, capped at detected CPU capacity. For ADNI/Ocean/OAI, new EIV fits use min(N,4) chains; it does not alter seeds or
 numerical settings. Waiting coordinators release slots; resident fits have a
 separate memory limit. macOS/Linux use forked workers; Windows uses the serial
 fallback. HTML assembly remains serial.
@@ -119,6 +122,7 @@ provenance; use new output roots for incompatible sources or numerical settings.
 - [A. Synthetic experiments: Studies I and II](#a-synthetic-experiments-studies-i-and-ii)
 - [B. Ocean application](#b-ocean-application)
 - [C. ADNI application](#c-adni-application)
+- [D. OAI application](#d-oai-application)
 
 ### A. Synthetic experiments: Studies I and II
 
@@ -294,9 +298,66 @@ retain their original paths; select old folders explicitly with `--output`.
 All participant inputs, frozen snapshots, fits and empirical reports stay local.
 See the [ADNI reproduction and storage guide](paper/applications/README_adni.md).
 
+### D. OAI application
+
+**D1. Supply the private prepared inputs.** Place `DATASET.json` and the 45 flat
+fold/protocol files directly in `data/oai/`, following the
+[data contract](data/oai/README.md). Participant data are not distributed in Git.
+The default application relates baseline MRI medial cartilage thickness to
+baseline fixed-location radiographic joint-space width, using continuous age,
+BMI and height and eight native osteophyte/sclerosis grades within women.
+Dimensions, grade mappings, folds and observation masks come from supplied
+protocols. Another prepared cohort can use `data/oai_NAME/` with `--dataset=NAME`.
+
+**D2. Fit and analyze EIV-GP.**
+
+```sh
+Rscript tools/oai-eivGP.R --plan=true --profile=paper --cores=16
+Rscript tools/oai-eivGP.R --profile=paper --cores=16
+```
+
+Paper sampling uses five folds, min(cores,4) chains and initially 50,000
+iterations including 5,000 burn-in. OAI defaults are HMC at O0/O20 and ESS at O50. Optional
+`--ess-min=100` enables scientific-target continuation. Explicit numerical
+overrides are recorded in the fitting identity.
+
+**D3. Fit and analyze competitors.** Run sequentially against the same root:
+
+```sh
+Rscript tools/oai-competitors.R --profile=paper --cores=16
+```
+
+This fits UC-GP, LVGP and EzGP with ordinal inputs and matched complete-case
+inputs. Use only `--cores` for resources: EIV jobs use complete chain-sized groups
+and competitor jobs use one core each, following the current ADNI/Ocean workflow.
+
+**D4. Assemble and inspect the paper report.**
+
+```sh
+Rscript tools/oai-report.R --profile=paper --cores=16
+```
+
+The report follows the same seven sections as ADNI: settings, data/C definitions
+and illustrations, numerical diagnostics, OI/CC prediction, response functions,
+training-U imputation and reproducibility. `oai-report.R` reads saved fits only;
+`--reuse-only=true` also makes either method script saved-only. Supplied test-U
+mask provenance is retained, including disclosure of outcome-based selection.
+
+#### Where OAI results are saved
+
+| Path | Contents |
+| --- | --- |
+| `data/oai/` | Privately supplied metadata, five-fold inputs and masks |
+| `results/oai/` | Paper fits, predictions, diagnostics and `oai.html` |
+| `paper/applications/oai.html` | Versioned data-free plan page |
+
+New result roots use the same flat task folders and `data/`, `logs/`, `reports/`
+and `_meta/` layout as ADNI/Ocean. Participant inputs, fits and empirical reports
+stay local. See the [OAI reproduction and storage guide](paper/applications/README_oai.md).
+
 ## 5. Check and interpret results
 
-For both applications, `--output` overrides the result root and `--data-root`
+For all three applications, `--output` overrides the result root and `--data-root`
 overrides prepared inputs. Use the same dataset, profile and path flags for
 fitting and reporting. Completion, optimizer status, scientific-target ESS,
 R-hat, MCSE and traces are separate checks. ESS thresholds and a completed

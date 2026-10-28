@@ -1,0 +1,499 @@
+---
+title: "OAI structural imaging: partially observed cartilage thickness"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    code_folding: hide
+    self_contained: true
+params:
+  profile: "pilot"
+  action: "report"
+  cores: 4
+  data_dir: ""
+  output_dir: ""
+  report_source: ""
+  representative_fold: 1
+  appendix: true
+---
+
+This application evaluates cross-modality structural prediction of radiographic
+joint-space width when quantitative MRI cartilage measurements are partially
+observed. Native radiographic ordinal grades supply additional measurements;
+they are not constructed by binning the response or MRI thickness. The supplied
+protocols record the cohort, folds, calibration and test-U revelation design.
+
+```{r setup, include=FALSE}
+# Rmd renders serially; macOS Quartz file export avoids an optional X11 dependency.
+knitr::opts_chunk$set(echo=TRUE,message=FALSE,warning=FALSE,cache=FALSE,error=FALSE,
+  dev='png',dev.args=if(Sys.info()[['sysname']]=='Darwin')list(type='quartz')else list(),dpi=130)
+if(!params$action%in%c('report','plan'))stop('Render saved results or a plan; use the two method scripts to fit.')
+here<-dirname(knitr::current_input(dir=TRUE));repository_dir<-normalizePath(file.path(here,'../..'))
+# A local copy may live outside the checkout; the rendering caller supplies its root.
+if(exists('.oai_repository_dir',inherits=TRUE))repository_dir<-get('.oai_repository_dir',inherits=TRUE)
+source(file.path(repository_dir,'tools/oai.R'),local=TRUE)
+api<-oai_load_api(repository_dir)
+list2env(as.list(api),envir=environment())
+a<-get0('.oai_precomputed_analysis',inherits=TRUE)
+if(is.null(a)&&params$action=='report') {
+  data_dir<-if(nzchar(params$data_dir))params$data_dir else file.path(repository_dir,'data/oai')
+  output_dir<-if(nzchar(params$output_dir))params$output_dir else oai_default_output('oai',params$profile,repository_dir)
+  settings<-oai_settings(params$profile,params$cores,representative_fold=params$representative_fold,appendix=params$appendix)
+  a<-adni_report_prepare(repository_dir,data_dir,output_dir,settings,
+    if(nzchar(params$report_source))params$report_source else NULL,output_dir)
+}
+has_results<-!is.null(a)
+if(has_results)api$oai_metadata<-a$metadata
+mask_notice<-oai_mask_notice(a)
+table_html<-function(x,caption='',note='')cat(adni_table_html(x,caption,note),'\n\n')
+```
+
+## 1. Computation settings
+
+- **Workflow:** `oai-eivGP.R` fits and analyzes EIV-GP; `oai-competitors.R`
+  fits and analyzes UC-GP, LVGP and EzGP; `oai-report.R` assembles this Rmd from
+  saved results. `--reuse-only=true` prohibits fitting in the method scripts.
+- **Profiles:** OAI `pilot` uses min(cores,4) chains, 1,500 total
+  iterations, with one burn of 500. `paper` uses min(cores,4) chains, 50,000 total
+  iterations and burn 5,000. Explicit numerical overrides are recorded and must
+  remain compatible with saved fitting identities.
+- **Sampling:** defaults are HMC at O0/O20 and elliptical slice sampling at O50.
+  The core budget controls concurrency and the chain count of new fits; seeds and supplied masks are retained.
+- **Inputs and outputs:** private prepared folds are read from `data/oai`
+  or `--data-root`. Fits, diagnostics and empirical HTML are written to ignored
+  `results/` or an external directory. Data preparation is separate from fitting.
+
+```{r actual-settings, echo=FALSE, results='asis'}
+if(nzchar(mask_notice))cat('<p><strong>Test-U mask provenance.</strong> ',mask_notice,'</p>\n\n')
+if(has_results) {
+  table_html(data.frame(Profile=a$settings$profile,Stage=a$stage,Chains=a$numerics$chains,
+    `Total iterations / chain`=a$numerics$iterations,`Burn-in / chain`=a$numerics$burn,
+    `Retained / chain`=a$numerics$iterations-a$numerics$burn,check.names=FALSE),'Saved MCMC settings')
+  cat('**Saved analysis selection:** folds ',paste(a$settings$folds,collapse=', '),
+      '; calibration order ',paste(a$settings$cells,collapse=' / '),'. The table above reads the actual saved stage; profile defaults do not relabel historical chain budgets.\n\n',sep='')
+  cat('<p><strong>Saved-result report.</strong> No optimizer, MCMC fitting or continuation is performed. A completed computation does not establish convergence.</p>\n\n')
+}else cat('**Plan only:** no participant data or empirical results are embedded in this document.\n\n')
+```
+
+| Stage | Dependencies and work | Scheduling |
+|---|---|---|
+| Fit | Frozen folds → EIV fits and native/complete-case comparators | One public shared CPU pool; bounded resident fit objects |
+| Predict | Saved fits → seeded response draws, intervals and scores | Workers borrow the same allocation |
+| Functionals | Saved posterior → observable means, calibrated surfaces and target traces | Read-only, deterministic selected states and seeds |
+| Report assets | Scores → tables, imputation and diagnostic figures | Cached against source and fit hashes |
+| HTML | Completed saved analysis → this document | Rmd assembly; never fitting |
+
+## 2. Data and observation design
+
+### Notation
+
+| Symbol | OAI variable in the default design |
+|---|---|
+| \(y\) | Baseline medial fixed-location radiographic joint-space width at x=0.225, V00JSW225 (mm) |
+| \(u\) | Baseline medial femorotibial MRI cartilage thickness, V00WMTFMTH (mm) |
+| \(c\) | Eight native osteophyte/sclerosis grades from central radiographic readings |
+| \(x\) | Age, BMI and height; female cohort with one fixed knee per participant |
+
+The scientific question concerns cartilage morphology and joint-space
+preservation across imaging modalities. Quantitative MRI acquisition and
+segmentation require more resources than ordinal radiographic grading.
+Fixed-location joint-space width is associated with cartilage thickness
+([Roth et al., 2017](https://pubmed.ncbi.nlm.nih.gov/28065381/)). This is a
+cross-sectional structural assessment, not causal inference or a claim of
+clinical replacement. Actual dimensions and coordinate definitions come from
+the supplied metadata and protocols.
+
+### Ordinal measurements included in the model
+
+```{r C-definitions, echo=FALSE, results='asis'}
+if(has_results) {
+  c_table<-adni_C_dictionary(a$protocol$C_order,a$protocol$m_vec,a$metadata$C_labels)
+  cat('**All ',nrow(c_table),' items below enter the model**, in the displayed C-column order. They are not averaged into a score or discretized from Y or U.\n\n',sep='')
+}else {
+  example<-jsonlite::fromJSON(file.path(repository_dir,'data/oai/DATASET.example.json'))
+  c_table<-adni_C_dictionary(example$C_order,example$m_vec,example$C_labels)
+  cat('**Default metadata example:** ',example$population,'. The private input protocol determines the actual cohort and C columns.\n\n',sep='')
+}
+table_html(c_table)
+```
+
+The default items are medial/lateral femoral/tibial osteophyte and sclerosis
+grades. Only lateral femoral sclerosis combines adjacent native grades 2/3;
+all other observed native grades are retained. Model codes are consecutive
+integers starting at 1; the dictionary records the native mapping. JSN and KL
+are excluded from the default design. Other supplied C sets require matching
+metadata and native-grade mappings; the workflow does not merge grades or bin
+continuous measurements automatically.
+
+### Data-use protocols
+
+- **OI:** all held-out participants are predicted from \((x,c)\). EIV-GP may
+  use revealed training imaging; native comparators use full-training \((x,c,y)\).
+- **Complete case:** comparators use calibration-training \((x,u,c,y)\) only.
+  Scores share the same observed-U test participants as EIV-GP \(f(x,u)\).
+- **Training-U recovery:** training \(y_i\) may inform masked U; supplied
+  calibration values are excluded from error scores.
+- **Prospective-U recovery:** test C is supplied without test Y. This is distinct
+  from response-informed reconstruction of training U.
+
+### Cohort construction
+
+The supplied cohort contains one eligible knee per participant, fixed by a
+right-first rule before endpoint/C completeness checks. The default cohort
+uses baseline MRI09B cartilage measures, project 16 fixed-location JSW and
+project 15 ordinal radiographic readings; no follow-up MRI requirement is
+imposed. Authorized collaborators supply matched, quality-controlled inputs.
+
+```{r cohort-description, eval=has_results, echo=FALSE, results='asis'}
+cat('**Population:** ',a$metadata$population,'. **Participants:** ',a$input$N,
+    '; **ordinal items:** ',a$protocol$q,'.\n\n',sep='')
+```
+
+### Training and test information
+
+Training \((x,c,y)\) is available for every training participant. O0/O20/O50
+reveal zero/about 20%/50% of the **complete U vector**. Calibration uses
+proportional native-C stratification (joint C1/C2 in the default metadata), with a frozen within-stratum
+random order; O20 is nested in O50. Newly prepared test-U masks follow the same outcome-independent principle;
+Y/U values do not choose folds or masks. Supplied frozen masks are preserved.
+If their metadata records outcome-based selection, the report identifies the CC
+comparison as exploratory. Test Y is never passed to model fitting or
+hyperparameter tuning.
+
+X transformations and Y normalization use training data; U anchoring uses revealed
+training calibration only. Full reference U is retained for retrospective scoring
+and descriptive illustrations, never passed to masked fitting inputs.
+
+```{r design, eval=has_results, echo=FALSE, results='asis'}
+cat('**Calibration:** ',a$metadata$calibration_design,'.\n\n',sep='')
+table_html(a$input$audit)
+```
+
+### EIV-GP targets and comparator scope
+
+| Target | Evaluation and comparator scope |
+|---|---|
+| Held-out Y | OI scores all test participants; CC scores only the shared observed-U subset |
+| Observable mean \(m(x,c)\) | EIV-GP integrates U conditional on C; native OI comparators use their recorded-input response functions |
+| Calibrated response surface \(f(x,u)\) | Physical-U surfaces at O20/O50; CC comparators retain C and define a different response function |
+| Training-input posterior | EIV-GP only; training Y can inform U; observed calibration is not scored as imputation |
+
+Native items may be correlated and joint patterns sparse. Fixed-sex results do
+not establish transfer to men or an independent cohort. True response functions
+are unavailable; held-out-Y prediction is not a direct test of true-function recovery.
+
+### Observed data
+
+The following figures describe the supplied cohort once per participant. Y–U
+and Y–X scatterplots follow the Ocean observed-data display. The additional C–U
+boxplots show the first two C columns in fixed input order against the supplied U
+coordinates; all items in the preceding table remain model inputs. The illustrated
+C items are not chosen by local association strength or prediction performance.
+
+```{r observed-data, eval=has_results, echo=FALSE, fig.width=10, fig.height=3.8}
+print(a$plots$cohort)
+print(a$plots$covariates)
+```
+
+```{r ordinal-imaging-data, eval=has_results, echo=FALSE, fig.width=10, fig.height=6.5}
+print(a$plots$C_U)
+```
+
+Boxes show medians and interquartile ranges, whiskers extend to 1.5 IQR, and points
+show individual measured references. These are descriptive associations, not
+measurement cutpoints or evidence of precise individual-U recovery.
+
+<details><summary>Supplementary: item support</summary>
+
+```{r ordinal-support, eval=has_results, echo=FALSE, fig.width=10, fig.height=7}
+print(a$plots$C_counts)
+```
+
+</details>
+
+## 3. Model fitting and numerical assessment
+
+EIV-GP jointly models the response and ordinal measurements through latent
+continuous imaging coordinates. C enters the measurement model; the response GP
+uses X and U. O0 is unanchored: physical-U error scores and truth-based rotations
+or rescalings are not reported. O20/O50 use observed calibration to anchor raw U.
+
+**CORE** requires all declared core diagnostics to be finite, Rhat ≤ 1.01,
+bulk ESS ≥ 400 and tail ESS ≥ 400. Dictionary occupancy is reviewed separately.
+Finite diagnostic ranges do not hide undefined entries. Target diagnostics
+complement the full-chain screen and cannot replace it.
+
+```{r convergence, eval=has_results, echo=FALSE, results='asis'}
+table_html(a$convergence)
+```
+
+<details><summary>Supplementary: report export status</summary>
+
+```{r artifact-status, eval=has_results, echo=FALSE, results='asis'}
+if(!is.null(a$artifact_manifest))table_html(a$artifact_manifest[,c('label','file','status')])
+```
+
+</details>
+
+### Scientific-target traceplots and Monte Carlo precision
+
+The optional `--ess-min=100` setting extends the final planned fit until monitored
+scientific bulk and tail ESS both exceed 100. The default is `NULL`. Actual
+per-fit iterations appear in the convergence tables; nominal stage names retain
+the initially requested budget. This precision rule does not certify convergence.
+
+```{r full-history-scientific-traces, eval=has_results, echo=FALSE, out.width='100%'}
+full_history <- getFromNamespace('mixedgp_application_trace_report','eivGP')(
+  a$output_dir, adni_path(a$output_dir,'reports','scientific-traces'))
+if(length(full_history))knitr::include_graphics(full_history[grepl('[.]png$',full_history)],rel_path=FALSE)
+```
+
+
+The same representative fold is selected by configuration, never by prediction
+performance. The observable-mean target uses training-defined median X, the modal
+joint C profile for the other items and C1 model code 2. Imaging traces use the mean
+of common-hidden training rows at that C1 grade. O0 imaging traces are in working
+model units; calibrated traces are in physical units.
+
+Function traces use conditional GP means at fixed, evenly selected retained
+states; imaging traces use all retained states. Integration compares the same
+fixed target with two node counts. These checks concern numerical approximation,
+not proof of whole-fit stationarity or model adequacy.
+
+```{r target-traces, eval=has_results, echo=FALSE, fig.width=11, fig.height=8}
+if(!is.null(a$functionals))print(a$functionals$trace_plot)
+```
+
+```{r target-diagnostics, eval=has_results, echo=FALSE, results='asis'}
+if(!is.null(a$functionals)) {
+ table_html(adni_target_table(a),paste0('Scientific-target diagnostics: fold ',a$settings$representative_fold))
+}
+```
+
+Each row assesses one plotted quantity and calibration condition. **R-hat**
+compares chains; **bulk/tail ESS** measure effective sample counts; **MCSE** is
+Monte Carlo error of the estimated posterior mean, not prediction error or a
+posterior interval width. The mean and posterior SD describe that target's
+posterior variation. These are group-mean imaging targets, not individual-U scores.
+The m(x,c) target uses response units. U means use the unanchored model scale
+at O0 and the physical units recorded in metadata at O20/O50.
+Function targets use the selected states stated above; imaging targets use full
+retained chains. The table does not replace the full-fit CORE assessment.
+
+<details><summary>Supplementary: integration check and target diagnostics across folds</summary>
+
+Increasing latent integration nodes checks the approximation to the same fixed
+observable-mean target. The difference below is the check-node estimate minus
+the original estimate; it does not establish MCMC convergence.
+
+```{r target-diagnostics-full, eval=has_results, echo=FALSE, results='asis'}
+if(!is.null(a$functionals)) {
+ table_html(adni_integration_table(a),'Latent-integration check: representative fold')
+ table_html(adni_target_table(a,all_folds=TRUE),'Scientific-target diagnostics: all saved folds')
+ table_html(adni_integration_table(a,all_folds=TRUE),'Latent-integration checks: all saved folds')
+}
+```
+
+</details>
+
+<details><summary>Supplementary: raw chain traces, optimizer status and stage stability</summary>
+
+```{r raw-traces, eval=has_results, echo=FALSE, fig.width=11, fig.height=7}
+if(!is.null(a$functionals))print(a$functionals$raw_trace_plot)
+```
+
+```{r numerical-details, eval=has_results, echo=FALSE, results='asis'}
+d<-a$method_status
+if(nrow(d))table_html(d[,setdiff(names(d),'source_directory'),drop=FALSE])
+if(nrow(a$stage_scores))table_html(adni_summary(a$stage_scores,c('stage','cell'),c('RMSE_SD','MAE_SD','CRPS_SD')))
+exceptions<-a$parameters[!is.finite(a$parameters$rhat)|!is.finite(a$parameters$ess_bulk)|!is.finite(a$parameters$ess_tail)|
+ a$parameters$rhat>1.01|a$parameters$ess_bulk<400|a$parameters$ess_tail<400,,drop=FALSE]
+cat('**Parameter-by-fit exceptions:** ',nrow(exceptions),'. Complete parameter tables remain beside the report.\n\n',sep='')
+```
+
+</details>
+
+## 4. Response prediction
+
+Each table reports the mean and sample SD of fold-specific metrics. RMSE and MAE
+measure point error; CRPS and interval score assess predictive distributions.
+Coverage is reported with interval width. Normalization uses each full-training
+Y SD before fold aggregation. Fold counts remain visible. Entries use
+**mean (sample SD)**, following the Ocean report's display format.
+
+**Bold** identifies the lowest error within the comparable information group,
+including unconverged methods. `*` beside EIV-GP indicates failure of CORE; beside
+a baseline it indicates at least one flagged optimizer return. Missing or
+unexposed optimizer diagnostics are not reclassified as convergence.
+
+### Ordinal-input prediction: OI
+
+```{r oi-prediction, eval=has_results, echo=FALSE, results='asis'}
+cat('<div style="overflow-x:auto">',adni_metric_table(a,'OI'),'</div>\n\n')
+```
+
+### Complete-case comparison
+
+```{r cc-prediction, eval=has_results, echo=FALSE, results='asis'}
+cat('<div style="overflow-x:auto">',adni_metric_table(a,'CC-known'),'</div>\n\n')
+```
+
+The known-U test subset is fixed and shared across methods. CC conclusions remain
+conditional on that observation mask and calibration cohort. Mixed-input (MI)
+results are retained in saved artifacts but are not displayed in this report.
+
+<details><summary>Supplementary: complete prediction metrics</summary>
+
+```{r full-prediction-metrics, eval=has_results, echo=FALSE, results='asis'}
+cat('<div style="overflow-x:auto">',adni_metric_table(a,'OI',full=TRUE),'</div>\n\n')
+cat('<div style="overflow-x:auto">',adni_metric_table(a,'CC-known',full=TRUE),'</div>\n\n')
+```
+
+</details>
+
+## 5. Response functions
+
+The observable mean is
+\[
+ m(x,c)=\int f(x,u)\,Q(du\mid c).
+\]
+The working input model is independent of X. Observable means integrate over
+ordinally compatible U; calibrated response surfaces condition on actual U.
+Neither is a causal effect.
+
+### Observable mean m(x,c)
+
+Slices vary the first X coordinate across its training 10th–90th percentiles and
+C1 across native grades; other X coordinates use training medians and other C
+items use the modal observed joint profile. Native comparators predict on exactly
+the same slice. Some displayed combinations may have limited joint support.
+EIV bands are pointwise posterior intervals including conditional GP uncertainty;
+native lines are point predictions. These bands are not noisy-Y prediction intervals.
+
+```{r observable-mean, eval=has_results, echo=FALSE, fig.width=11, fig.height=7}
+if(!is.null(a$functionals))print(a$functionals$mean_plot)
+```
+
+### Calibrated response function f(x,u)
+
+Curves or surfaces hold X at its training median and vary the U coordinates over
+calibration-training 10th–90th percentiles. Other U coordinates, if supplied,
+remain at calibration medians. Physical surfaces are shown for O20/O50 only.
+The domain can differ by fold and calibration; no common-support claim is implied.
+
+```{r calibrated-surface, eval=has_results, echo=FALSE, fig.width=11, fig.height=4.5}
+if(!is.null(a$functionals$surface_plot))print(a$functionals$surface_plot)
+```
+
+<details><summary>Supplementary: response functions across folds</summary>
+
+```{r all-fold-functions, eval=has_results && isTRUE(params$appendix), echo=FALSE, fig.width=13, fig.height=13}
+if(!is.null(a$functionals))print(a$functionals$mean_all_plot)
+if(!is.null(a$functionals$surface_all_plot))print(a$functionals$surface_all_plot)
+```
+
+</details>
+
+## 6. Training-input imputation
+
+Horizontal axes are imaging references and vertical axes are posterior means,
+in full-training SD units for retrospective display. Filled points and intervals
+are masked U; open points are supplied calibration values and are not scored.
+Colors identify C1 grades. The dashed line is exact recovery.
+
+```{r imputation, eval=has_results, echo=FALSE, fig.width=12, fig.height=7}
+if(!is.null(a$plots$imputation))print(a$plots$imputation)
+```
+
+```{r training-u-scores, eval=has_results, echo=FALSE, results='asis'}
+table_html(adni_u_table(a$U_metrics))
+if(!is.null(a$plots$common_hidden))table_html(a$plots$common_hidden)
+```
+
+The common-hidden comparison scores both calibration levels on exactly the
+O50-hidden training rows. C1-mean references use revealed calibration U only,
+with an overall calibration-mean fallback for unsupported grades. Reported gains
+use the RMS of fold RMSEs, rather than selecting favorable participants.
+
+### Prospective input recovery without test Y
+
+```{r prospective-u, eval=has_results, echo=FALSE, results='asis'}
+table_html(adni_u_table(a$prospective_metrics))
+```
+
+### Marginal distribution of hidden training inputs
+
+The representative fold uses the same common-hidden rows under O20 and O50.
+Gray histograms and rugs show their measured references; the solid curve is the
+equally weighted posterior mixture using 128 saved draws per person. The dashed
+curve shows posterior means and can reveal shrinkage; it is **not** the posterior
+distribution of U. Axes use that fold's full-training reference SD for evaluation.
+O0 is unanchored and is not overlaid with physical imaging references. Coverage
+and width remain individual-interval assessments, separate from marginal spread.
+
+```{r distributions, eval=has_results, echo=FALSE, fig.width=11, fig.height=6}
+if(!is.null(a$plots$input_distribution))print(a$plots$input_distribution)
+```
+
+### Class-specific imputation calibration
+
+Class-specific scores below summarize the saved folds. The supplementary
+histograms and posterior curves use the configured imputation display fold, conditional on C1.
+
+<details><summary>Supplementary: class-specific imputed-input distributions</summary>
+
+```{r class-distributions, eval=has_results, echo=FALSE, fig.width=13, fig.height=10}
+if(!is.null(a$plots$class_distribution))print(a$plots$class_distribution)
+```
+
+</details>
+
+```{r class-support, eval=has_results, echo=FALSE, results='asis'}
+if(!is.null(a$plots$class_table))table_html(a$plots$class_table)
+if(!is.null(a$plots$support))table_html(a$plots$support)
+```
+
+Native radiographic grades do not specify physical U intervals, so Ocean's category-bin
+compatibility check does not apply. Instead, nonpositive physical interval
+endpoints and means are counted without clipping. Counts pool repeated training
+appearances across folds; they are not numbers of independent participants.
+
+<details><summary>Supplementary: imputation across all folds</summary>
+
+```{r all-fold-imputation, eval=has_results && isTRUE(params$appendix), echo=FALSE, fig.width=12, fig.height=13}
+for(cell in c('O20','O50'))if(!is.null(a$plots[[paste0('imputation_',cell)]]))print(a$plots[[paste0('imputation_',cell)]])
+```
+
+</details>
+
+## 7. Reproducibility and references
+
+Inputs, source identities and saved fits are verified before reporting. HTML
+assembly never fits, extends a chain or retries an optimizer. Missing and flagged
+results remain explicit. Test-U revelation and training calibration are different
+protocol components; CC results remain conditional on the supplied test mask.
+All participant inputs, model fits and empirical reports stay local. The
+versioned HTML is a data-free plan page.
+
+- [Official OAI image assessments](https://nda.nih.gov/oai/image-assessments).
+- [Roth et al., 2017: cartilage and meniscal contributions to joint-space width](https://pubmed.ncbi.nlm.nih.gov/28065381/).
+- [Eckstein et al., 2016: structural change and later knee replacement](https://pubmed.ncbi.nlm.nih.gov/26376884/).
+
+The default selected imaging cohort is exploratory and unweighted. C may be
+conditionally dependent and may contain Y information beyond U; C and Y also
+share radiographic sources. Published longitudinal associations do not establish
+causality or turn this cross-sectional task into replacement prediction.
+
+<details><summary>Supplementary: environment and provenance</summary>
+
+```{r provenance, eval=has_results, echo=FALSE, results='asis'}
+table_html(data.frame(Fitting_package_version=if(is.null(a$source$fit_package_version))'saved fitting record'else a$source$fit_package_version,
+ Analysis_package_version=as.character(packageVersion('eivGP')),new_fit=FALSE,stage=a$stage))
+if(length(a$source$baseline_overrides))cat('Some native comparator fits have separately recorded recovery provenance; see the method-status table.\n\n')
+```
+
+```{r session, echo=FALSE}
+cat(paste(trimws(capture.output(sessionInfo()),which='right'),collapse='\n'))
+```
+
+</details>

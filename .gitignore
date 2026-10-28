@@ -74,3 +74,13 @@ __pycache__/
 !/data/adni/DATASET.example.json
 /paper/applications/adni-plan*.Rmd
 /paper/applications/adni-plan*.html
+
+# OAI code/contract only; participant data and raw downloads remain local.
+/data/oai*/
+/data/OAI*/
+!/data/oai/
+/data/oai/*
+!/data/oai/README.md
+!/data/oai/DATASET.example.json
+/paper/applications/oai-plan*.Rmd
+/paper/applications/oai-plan*.html

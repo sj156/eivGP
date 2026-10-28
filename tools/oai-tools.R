@@ -50,6 +50,15 @@ oai_load_api <- function(repo=.oai_repository) {
     if(is.null(params$dataset))params$dataset<-'oai'
     run(repo,params,group)
   }
+  table_html<-e$adni_table_html
+  e$adni_table_html<-function(x,caption='',note='') {
+    table_labels<-c(CORE='Parameter checks passed',core_pass='Parameter checks passed',
+      core_nonfinite='Undefined monitored diagnostics',strict_all_pass='All parameter checks passed')
+    if(is.data.frame(x)) {
+      at<-match(names(x),names(table_labels));names(x)[!is.na(at)]<-unname(table_labels[at[!is.na(at)]])
+    }
+    table_html(x,caption,note)
+  }
   e$oai_mask_notice<-function(a=NULL) {
     meta<-if(is.null(a))e$oai_metadata else a$metadata
     selected<-isTRUE(meta$test_U_selection$outcome_selected)||

@@ -77,7 +77,7 @@ if(has_results) {
 
 | Stage | Dependencies and work | Scheduling |
 |---|---|---|
-| Fit | Frozen folds → EIV fits and native/complete-case comparators | One public shared CPU pool; bounded resident fit objects |
+| Fit | Frozen folds → EIV fits and original categorical-input/complete-case comparators | One shared CPU budget; bounded resident fit objects |
 | Predict | Saved fits → seeded response draws, intervals and scores | Workers borrow the same allocation |
 | Functionals | Saved posterior → observable means, calibrated surfaces and target traces | Read-only, deterministic selected states and seeds |
 | Report assets | Scores → tables, imputation and diagnostic figures | Cached against source and fit hashes |
@@ -128,13 +128,13 @@ continuous measurements automatically.
 ### Data-use protocols
 
 - **OI:** all held-out participants are predicted from \((x,c)\). EIV-GP may
-  use revealed training imaging; native comparators use full-training \((x,c,y)\).
+  use revealed training imaging; UC-GP, LVGP and EzGP use full-training \((x,c,y)\).
 - **Complete case:** comparators use calibration-training \((x,u,c,y)\) only.
   Scores share the same observed-U test participants as EIV-GP \(f(x,u)\).
-- **Training-U recovery:** training \(y_i\) may inform masked U; supplied
+- **Training-input imputation:** training \(y_i\) may inform masked U; supplied
   calibration values are excluded from error scores.
-- **Prospective-U recovery:** test C is supplied without test Y. This is distinct
-  from response-informed reconstruction of training U.
+- **Prospective input inference:** test C is supplied without test Y. This is distinct
+  from imputation using observed training responses.
 
 ### Cohort construction
 
@@ -174,7 +174,7 @@ table_html(a$input$audit)
 | Target | Evaluation and comparator scope |
 |---|---|
 | Held-out Y | OI scores all test participants; CC scores only the shared observed-U subset |
-| Observable mean \(m(x,c)\) | EIV-GP integrates U conditional on C; native OI comparators use their recorded-input response functions |
+| Observable mean \(m(x,c)\) | EIV-GP integrates U conditional on C; original categorical-input comparators use their recorded-input response functions |
 | Calibrated response surface \(f(x,u)\) | Physical-U surfaces at O20/O50; CC comparators retain C and define a different response function |
 | Training-input posterior | EIV-GP only; training Y can inform U; observed calibration is not scored as imputation |
 
@@ -215,13 +215,13 @@ print(a$plots$C_counts)
 
 EIV-GP jointly models the response and ordinal measurements through latent
 continuous imaging coordinates. C enters the measurement model; the response GP
-uses X and U. O0 is unanchored: physical-U error scores and truth-based rotations
+uses X and U. O0 uses a working coordinate: physical-U error scores and truth-based rotations
 or rescalings are not reported. O20/O50 use observed calibration to anchor raw U.
 
-**CORE** requires all declared core diagnostics to be finite, Rhat ≤ 1.01,
+The monitored parameter diagnostics must be finite and satisfy R-hat ≤ 1.01,
 bulk ESS ≥ 400 and tail ESS ≥ 400. Dictionary occupancy is reviewed separately.
-Finite diagnostic ranges do not hide undefined entries. Target diagnostics
-complement the full-chain screen and cannot replace it.
+Undefined diagnostics are reported explicitly. Parameter diagnostics and scientific-target
+precision are assessed separately; neither pass count certifies every posterior quantity.
 
 ```{r convergence, eval=has_results, echo=FALSE, results='asis'}
 table_html(a$convergence)
@@ -235,10 +235,10 @@ if(!is.null(a$artifact_manifest))table_html(a$artifact_manifest[,c('label','file
 
 </details>
 
-### Scientific-target traceplots and Monte Carlo precision
+### Scientific-target precision
 
-The optional `--ess-min=100` setting extends the final planned fit until monitored
-scientific bulk and tail ESS both exceed 100. The default is `NULL`. Actual
+The optional `--ess-min=100` setting extends the final planned fit until bulk and
+tail ESS for the monitored functions both exceed 100. The default is `NULL`. Actual
 per-fit iterations appear in the convergence tables; nominal stage names retain
 the initially requested budget. This precision rule does not certify convergence.
 
@@ -274,11 +274,12 @@ Each row assesses one plotted quantity and calibration condition. **R-hat**
 compares chains; **bulk/tail ESS** measure effective sample counts; **MCSE** is
 Monte Carlo error of the estimated posterior mean, not prediction error or a
 posterior interval width. The mean and posterior SD describe that target's
-posterior variation. These are group-mean imaging targets, not individual-U scores.
-The m(x,c) target uses response units. U means use the unanchored model scale
+posterior variation. These diagnostics concern means of the missing training inputs, not individual
+imputation errors.
+The m(x,c) target uses response units. U means use the working coordinate
 at O0 and the physical units recorded in metadata at O20/O50.
 Function targets use the selected states stated above; imaging targets use full
-retained chains. The table does not replace the full-fit CORE assessment.
+retained chains. The table does not replace the parameter diagnostics.
 
 <details><summary>Supplementary: integration check and target diagnostics across folds</summary>
 
@@ -308,7 +309,7 @@ if(nrow(d))table_html(d[,setdiff(names(d),'source_directory'),drop=FALSE])
 if(nrow(a$stage_scores))table_html(adni_summary(a$stage_scores,c('stage','cell'),c('RMSE_SD','MAE_SD','CRPS_SD')))
 exceptions<-a$parameters[!is.finite(a$parameters$rhat)|!is.finite(a$parameters$ess_bulk)|!is.finite(a$parameters$ess_tail)|
  a$parameters$rhat>1.01|a$parameters$ess_bulk<400|a$parameters$ess_tail<400,,drop=FALSE]
-cat('**Parameter-by-fit exceptions:** ',nrow(exceptions),'. Complete parameter tables remain beside the report.\n\n',sep='')
+cat('**Parameter diagnostics outside the stated thresholds:** ',nrow(exceptions),'. Complete parameter tables remain beside the report.\n\n',sep='')
 ```
 
 </details>
@@ -322,7 +323,7 @@ Y SD before fold aggregation. Fold counts remain visible. Entries use
 **mean (sample SD)**, following the Ocean report's display format.
 
 **Bold** identifies the lowest error within the comparable information group,
-including unconverged methods. `*` beside EIV-GP indicates failure of CORE; beside
+including unconverged methods. `*` beside EIV-GP indicates that the stated MCMC diagnostic criteria were not met; beside
 a baseline it indicates at least one flagged optimizer return. Missing or
 unexposed optimizer diagnostics are not reclassified as convergence.
 
@@ -358,23 +359,23 @@ The observable mean is
  m(x,c)=\int f(x,u)\,Q(du\mid c).
 \]
 The working input model is independent of X. Observable means integrate over
-ordinally compatible U; calibrated response surfaces condition on actual U.
+the conditional distribution of U given C; response surfaces condition on measured U.
 Neither is a causal effect.
 
 ### Observable mean m(x,c)
 
 Slices vary the first X coordinate across its training 10th–90th percentiles and
 C1 across native grades; other X coordinates use training medians and other C
-items use the modal observed joint profile. Native comparators predict on exactly
+items use the modal observed joint profile. UC-GP, LVGP and EzGP predict on exactly
 the same slice. Some displayed combinations may have limited joint support.
 EIV bands are pointwise posterior intervals including conditional GP uncertainty;
-native lines are point predictions. These bands are not noisy-Y prediction intervals.
+competitor curves are point predictions. These bands are not noisy-Y prediction intervals.
 
 ```{r observable-mean, eval=has_results, echo=FALSE, fig.width=11, fig.height=7}
 if(!is.null(a$functionals))print(a$functionals$mean_plot)
 ```
 
-### Calibrated response function f(x,u)
+### Calibrated response f(x,u)
 
 Curves or surfaces hold X at its training median and vary the U coordinates over
 calibration-training 10th–90th percentiles. Other U coordinates, if supplied,
@@ -410,12 +411,12 @@ table_html(adni_u_table(a$U_metrics))
 if(!is.null(a$plots$common_hidden))table_html(a$plots$common_hidden)
 ```
 
-The common-hidden comparison scores both calibration levels on exactly the
-O50-hidden training rows. C1-mean references use revealed calibration U only,
+The common-subject comparison scores both calibration levels on
+participants whose training U is withheld under O50. The reference mean within each C1 level uses revealed calibration U only,
 with an overall calibration-mean fallback for unsupported grades. Reported gains
 use the RMS of fold RMSEs, rather than selecting favorable participants.
 
-### Prospective input recovery without test Y
+### Prospective input inference
 
 ```{r prospective-u, eval=has_results, echo=FALSE, results='asis'}
 table_html(adni_u_table(a$prospective_metrics))
@@ -428,14 +429,14 @@ Gray histograms and rugs show their measured references; the solid curve is the
 equally weighted posterior mixture using 128 saved draws per person. The dashed
 curve shows posterior means and can reveal shrinkage; it is **not** the posterior
 distribution of U. Axes use that fold's full-training reference SD for evaluation.
-O0 is unanchored and is not overlaid with physical imaging references. Coverage
+O0 uses a working coordinate and is not overlaid with physical imaging references. Coverage
 and width remain individual-interval assessments, separate from marginal spread.
 
 ```{r distributions, eval=has_results, echo=FALSE, fig.width=11, fig.height=6}
 if(!is.null(a$plots$input_distribution))print(a$plots$input_distribution)
 ```
 
-### Class-specific imputation calibration
+### Class-specific imputation summaries
 
 Class-specific scores below summarize the saved folds. The supplementary
 histograms and posterior curves use the configured imputation display fold, conditional on C1.
@@ -489,7 +490,7 @@ causality or turn this cross-sectional task into replacement prediction.
 ```{r provenance, eval=has_results, echo=FALSE, results='asis'}
 table_html(data.frame(Fitting_package_version=if(is.null(a$source$fit_package_version))'saved fitting record'else a$source$fit_package_version,
  Analysis_package_version=as.character(packageVersion('eivGP')),new_fit=FALSE,stage=a$stage))
-if(length(a$source$baseline_overrides))cat('Some native comparator fits have separately recorded recovery provenance; see the method-status table.\n\n')
+if(length(a$source$baseline_overrides))cat('Some competitor fits have separately recorded optimization settings; see the method-status table.\n\n')
 ```
 
 ```{r session, echo=FALSE}

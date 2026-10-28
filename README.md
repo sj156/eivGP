@@ -340,8 +340,8 @@ Rscript tools/oai-report.R --profile=paper --cores=16
 The report follows the same seven sections as ADNI: settings, data/C definitions
 and illustrations, numerical diagnostics, OI/CC prediction, response functions,
 training-U imputation and reproducibility. `oai-report.R` reads saved fits only;
-`--reuse-only=true` also makes either method script saved-only. Supplied test-U
-mask provenance is retained, including disclosure of outcome-based selection.
+`--reuse-only=true` also makes either method script saved-only. All methods read
+the fixed observation masks supplied with the prepared inputs.
 
 #### Where OAI results are saved
 

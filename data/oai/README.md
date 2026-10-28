@@ -63,12 +63,9 @@ overwritten; no rare level is silently merged. Input validation requires each
 native grade in every full training fold. Check calibration-category support
 separately for small CC training sets.
 
-A newly prepared cohort is a new allocation; it does not recreate a separately
-supplied frozen bundle with documented calibration repairs or selected test masks.
-To reproduce that design, use the supplied bundle unchanged. Optional
-`test_U_selection.outcome_selected=true` and `test_U_design` describe prior
-outcome-based revelation selection and trigger an explicit exploratory notice;
-the workflow does not implement outcome-guided mask search.
+A newly prepared cohort is a new allocation. For reproduction, use the supplied
+frozen bundle unchanged rather than running preparation again. All methods read
+the same training-calibration and test-U masks directly from its protocols.
 
 ## 3. Keep execution records local
 

@@ -20,7 +20,7 @@ as U, fixed-location medial radiographic joint-space width as Y, continuous
 age/BMI/height as X, and eight native central-reading radiographic grades as C.
 Only the documented adjacent lateral-femoral-sclerosis grades are pooled in the
 supplied cohort. Metadata provides all coordinate labels, grade maps and
-selection provenance; another supplied p/q/d configuration does not require
+observation design; another supplied p/q/d configuration does not require
 rewriting the fitting code.
 
 ## 2. Paper execution
@@ -91,9 +91,7 @@ retain their old paths. Use `--output` consistently for a nondefault root.
 OI predicts all held-out participants from (X,C). CC baselines train only on
 revealed calibration U and use (X,U,C); EIV conditions on the same held-out U in
 f(X,U). Every CC method uses the identical supplied known-U test subset. The
-workflow does not search or optimize test masks. Metadata records test revelation
-separately from training calibration; outcome-selected supplied masks are
-explicitly labelled exploratory in the report.
+fixed observation masks are read directly from the prepared protocols.
 
 Training-U recovery uses hidden training rows and may condition on training Y;
 prospective recovery uses test C without test Y. O0 has no physical-U error score.

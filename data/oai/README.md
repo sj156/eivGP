@@ -56,7 +56,7 @@ native C mappings, coordinate definitions and fixed seeds:
 Rscript tools/oai-prepare-folds.R /local/cohort.csv /local/DATASET.json data/oai
 ```
 
-Preparation reuses the ADNI algorithm: C/X-only balanced folds and proportional
+Preparation uses C/X-only balanced folds and proportional
 random within-stratum nested 20/50 masks. The default OAI example uses joint
 C1/C2 strata. Y/U do not choose folds or masks. Existing prepared folds are never
 overwritten; no rare level is silently merged. Input validation requires each

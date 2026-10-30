@@ -39,13 +39,13 @@ if(is.null(a)&&params$action=='report') {
   data_dir<-if(nzchar(params$data_dir))params$data_dir else file.path(repository_dir,'data/oai')
   output_dir<-if(nzchar(params$output_dir))params$output_dir else oai_default_output('oai',params$profile,repository_dir)
   settings<-oai_settings(params$profile,params$cores,representative_fold=params$representative_fold,appendix=params$appendix)
-  a<-adni_report_prepare(repository_dir,data_dir,output_dir,settings,
+  a<-oai_report_prepare(repository_dir,data_dir,output_dir,settings,
     if(nzchar(params$report_source))params$report_source else NULL,output_dir)
 }
 has_results<-!is.null(a)
 if(has_results)api$oai_metadata<-a$metadata
 mask_notice<-oai_mask_notice(a)
-table_html<-function(x,caption='',note='')cat(adni_table_html(x,caption,note),'\n\n')
+table_html<-function(x,caption='',note='')cat(oai_table_html(x,caption,note),'\n\n')
 ```
 
 ## 1. Computation settings
@@ -77,7 +77,7 @@ if(has_results) {
 
 | Stage | Dependencies and work | Scheduling |
 |---|---|---|
-| Fit | Frozen folds → EIV fits and original categorical-input/complete-case comparators | One shared CPU budget; bounded resident fit objects |
+| Fit | Frozen folds → EIV fits and original categorical-input/complete-case comparators | CPU budget per command; EIV and competitor groups may run concurrently |
 | Predict | Saved fits → seeded response draws, intervals and scores | Workers borrow the same allocation |
 | Functionals | Saved posterior → observable means, calibrated surfaces and target traces | Read-only, deterministic selected states and seeds |
 | Report assets | Scores → tables, imputation and diagnostic figures | Cached against source and fit hashes |
@@ -107,11 +107,11 @@ the supplied metadata and protocols.
 
 ```{r C-definitions, echo=FALSE, results='asis'}
 if(has_results) {
-  c_table<-adni_C_dictionary(a$protocol$C_order,a$protocol$m_vec,a$metadata$C_labels)
+  c_table<-oai_C_dictionary(a$protocol$C_order,a$protocol$m_vec,a$metadata$C_labels)
   cat('**All ',nrow(c_table),' items below enter the model**, in the displayed C-column order. They are not averaged into a score or discretized from Y or U.\n\n',sep='')
 }else {
   example<-jsonlite::fromJSON(file.path(repository_dir,'data/oai/DATASET.example.json'))
-  c_table<-adni_C_dictionary(example$C_order,example$m_vec,example$C_labels)
+  c_table<-oai_C_dictionary(example$C_order,example$m_vec,example$C_labels)
   cat('**Default metadata example:** ',example$population,'. The private input protocol determines the actual cohort and C columns.\n\n',sep='')
 }
 table_html(c_table)
@@ -243,8 +243,9 @@ per-fit iterations appear in the convergence tables; nominal stage names retain
 the initially requested budget. This precision rule does not certify convergence.
 
 ```{r full-history-scientific-traces, eval=has_results, echo=FALSE, out.width='100%'}
-full_history <- getFromNamespace('mixedgp_application_trace_report','eivGP')(
-  a$output_dir, adni_path(a$output_dir,'reports','scientific-traces'))
+full_history <- if(a$group=='competitors')character()else
+ getFromNamespace('mixedgp_application_trace_report','eivGP')(
+  a$output_dir, file.path(a$report_dir,'scientific-traces'))
 if(length(full_history))knitr::include_graphics(full_history[grepl('[.]png$',full_history)],rel_path=FALSE)
 ```
 
@@ -266,7 +267,7 @@ if(!is.null(a$functionals))print(a$functionals$trace_plot)
 
 ```{r target-diagnostics, eval=has_results, echo=FALSE, results='asis'}
 if(!is.null(a$functionals)) {
- table_html(adni_target_table(a),paste0('Scientific-target diagnostics: fold ',a$settings$representative_fold))
+ table_html(oai_target_table(a),paste0('Scientific-target diagnostics: fold ',a$settings$representative_fold))
 }
 ```
 
@@ -289,9 +290,9 @@ the original estimate; it does not establish MCMC convergence.
 
 ```{r target-diagnostics-full, eval=has_results, echo=FALSE, results='asis'}
 if(!is.null(a$functionals)) {
- table_html(adni_integration_table(a),'Latent-integration check: representative fold')
- table_html(adni_target_table(a,all_folds=TRUE),'Scientific-target diagnostics: all saved folds')
- table_html(adni_integration_table(a,all_folds=TRUE),'Latent-integration checks: all saved folds')
+ table_html(oai_integration_table(a),'Latent-integration check: representative fold')
+ table_html(oai_target_table(a,all_folds=TRUE),'Scientific-target diagnostics: all saved folds')
+ table_html(oai_integration_table(a,all_folds=TRUE),'Latent-integration checks: all saved folds')
 }
 ```
 
@@ -306,7 +307,7 @@ if(!is.null(a$functionals))print(a$functionals$raw_trace_plot)
 ```{r numerical-details, eval=has_results, echo=FALSE, results='asis'}
 d<-a$method_status
 if(nrow(d))table_html(d[,setdiff(names(d),'source_directory'),drop=FALSE])
-if(nrow(a$stage_scores))table_html(adni_summary(a$stage_scores,c('stage','cell'),c('RMSE_SD','MAE_SD','CRPS_SD')))
+if(nrow(a$stage_scores))table_html(oai_summary(a$stage_scores,c('stage','cell'),c('RMSE_SD','MAE_SD','CRPS_SD')))
 exceptions<-a$parameters[!is.finite(a$parameters$rhat)|!is.finite(a$parameters$ess_bulk)|!is.finite(a$parameters$ess_tail)|
  a$parameters$rhat>1.01|a$parameters$ess_bulk<400|a$parameters$ess_tail<400,,drop=FALSE]
 cat('**Parameter diagnostics outside the stated thresholds:** ',nrow(exceptions),'. Complete parameter tables remain beside the report.\n\n',sep='')
@@ -330,13 +331,13 @@ unexposed optimizer diagnostics are not reclassified as convergence.
 ### Ordinal-input prediction: OI
 
 ```{r oi-prediction, eval=has_results, echo=FALSE, results='asis'}
-cat('<div style="overflow-x:auto">',adni_metric_table(a,'OI'),'</div>\n\n')
+cat('<div style="overflow-x:auto">',oai_metric_table(a,'OI'),'</div>\n\n')
 ```
 
 ### Complete-case comparison
 
 ```{r cc-prediction, eval=has_results, echo=FALSE, results='asis'}
-cat('<div style="overflow-x:auto">',adni_metric_table(a,'CC-known'),'</div>\n\n')
+cat('<div style="overflow-x:auto">',oai_metric_table(a,'CC-known'),'</div>\n\n')
 ```
 
 The known-U test subset is fixed and shared across methods. CC conclusions remain
@@ -346,8 +347,8 @@ results are retained in saved artifacts but are not displayed in this report.
 <details><summary>Supplementary: complete prediction metrics</summary>
 
 ```{r full-prediction-metrics, eval=has_results, echo=FALSE, results='asis'}
-cat('<div style="overflow-x:auto">',adni_metric_table(a,'OI',full=TRUE),'</div>\n\n')
-cat('<div style="overflow-x:auto">',adni_metric_table(a,'CC-known',full=TRUE),'</div>\n\n')
+cat('<div style="overflow-x:auto">',oai_metric_table(a,'OI',full=TRUE),'</div>\n\n')
+cat('<div style="overflow-x:auto">',oai_metric_table(a,'CC-known',full=TRUE),'</div>\n\n')
 ```
 
 </details>
@@ -407,7 +408,7 @@ if(!is.null(a$plots$imputation))print(a$plots$imputation)
 ```
 
 ```{r training-u-scores, eval=has_results, echo=FALSE, results='asis'}
-table_html(adni_u_table(a$U_metrics))
+table_html(oai_u_table(a$U_metrics))
 if(!is.null(a$plots$common_hidden))table_html(a$plots$common_hidden)
 ```
 
@@ -419,7 +420,7 @@ use the RMS of fold RMSEs, rather than selecting favorable participants.
 ### Prospective input inference
 
 ```{r prospective-u, eval=has_results, echo=FALSE, results='asis'}
-table_html(adni_u_table(a$prospective_metrics))
+table_html(oai_u_table(a$prospective_metrics))
 ```
 
 ### Marginal distribution of hidden training inputs

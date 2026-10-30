@@ -37,7 +37,7 @@ paper/
 tools/          # flat application scripts; no application subdirectories
   adni-tools.R  # all ADNI application functions
   ocean-tools.R # all Ocean application functions
-  oai-tools.R   # OAI adapter reusing the prepared-fold workflow
+  oai-tools.R   # all OAI application functions
   adni-eivGP.R, adni-competitors.R, adni-report.R
   ocean-eivGP.R, ocean-competitors.R, ocean-report.R
   oai-eivGP.R, oai-competitors.R, oai-report.R
@@ -312,8 +312,8 @@ protocols. Another prepared cohort can use `data/oai_NAME/` with `--dataset=NAME
 **D2. Fit and analyze EIV-GP.**
 
 ```sh
-Rscript tools/oai-eivGP.R --plan=true --profile=paper --cores=16
-Rscript tools/oai-eivGP.R --profile=paper --cores=16
+Rscript tools/oai-eivGP.R --plan=true --profile=paper --cores=8
+Rscript tools/oai-eivGP.R --profile=paper --cores=8
 ```
 
 Paper sampling uses five folds, min(cores,4) chains and initially 50,000
@@ -321,20 +321,25 @@ iterations including 5,000 burn-in. OAI defaults are HMC at O0/O20 and ESS at O5
 `--ess-min=100` enables scientific-target continuation. Explicit numerical
 overrides are recorded in the fitting identity.
 
-**D3. Fit and analyze competitors.** Run sequentially against the same root:
+**D3. Fit and analyze competitors.** This command may run in a second Terminal
+while D2 is running, using the same result root:
 
 ```sh
-Rscript tools/oai-competitors.R --profile=paper --cores=16
+Rscript tools/oai-competitors.R --profile=paper --cores=8
 ```
 
 This fits UC-GP, LVGP and EzGP with ordinal inputs and matched complete-case
 inputs. Use only `--cores` for resources: EIV jobs use complete chain-sized groups
-and competitor jobs use one core each, following the current ADNI/Ocean workflow.
+and competitor jobs use one core each. The two commands have separate CPU
+budgets: 8 + 8 requests 16 workers in total, so choose their sum to fit the
+machine and available memory. Each prints job starts, completions and failures;
+`results/oai/PROGRESS_eivGP.txt` and `PROGRESS_competitors.txt` retain the latest
+group status. OAI application functions are self-contained in `tools/oai-tools.R`.
 
-**D4. Assemble and inspect the paper report.**
+**D4. Assemble and inspect the paper report.** After both fitting commands finish:
 
 ```sh
-Rscript tools/oai-report.R --profile=paper --cores=16
+Rscript tools/oai-report.R --profile=paper --cores=8
 ```
 
 The report follows the same seven sections as ADNI: settings, data/C definitions

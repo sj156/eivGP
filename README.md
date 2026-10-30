@@ -25,7 +25,7 @@ eivGP/src/      # analytic GP/ordinal gradients and leapfrog integration
   plotting.R    # summaries, comparison tables, figures, report generation
 data/ocean_silicate/
   n200/         # frozen 200-profile data and five-fold inputs
-  n500/         # updated 500-profile data and five-fold inputs
+  n500/         # frozen 500-profile data and five-fold inputs
   n1000/        # raw selected 1000-profile cohort
 data/adni/
   inputs/       # local prepared ADNI folds; only .gitkeep is versioned
@@ -228,10 +228,9 @@ Rscript tools/ocean-report.R --profile=quick --dataset=ocean200 --cores=8 --outp
 | `results/ocean500_pilot/` | Separate short-chain workflow check |
 | `paper/applications/ocean.html` | Analysis-plan HTML for the supplied calibration design |
 
-New roots use `ocean-flat-v1`: `eiv_foldNN_O*/`, `baseline_foldNN/` and
+Ocean results use `ocean-flat-v1`: `eiv_foldNN_O*/`, `baseline_foldNN/` and
 `cc_foldNN_O*_METHOD/` are siblings, with `data/`, `logs/`, `reports/` and `_meta/`
-for shared material. Existing unmarked roots keep their layout. Migration is
-explicit and dry-run by default; see the
+for shared material. See the
 [Ocean reproduction and storage guide](paper/applications/README_ocean.md).
 
 ### C. ADNI application
@@ -291,10 +290,10 @@ as Ocean. `--reuse-only=true` rebuilds a method's saved report without fitting;
 | `results/adni/` | Paper fits, predictions, diagnostics and `adni.html` |
 | `paper/applications/adni.html` | Versioned data-free plan page |
 
-New roots use `adni-flat-v1`, matching Ocean's task folders and `data/`, `logs/`,
-`reports/`, `_meta/` organization. Earlier stages stay inside their EIV task;
-final fit, prediction and diagnostic files sit together. Existing unmarked roots
-retain their original paths; select old folders explicitly with `--output`.
+ADNI results use `adni-flat-v1`, with task folders and `data/`, `logs/`,
+`reports/`, `_meta/` directories. Intermediate sampling stages stay inside their
+EIV task; final fit, prediction and diagnostic files sit together. `--output`
+selects the result root.
 All participant inputs, frozen snapshots, fits and empirical reports stay local.
 See the [ADNI reproduction and storage guide](paper/applications/README_adni.md).
 
@@ -342,8 +341,8 @@ group status. OAI application functions are self-contained in `tools/oai-tools.R
 Rscript tools/oai-report.R --profile=paper --cores=8
 ```
 
-The report follows the same seven sections as ADNI: settings, data/C definitions
-and illustrations, numerical diagnostics, OI/CC prediction, response functions,
+The report covers settings, data/C definitions and illustrations, numerical
+diagnostics, OI/CC prediction, response functions,
 training-U imputation and reproducibility. `oai-report.R` reads saved fits only;
 `--reuse-only=true` also makes either method script saved-only. All methods read
 the fixed observation masks supplied with the prepared inputs.
@@ -356,8 +355,8 @@ the fixed observation masks supplied with the prepared inputs.
 | `results/oai/` | Paper fits, predictions, diagnostics and `oai.html` |
 | `paper/applications/oai.html` | Versioned data-free plan page |
 
-New result roots use the same flat task folders and `data/`, `logs/`, `reports/`
-and `_meta/` layout as ADNI/Ocean. Participant inputs, fits and empirical reports
+OAI results use flat task folders and `data/`, `logs/`, `reports/` and `_meta/`
+directories. Participant inputs, fits and empirical reports
 stay local. See the [OAI reproduction and storage guide](paper/applications/README_oai.md).
 
 ## 5. Check and interpret results
@@ -366,8 +365,9 @@ For all three applications, `--output` overrides the result root and `--data-roo
 overrides prepared inputs. Use the same dataset, profile and path flags for
 fitting and reporting. Completion, optimizer status, scientific-target ESS,
 R-hat, MCSE and traces are separate checks. ESS thresholds and a completed
-workflow do not establish convergence. Exact historical numerical values require
-the original saved fits and matching environment; new runs reproduce the design.
+workflow do not establish convergence. Exact numerical reproduction requires
+matching seeds, settings, package versions and numerical environment. Saved fits
+preserve the posterior histories used for reporting.
 
 A synthetic ADNI check exercises the actual three CLI entrypoints, six comparator
 scores, HTML, flat storage and saved-fit reuse without participant data:

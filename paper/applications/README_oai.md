@@ -1,10 +1,10 @@
 # OAI reproduction and storage guide
 
-The application uses the same six-file tools layout and prepared-fold contract
-as ADNI/Ocean. All OAI application functions live in `tools/oai-tools.R`; the OAI
-entrypoints do not load ADNI tools. Samplers, numerical prediction functions,
-native comparator implementations and shared CPU-pool utilities remain in the
-package.
+The OAI application has six command-line and helper files for data preparation,
+EIV-GP fitting, competitor fitting and report generation. `tools/oai-tools.R`
+defines the application functions for inputs, execution and reporting. The
+eivGP package supplies the samplers, numerical prediction functions, native
+comparator implementations and shared CPU-pool utilities.
 
 ## 1. Install and supply inputs
 
@@ -33,7 +33,7 @@ Rscript tools/oai-report.R --profile=paper --cores=8
 
 The EIV-GP and competitor commands may run concurrently in two Terminals against
 the same output root. Run the final report command after both finish. `--cores`
-is the sole resource control, is per command, and is capped at detected capacity. New fits use
+is the sole resource control, is per command, and is capped at detected capacity. EIV-GP fits use
 min(cores,4) chains; above four cores, multiples of four permit complete resident
 EIV groups. Each native competitor job uses one core. Lower the budget if memory
 is limited: two commands each requesting eight cores need a combined budget of
@@ -69,28 +69,28 @@ or omit it to complete all remaining folds in the same output. Completed
 verified jobs are reused. `--folds` instead defines the study scope and must not
 be changed inside an existing result root.
 
-New paper runs save recoverable per-chain states at 5,000 (end of burn-in), then
-publish the first full `fit.rds` at 10,000. The full fit is atomically replaced at
+With the default paper checkpoint settings, recoverable per-chain states are
+saved at 5,000 (end of burn-in). The application then
+publishes the first full `fit.rds` at 10,000. The full fit is atomically replaced at
 15,000, 20,000, ..., 50,000, retaining all post-burn draws and auxiliary probit S
 scores. Each task has `mcmc_progress.csv` and `mcmc_history.csv`; initial per-chain
-timing is under its `checkpoints/` directory. Existing runs keep their recorded
-checkpoint cadence. Continuation preserves the sampler and RNG states rather
-than resetting the seed or discarding another warm-up. Exact continuation
+timing is under its `checkpoints/` directory. The run manifest records the first
+checkpoint and checkpoint interval. Continuation follows those recorded settings
+and preserves the sampler state, RNG state and retained draws. Exact continuation
 requires the same package and numerical environment.
 
-Finish or stop commands using the older executor before updating this checkout.
-Legacy exclusive locks are reported explicitly. Confirm their owner and workers
-have stopped before clearing stale locks. Existing fit files and original
-fitting identities remain intact; an execution-source update is recorded
-separately only when package modules, numerical settings and frozen inputs match.
+Each result root has a frozen manifest and fitting identity. Reuse and
+continuation require matching package modules, numerical settings and input
+hashes. A lock records its owner's PID and host. After an interruption, confirm
+that the owner and its workers have stopped before clearing a residual lock.
 
 ## 3. Pilot and quick checks
 
 `--profile=pilot` uses the same fivefold workflow with a single 1,500-iteration
 stage, burn 500 and 250 prediction states per chain. With at least four cores this
 is four chains retaining 1,000 states each. Competitor controls remain the regular
-paper controls. Paper mode is a separate output root, not a reinterpretation of
-historical pilot fits.
+paper controls. Pilot and paper profiles use separate output roots, each with
+its sampling budget and burn-in recorded in the run manifest.
 
 `--profile=quick` shortens the synthetic check and competitor optimization; it is
 not a scientific performance comparison. A local synthetic check exercises the
@@ -130,9 +130,7 @@ The combined saved report is `results/oai/oai.html`. Method pages are
 | `data/`, `_meta/`, `logs/` | Verified private input snapshots, identities, receipts and task logs |
 | `reports/` | Method pages, prediction summaries, paper exports and scientific diagnostics |
 
-New result roots use `oai-flat-v1`; existing `adni-flat-v1` and unmarked roots
-remain readable without moving their fits. Task names and folder shapes match
-ADNI. Use `--output` consistently for a nondefault root.
+Use `--output` consistently to select the result root for fitting and reporting.
 
 ## 5. Interpretation and provenance
 

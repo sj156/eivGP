@@ -7,7 +7,7 @@ model fits and empirical reports.
 
 ## 1. Supply a frozen input bundle
 
-Use the same flat format as ADNI:
+Place the metadata, fold CSVs and protocols directly in this directory:
 
 ```text
 data/oai/
@@ -38,8 +38,7 @@ revelation are nested in O50. O0 uses an unanchored model scale; O20/O50 use
 sufficient-rank physical calibration. Protocols include `plan_id`, `p,q,d`,
 coordinate orders, `m_vec`, level maps, fold/cell/counts, `ident`, `standardize_U`,
 `test_U_available_RID`, CSV MD5s and fixed task seeds. Keep supplied bytes fixed.
-Older `MC/foldNN/O*/private/` trees remain readable, but new preparation and
-result snapshots are flat.
+Preparation and result snapshots use the flat filenames shown above.
 
 The default metadata describes baseline V00JSW225, baseline V00WMTFMTH, age/BMI/
 height and eight native osteophyte/sclerosis grades. Quantitative MRI, quantitative
@@ -63,8 +62,8 @@ overwritten; no rare level is silently merged. Input validation requires each
 native grade in every full training fold. Check calibration-category support
 separately for small CC training sets.
 
-A newly prepared cohort is a new allocation. For reproduction, use the supplied
-frozen bundle unchanged rather than running preparation again. All methods read
+For reproduction, use the supplied frozen bundle unchanged rather than running
+preparation again. All methods read
 the same training-calibration and test-U masks directly from its protocols.
 
 ## 3. Keep execution records local

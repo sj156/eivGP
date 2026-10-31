@@ -137,7 +137,7 @@ write.csv(
 p_mean <- mean_summary |>
   filter(metric %in% mean_point_metrics) |>
   ggplot(aes(x = n_calib, y = mean, color = method, group = method)) +
-  geom_line(linewidth = 0.85) +
+  geom_line(data = function(z) mixedgp_line_rows(z, c("method", "metric")), linewidth = 0.85) +
   geom_point(size = 2) +
   geom_errorbar(
     aes(ymin = mean - 1.96 * se, ymax = mean + 1.96 * se),
@@ -178,7 +178,7 @@ p_mc <- ggplot(
   curve_summary,
   aes(x = n_calib, y = mean, color = method, group = method)
 ) +
-  geom_line(linewidth = 0.85) +
+  geom_line(data = function(z) mixedgp_line_rows(z, c("method", "metric")), linewidth = 0.85) +
   geom_point(size = 2) +
   geom_errorbar(
     aes(ymin = mean - 1.96 * se, ymax = mean + 1.96 * se),
@@ -622,7 +622,7 @@ write.csv(
 p_mean <- mean_summary |>
   filter(metric %in% c("RMSE", "MAE", "Bias")) |>
   ggplot(aes(n_calib, mean, color = method, group = method)) +
-  geom_line(linewidth = 0.8) +
+  geom_line(data = function(z) mixedgp_line_rows(z, c("method", "scenario_label", "metric")), linewidth = 0.8) +
   geom_point(size = 1.8) +
   geom_errorbar(
     aes(ymin = mean - 1.96 * se, ymax = mean + 1.96 * se),
@@ -1240,7 +1240,7 @@ p_primary <- ggplot(
   plot_summary,
   aes(x = n_calib, y = mean, color = method, group = method)
 ) +
-  geom_line(linewidth = 0.8) +
+  geom_line(data = function(z) mixedgp_line_rows(z, c("method", "metric")), linewidth = 0.8) +
   geom_point(size = 1.8) +
   geom_errorbar(
     aes(ymin = mean - 1.96 * se, ymax = mean + 1.96 * se),
@@ -1477,11 +1477,30 @@ mixedgp_report_run <- function(run_dir, action = c("report", "summarize", "plot"
 }
 
 
+# A calibration curve needs two distinct finite x values within the same
+# method and facet. Singletons remain in the point/error-bar layers. Keep NA
+# rows in eligible groups so missing values do not silently bridge a gap.
+mixedgp_line_rows <- function(data, groups, x="n_calib", y="mean") {
+  stopifnot(is.data.frame(data),all(c(groups,x,y)%in%names(data)))
+  if(!nrow(data))return(data)
+  key<-if(length(groups))do.call(interaction,c(lapply(data[groups],function(v)
+    match(v,unique(v))),list(drop=TRUE,lex.order=TRUE)))else rep(1L,nrow(data))
+  finite_x<-if(is.numeric(data[[x]]))is.finite(data[[x]])else!is.na(data[[x]])
+  valid<-finite_x & is.finite(data[[y]])
+  keep<-rep(FALSE,nrow(data))
+  for(ids in split(seq_len(nrow(data)),key)) {
+    if(length(unique(data[[x]][ids[valid[ids]]]))>=2L)keep[ids]<-TRUE
+  }
+  data[keep,,drop=FALSE]
+}
+
 plot_comparison <- function(summary, metric="RMSE") {
   if(!requireNamespace("ggplot2",quietly=TRUE)) stop("Install ggplot2.")
   z<-summary[summary$metric==metric,,drop=FALSE]
   ggplot2::ggplot(z,ggplot2::aes(x=factor(n_calib),y=mean,color=method,group=method))+
-    ggplot2::geom_point()+ggplot2::geom_line()+ggplot2::facet_wrap(~cell_id)+
+    ggplot2::geom_point()+
+    ggplot2::geom_line(data=function(z)mixedgp_line_rows(z,c("cell_id","method")))+
+    ggplot2::facet_wrap(~cell_id)+
     ggplot2::scale_x_discrete(labels=function(x) ifelse(is.na(x),"Not used",x))+
     ggplot2::theme_minimal()+ggplot2::labs(x="Calibration size",y=metric,color="Method",
       caption="Not used: the method does not use calibration measurements.")

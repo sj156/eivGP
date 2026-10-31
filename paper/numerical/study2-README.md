@@ -179,3 +179,46 @@ fixed; incidental measurement-parameter draws from the GP fit are not substitute
 for it. Outer summaries average the available inner GP draws and retain their
 finite Monte Carlo error; they are not every measurement-chain transition.
 The plots and diagnostics are generated from saved draws, without extra MCMC.
+
+
+## Compact CUT storage and checkpoint cleanup
+
+New Study II calibrated runs default to `--retain-draws=false` in both lane
+scripts. The response-free measurement sampler computes chain-aware diagnostics
+and exact imputation means/intervals from every post-warmup draw, then saves only
+those summaries, selected outer states, terminal states/RNG, provenance and
+verification fingerprints. Imputation scores use these summaries without changing
+their definition. The four completed measurement checkpoints are removed only
+after the final artifact is saved, read back and verified against all four chains.
+Incomplete, locked or mismatched checkpoints remain recoverable. Cached completed
+jobs retry cleanup during `run`; `report` does not clean or fit.
+
+Conditional GP histories are temporary working files. Once diagnostics, requested
+scientific trace assets and selected integration states have been published, the
+verified full conditional fit and redundant restart files are retired. Selected
+states and diagnostics remain available for prediction/reports. Use
+`--retain-draws=true` from the start to retain full measurement and conditional GP
+histories for arbitrary later diagnostics; it cannot reconstruct previously
+removed traces. Completed redundant checkpoints are retired with either policy.
+The original joint EIV-GP fit archives are still needed for scientific ESS
+continuation and the independent FULL evaluation; this CUT retention option does
+not remove them or external supplied archives.
+
+For old outputs, use the maintenance script on a **stopped** reference directory
+containing both `checkpoints/` and `mechanism/`. It verifies the saved output
+rather than restarting sampling, and does not alter historical protocol identity:
+
+```sh
+Rscript tools/study2-checkpoints.R --output=/path/to/reference --audit-dir=/local/audits/cut-check-01
+Rscript tools/study2-checkpoints.R --output=/path/to/reference --audit-dir=/local/audits/cut-clean-01 --dry-run=false --compact-measurement=true
+```
+
+The first command only audits. The second removes verified redundant GP/CUT
+measurement checkpoints and, after successful measurement retirement, replaces
+the corresponding full measurement trace with compact summaries. Audits must use
+fresh local directories outside the results tree. Locks are never overridden.
+Historical conditional full fits without the new selected-state verification
+metadata remain unchanged. No archive is modified by installing this revision.
+New source identity still requires a new run root; maintenance does not relax
+cache compatibility or migrate unfinished runs. Install the updated checkout
+before using these commands; do not replace a library used by an active process.

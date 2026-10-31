@@ -11,6 +11,10 @@ study2_paper_workflow <- function(lane,args=list(),repo_root=getwd(),
   selected<-if(is.null(args$methods))available else strsplit(args$methods,",",fixed=TRUE)[[1]]
   if(!length(selected)||anyDuplicated(selected)||any(!selected%in%available))
     stop("Allowed methods: ",paste(available,collapse=", "))
+  # Retention is operational; both lanes use the package's compact CUT summaries.
+  retain<-if(is.null(args[["retain-draws"]]))"false"else tolower(as.character(args[["retain-draws"]]))
+  if(length(retain)!=1L||is.na(retain)||!retain%in%c("true","false"))stop("retain-draws must be true or false")
+  args[["retain-draws"]]<-retain
   args$action<-action;args$profile<-"paper"
   if(is.null(args$output))args$output<-file.path(path.expand("~/eivGP-results"),paste0("study2-",lane))
   original<-if(lane=="eivGP")intersect(selected,"FULL")else intersect(selected,c("UC-GP","LVGP","EzGP"))

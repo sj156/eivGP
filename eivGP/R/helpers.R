@@ -9131,6 +9131,7 @@ run_one_study2_replication <- function(rep_id, scenario) {
     # Save immediately: downstream diagnostics/evaluation must not lose MCMC work.
     if (isTRUE(STUDY2_CHECKPOINT_FITS) && is.null(saved_fit))
       mixedgp_save_artifact(list(identity=fit_identity,fit=fit),fit_file)
+    if(!is.null(saved_fit))mixedgp_retire_saved_checkpoints(saved_fit,fit_file)
     rm(saved_fit)
     if(!is.null(STUDY2_ESS_MIN)) {
       panel<-list(X=test$X[target_gate_test_rows,,drop=FALSE],
@@ -10459,10 +10460,28 @@ atomic_rds <- function(x,path) {
   if(!file.rename(tmp,path)) stop("Cannot publish checkpoint: ",path)
   mixedgp_retire_saved_checkpoints(x,path)
 }
-retire_conditional_fit <- function(path, states_path) {
+retire_conditional_fit <- function(path, states_path, retain_draws=FALSE) {
   saved<-readRDS(states_path)
-  # Preserve every conditional chain for later target diagnostics and continuation.
-  # The selected prediction states are an additional integration cache, not a replacement.
+  if(!isTRUE(retain_draws) && file.exists(path) &&
+     identical(saved$storage_schema,1L) && length(saved$states) &&
+     !is.null(saved$diagnostics) && !is.null(saved$source_md5) && is.list(saved$selection)) {
+    # Only a verified selected-state publication produced by this workflow qualifies.
+    if(!identical(unname(tools::md5sum(path)),saved$source_md5))
+      stop("Conditional fit changed; full fit retained: ",path)
+    fit<-F("mixedgp_read_artifact")(path)
+    if(!identical(saved$states,select_gp(fit,saved$selection$number,saved$selection$measurement)) ||
+       !identical(saved$diagnostics,fit$diagnostics))
+      stop("Conditional states or diagnostics differ; full fit retained: ",path)
+    mixedgp_retire_saved_checkpoints(fit,path)
+    ref<-attr(fit,"eivgp_restart_storage",exact=TRUE)
+    pending<-!is.null(ref) && (file.exists(file.path(ref$directory,"LOCK")) ||
+      length(list.files(ref$directory,"^chain-[0-9]+[.]rds$"))>0L)
+    if(!pending && !nzchar(Sys.readlink(path)) &&
+       identical(readRDS(states_path),saved) &&
+       identical(unname(tools::md5sum(path)),saved$source_md5)) {
+      if(unlink(path)!=0L)warning("Could not remove completed conditional fit: ",path)
+    }
+  }
   saved
 }
 hash_object <- function(x) {
@@ -10481,13 +10500,15 @@ integers <- function(x) {
 }
 settings <- function(a) {
   allowed<-c("action","profile","data-root","output","reps","calib","methods","outer","inner-draws",
-    "latent","gp-response-latent","cc-response-latent","iter","warmup","inner-iter","inner-warmup","cores","seed","full-fit-map")
+    "latent","gp-response-latent","cc-response-latent","iter","warmup","inner-iter","inner-warmup","cores","seed","full-fit-map","retain-draws")
   if(length(setdiff(names(a),allowed)))stop("Unknown option: ",paste(setdiff(names(a),allowed),collapse=","))
   get<-function(k,default)if(is.null(a[[k]]))default else a[[k]]
+  retain<-tolower(as.character(get("retain-draws","false")))
+  if(length(retain)!=1L || is.na(retain) || !retain%in%c("true","false"))stop("retain-draws must be true or false")
   quick<-identical(get("profile","paper"),"quick")
   pilot<-identical(get("profile","paper"),"pilot")
   if(!get("profile","paper")%in%c("paper","quick","pilot"))stop("profile must be paper, quick or pilot")
-  cfg<-list(full_fit_map=get("full-fit-map",""),profile=get("profile","paper"),data_root=get("data-root",Sys.getenv("EIVGP_DATA_ROOT",numerical_default_data("study2"))),
+  cfg<-list(retain_draws=identical(retain,"true"),full_fit_map=get("full-fit-map",""),profile=get("profile","paper"),data_root=get("data-root",Sys.getenv("EIVGP_DATA_ROOT",numerical_default_data("study2"))),
     output=get("output",Sys.getenv("EIVGP_MECHANISM_ROOT",numerical_default_output("study2/mechanism"))),reps=integers(get("reps",if(quick)"1"else if(pilot)"1,25"else"1:50")),
     calib=integers(get("calib","20,50")),methods=strsplit(get("methods",if(pilot)"FULL,CUT,UC-GP-CC,LVGP-CC,EzGP-CC"else"FULL,CUT,UC-GP,LVGP,EzGP,UC-GP-CC,LVGP-CC,EzGP-CC"),",",fixed=TRUE)[[1]])
   defaults<-if(quick)c(outer=4,inner_draws=1,latent=4,iter=40,warmup=20,inner_iter=40,inner_warmup=20,cores=1,seed=77101) else if(pilot)
@@ -10509,8 +10530,9 @@ settings <- function(a) {
 }
 # This API intentionally does not accept y, X, or evaluation truth.
 measurement_cut <- function(C,U_obs,cfg,seed) {
-  disk <- mixedgp_sampler_disk(list(component="cut-measurement",C=C,U_obs=U_obs,
-    iter=cfg$iter,warmup=cfg$warmup,outer=cfg$outer,seed=seed))
+  model<-list(component="cut-measurement",C=C,U_obs=U_obs,
+    iter=cfg$iter,warmup=cfg$warmup,outer=cfg$outer,seed=seed)
+  disk <- mixedgp_sampler_disk(model)
   if(!is.null(disk))on.exit(unlink(file.path(disk,"LOCK"),recursive=TRUE),add=TRUE)
   checkpoint_enabled <- is.finite(getOption("eivGP.checkpoint_seconds",Inf)) ||
     is.finite(getOption("eivGP.checkpoint_iterations",Inf))
@@ -10573,7 +10595,9 @@ measurement_cut <- function(C,U_obs,cfg,seed) {
       checkpoint(it)
     }
     checkpoint(cfg$iter,force=TRUE)
-    list(states=states,trace=trace)
+    evidence<-mixedgp_cut_chain_evidence(list(iteration=cfg$iter,state=st,states=states,
+      trace=trace,rng=F("mixedgp_rng_state")()))
+    list(states=states,trace=trace,evidence=evidence)
   }
   z<-mixedgp_parallel_lapply(1:4,run,n_cores=min(4L,cfg$cores),.preserve_rng=TRUE)
   if(any(vapply(z,inherits,logical(1),"try-error")))stop("Measurement chain failed")
@@ -10589,8 +10613,15 @@ measurement_cut <- function(C,U_obs,cfg,seed) {
   diagnostics<-posterior::summarise_draws(posterior::as_draws_array(arr[,,keep,drop=FALSE]))
   # Interleave chains, so first/second-half integration checks include every chain.
   states<-unlist(lapply(seq_len(cfg$outer/4),function(i)lapply(z,function(c)c$states[[i]])),recursive=FALSE)
-  list(states=states,diagnostics=diagnostics,trace=arr,
+  result<-list(states=states,diagnostics=diagnostics,trace=arr,
+    imputation=mixedgp_cut_imputation(arr,U_obs),
+    checkpoint=list(schema=1L,model=model,chains=lapply(z,`[[`,"evidence")),
+    provenance=list(package=as.character(utils::packageVersion("eivGP")),
+      modules=eivgp_module_identity(),R=R.version.string,rng_kind=RNGkind(),status="complete"),
     target="p(U,psi | C,U_obs); same category-probability and loading priors as FULL")
+  if(!is.null(disk))attr(result,"eivgp_cut_restart_storage")<-mixedgp_checkpoint_reference(disk)
+  if(!isTRUE(cfg$retain_draws))result<-mixedgp_compact_cut_measurement(result,U_obs)
+  result
 }
 diagnostic_pass <- function(z) {
   nrow(z)>0 && all(is.finite(z$rhat) & z$rhat<=1.01 &
@@ -10763,12 +10794,19 @@ score_result <- function(pred,dat,cal,truth,method) {
     rows[[2]]$coverage<-vapply(seq_along(truth$m),function(i)mixture_score(truth$m[i],pred$m_mean[i,],pred$m_var[i,])["coverage"],numeric(1))
     rows[[2]]$width<-vapply(seq_along(truth$m),function(i)mixture_score(truth$m[i],pred$m_mean[i,],pred$m_var[i,])["width"],numeric(1))
   }
-  if(!is.null(pred$U)) {
+  if(!is.null(pred$U)||!is.null(pred$U_summary)) {
     miss<-setdiff(seq_len(nrow(train$X)),cal)
     for(d in 1:2) {
-      u<-pred$U[,miss,d,drop=FALSE];dim(u)<-c(dim(pred$U)[1],length(miss))
-      lo<-apply(u,2,quantile,.025);hi<-apply(u,2,quantile,.975);t<-train$U[miss,d]
-      add("U",data.frame(sq_error=(colMeans(u)-t)^2,crps=NA_real_,nlpd=NA_real_,coverage=as.numeric(t>=lo&t<=hi),width=hi-lo),
+      if(!is.null(pred$U_summary)) {
+        z<-pred$U_summary[pred$U_summary$coordinate==d,,drop=FALSE]
+        if(!identical(as.integer(z$id),as.integer(miss)))stop("Imputation summary rows differ")
+        mu<-z$mean;lo<-z$lower;hi<-z$upper
+      } else {
+        u<-pred$U[,miss,d,drop=FALSE];dim(u)<-c(dim(pred$U)[1],length(miss))
+        mu<-colMeans(u);lo<-apply(u,2,quantile,.025);hi<-apply(u,2,quantile,.975)
+      }
+      t<-train$U[miss,d]
+      add("U",data.frame(sq_error=(mu-t)^2,crps=NA_real_,nlpd=NA_real_,coverage=as.numeric(t>=lo&t<=hi),width=hi-lo),
         rep("missing_training",length(miss)),rep(d,length(miss)))
       rows[[length(rows)]]$id<-miss
     }
@@ -10874,7 +10912,7 @@ mechanism_report <- function(root) {
     body<-c(body,paste0("<h2>",escape(f),"</h2>"),table(d))
   }
   if(nrow(timing))body<-c(body,"<h2>Stage wall times (seconds)</h2>",table(timing))
-  body<-c(body,"<p>Inspect measurement_diagnostics.csv and full/conditional diagnostic CSVs alongside flags. integration_stability.csv compares two subsets of prediction components; it is an integration sensitivity screen, not an R-hat or a proof of stationarity. Full chains, failure records and checkpoints are retained.</p>")
+  body<-c(body,"<p>Inspect measurement_diagnostics.csv and full/conditional diagnostic CSVs alongside flags. integration_stability.csv compares two subsets of prediction components; it is an integration sensitivity screen, not an R-hat or a proof of stationarity. Required diagnostics and selected integration states are retained. Full measurement and conditional-GP histories are opt-in; unfinished checkpoints are preserved.</p>")
   figures<-list.files(file.path(root,"cut-traces"),"[.]png$",full.names=TRUE)
   if(length(figures))body<-c(body,"<h2>CUT scientific traces (descriptive; no ESS requirement)</h2>",
     "<p>Conditional GP traces cover every retained iteration with the outer measurement state fixed. Outer traces summarize the retained integration states, with finite inner Monte Carlo error; they are not the full measurement-chain history. No fit is continued or excluded on these diagnostics.</p>",
@@ -10915,9 +10953,9 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
   pkgs<-c("eivGP","TruncatedNormal","posterior","kergp","LVGP","EzGP")
   versions<-setNames(vapply(pkgs,function(p)if(requireNamespace(p,quietly=TRUE))as.character(packageVersion(p))else"missing",character(1)),pkgs)
   # A root is one scientific configuration; job selection/cores can change on resume.
-  scientific<-cfg[setdiff(names(cfg),c("reps","methods","calib","output","data_root","cores"))]
+  scientific<-cfg[setdiff(names(cfg),c("reps","methods","calib","output","data_root","cores","retain_draws"))]
   identity<-list(settings=scientific,versions=versions,R=as.character(getRversion()),
-    code=c(mechanism=if(is.null(script_path))hash_object(body(run_mechanism)) else unname(tools::md5sum(script_path)),
+    code=c(mechanism=if(is.null(script_path))hash_object(paste(deparse(body(run_mechanism),width.cutoff=500L),collapse="\n")) else unname(tools::md5sum(script_path)),
       common=unname(tools::md5sum(file.path(NUMERICAL_REPO_ROOT,"paper/numerical/common.R")))) ,
     package_manifest=F("eivgp_module_identity")(),
     dependency_lock=unname(tools::md5sum(file.path(NUMERICAL_REPO_ROOT,"renv.lock"))),
@@ -10950,7 +10988,10 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
   failed<-0L
   for(j in indices) {
     job<-jobs[j,];folder<-file.path(cfg$output,job$job);scorefile<-file.path(folder,"scores.rds")
-    if(file.exists(scorefile)) { timing(j,"cached"); next }
+    if(file.exists(scorefile)) {
+      mixedgp_cleanup_cut_cache(folder,cfg$retain_draws)
+      timing(j,"cached"); next
+    }
     dir.create(folder,recursive=TRUE,showWarnings=FALSE)
     # Atomic lock prevents two workers writing the same job. Remove only after checking no process owns it.
     lock<-paste0(folder,".lock");if(!dir.create(lock,showWarnings=FALSE))stop("Job locked: ",lock)
@@ -10968,7 +11009,7 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
       mp<-file.path(shared,"measurement.rds")
       if(job$method=="CUT"||grepl("-CC$",job$method)) {
         if(!file.exists(mp))atomic_rds(stage_time(shared,"measurement",measurement_cut(dat$train$C,Uobs,cfg,base_seed)),mp)
-        meas<-readRDS(mp)
+        meas<-mixedgp_load_cut_measurement(mp,retain_draws=cfg$retain_draws,U_obs=Uobs)
         write.csv(meas$diagnostics,file.path(shared,"measurement_diagnostics.csv"),row.names=FALSE)
       }
       tp<-file.path(shared,"truth.rds")
@@ -10984,9 +11025,12 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
             if(!file.exists(cp))atomic_rds(stage_time(folder,sprintf("conditional-%03d",b),fit_full(dat$train,meas$states[[b]]$U,cfg,base_seed+200000L+b,TRUE)),cp)
             fit<-F("mixedgp_read_artifact")(cp)
             passed<-record_gp_diagnostics(fit,sub("rds$","diagnostics.csv",cp),TRUE)
-            atomic_rds(list(pass=passed,states=select_gp(fit,cfg$inner_draws,meas$states[[b]])),sp)
+            atomic_rds(list(storage_schema=1L,pass=passed,
+              diagnostics=fit$diagnostics,source_md5=unname(tools::md5sum(cp)),
+              selection=list(number=cfg$inner_draws,measurement=meas$states[[b]]),
+              states=select_gp(fit,cfg$inner_draws,meas$states[[b]])),sp)
           }
-          if(job$rep==min(cfg$reps) && b==1L) {
+          if(job$rep==min(cfg$reps) && b==1L && file.exists(cp)) {
             fit<-F("mixedgp_read_artifact")(cp)
             rows<-F("mixedgp_study2_diagnostic_rows")(dat$test$X,dat$test$C,5L)
             series<-F("mixedgp_cut_conditional_series")(fit,meas$states[[b]],
@@ -10998,17 +11042,16 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
             F("mixedgp_save_scientific_trace")(diagnostic_fit,file.path(folder,"scientific-trace-cut-conditional"),
               sprintf("CUT conditional GP | rep %d | calibration %d | outer state 1",job$rep,job$calib))
           }
-          # Preserve full chain histories as well as selected integration states.
-          saved<-retire_conditional_fit(cp,sp)
+          # Required diagnostics/trace assets precede retirement of the full history.
+          saved<-retire_conditional_fit(cp,sp,cfg$retain_draws)
           passes<-c(passes,saved$pass)
           states<-c(states,saved$states)
         }
         pred<-stage_time(folder,"prediction",gp_evaluate(states,dat$train,dat$test,cfg,base_seed+300000L))
         F("mixedgp_cut_outer_trace")(pred,states,dat$test,cfg,folder,
           sprintf("CUT outer integration | rep %d | calibration %d",job$rep,job$calib))
-        # Keep every measurement draw for imputation, not just integration states.
-        mis<-which(!complete.cases(Uobs));arr<-meas$trace[,,seq_len(length(mis)*2),drop=FALSE]
-        pred$U<-array(NA_real_,c(dim(arr)[1]*4,nrow(Uobs),2));pred$U[,mis,]<-matrix(arr,ncol=length(mis)*2)
+        # Summaries use every measurement draw, not only selected integration states.
+        pred$U_summary<-meas$imputation
       } else if(job$method=="FULL") {
         fp<-file.path(folder,"fit.rds")
         if(nzchar(cfg$full_fit_map)) {
@@ -11256,7 +11299,7 @@ run_paper_study <- function(study=c("study1","study2"), args=list(), repo_root=g
   }
   common<-c("component","action","profile","output","data-root","cores","competitors",
     "checkpoint-seconds","checkpoint-iterations","checkpoint-after-seconds")
-  targeted<-c("reps","calib","methods","outer","inner-draws","latent","iter","warmup","inner-iter","inner-warmup","seed","full-fit-map","eta","gp-response-latent","cc-response-latent")
+  targeted<-c("reps","calib","methods","outer","inner-draws","latent","iter","warmup","inner-iter","inner-warmup","seed","full-fit-map","eta","gp-response-latent","cc-response-latent","retain-draws")
   if(length(setdiff(names(args),c(common,targeted))))stop("Unknown options: ",paste(setdiff(names(args),c(common,targeted)),collapse=", "))
   if(!component%in%c("mechanism","complete-case") && any(names(args)%in%targeted))stop("Replication/method/sampler selections require component=mechanism; the core grid uses its fixed profile")
   if(component%in%c("mechanism","complete-case") && "competitors"%in%names(args))stop("Use methods for the mechanism component")
@@ -11397,7 +11440,7 @@ mixedgp_publication_workflow <- function(study, args, repo_root) {
   get <- function(k,d) if(is.null(args[[k]])) d else args[[k]]
   allowed <- c("component","stage","action","profile","output","data-root","reps","calib","methods","cores","full-fit-root",
     "full-fit-map","outer","latent","inner-draws","iter","warmup","inner-iter",
-    "inner-warmup","gp-response-latent","cc-response-latent","mixing-plots",
+    "inner-warmup","gp-response-latent","cc-response-latent","mixing-plots","retain-draws",
     "checkpoint-seconds","checkpoint-iterations","checkpoint-after-seconds")
   if(length(setdiff(names(args),allowed))) stop("Unknown publication options: ",paste(setdiff(names(args),allowed),collapse=", "))
   if(!identical(get("profile","paper"),"paper"))stop("Publication follow-ups use profile=paper; stage selects the pilot size")
@@ -11434,7 +11477,7 @@ mixedgp_publication_workflow <- function(study, args, repo_root) {
   calib <- parse_reps(get("calib","20,50"))
   if(any(!calib%in%c(20L,50L)))stop("Publication calib must be 20, 50, or 20,50")
   base<-c(list(component=if(study=="study1")"complete-case"else"mechanism",action=action,profile="paper",reps=paste(reps,collapse=","),calib=paste(calib,collapse=","),methods=methods,cores=as.character(cores),`data-root`=data),defaults)
-  for(k in intersect(c("full-fit-map","mixing-plots","checkpoint-seconds","checkpoint-iterations","checkpoint-after-seconds"),names(args)))base[[k]]<-args[[k]]
+  for(k in intersect(c("full-fit-map","mixing-plots","retain-draws","checkpoint-seconds","checkpoint-iterations","checkpoint-after-seconds"),names(args)))base[[k]]<-args[[k]]
   variants<-list(reference=list())
   if(stage=="integration") {
     variants$outer_doubled<-list(outer=as.character(2L*as.integer(defaults$outer)))
@@ -11638,6 +11681,8 @@ mixedgp_checkpoint_reference <- function(directory) {
 # Retirement is allowed only when an exact read-back of a published full fit
 # succeeds. Selected prediction states, scores and incomplete fits never qualify.
 mixedgp_retire_saved_checkpoints <- function(object, path) {
+  if(!is.null(attr(object,"eivgp_cut_restart_storage",exact=TRUE)))
+    return(mixedgp_retire_cut_measurement(object,path))
   if(!is.null(attr(object,"eivgp_study1_restart_storage",exact=TRUE)))
     return(mixedgp_retire_study1_measurement(object,path))
   refs<-function(x) {
@@ -11669,6 +11714,7 @@ mixedgp_retire_saved_checkpoints <- function(object, path) {
          startsWith(final,paste0(dir,.Platform$file.sep)))return(NULL)
       manifest<-file.path(dir,"identity.rds")
       if(!file.exists(manifest)||!identical(unname(tools::md5sum(manifest)),ref$identity_md5))return(NULL)
+      if(!length(list.files(dir,"^chain-[0-9]+[.]rds$")))return(NULL)
       lock<-file.path(dir,"LOCK")
       if(!dir.create(lock,showWarnings=FALSE))return(NULL)
       on.exit(unlink(lock,recursive=TRUE),add=TRUE)
@@ -11767,20 +11813,26 @@ mixedgp_verify_checkpoint_pair <- function(directory, fit_path) {
       elapsed_seconds=elapsed),checks="all inputs, model, budgets, draws, terminal state, RNG, cache, initial state and counters")
 }
 
-#' Verify and prune redundant conditional GP checkpoints
+#' Verify and prune redundant Study II checkpoints
 #'
 #' Audit legacy Study II CUT restart files against published full conditional fits.
 #' Filenames/seeds find candidates only; every chain and model input is compared.
-#' Measurement checkpoints, continuation segments, missing/mismatched/locked fits,
+#' CUT measurement checkpoints also qualify after exact output verification.
+#' Other measurement checkpoints, continuation segments, missing/mismatched/locked fits,
 #' final fits, identity files and timing logs are retained. No fitting is performed.
 #' @param output_dir Study output directory containing checkpoints/ and mechanism/.
 #' @param dry_run Logical; TRUE audits without modifying the output tree.
 #' @param audit_dir Local directory outside output_dir for manifests and receipts.
 #'   Required; use a fresh directory for each invocation.
 #' @param progress_every Number of directories between progress messages.
+#' @param compact_measurement After verified deletion, replace full CUT measurement
+#'   traces with exact imputation summaries and selected states. FALSE by default;
+#'   ignored in dry runs. This explicitly changes the final measurement artifact.
 #' @return A data frame with a status, reason and verified/removed bytes per directory.
 #' @export
-prune_study_checkpoints <- function(output_dir,dry_run=TRUE,audit_dir,progress_every=25L) {
+prune_study_checkpoints <- function(output_dir,dry_run=TRUE,audit_dir,progress_every=25L,
+                                    compact_measurement=FALSE) {
+  if(!is.logical(compact_measurement)||length(compact_measurement)!=1L||is.na(compact_measurement))stop("compact_measurement must be TRUE or FALSE")
   if(!is.logical(dry_run)||length(dry_run)!=1L||is.na(dry_run))stop("dry_run must be TRUE or FALSE")
   root<-normalizePath(path.expand(output_dir),mustWork=TRUE)
   checkpoint_root<-file.path(root,"checkpoints");mechanism<-file.path(root,"mechanism")
@@ -11808,6 +11860,11 @@ prune_study_checkpoints <- function(output_dir,dry_run=TRUE,audit_dir,progress_e
   cal<-as.integer(sub("^.*-cal([0-9]+)-CUT$","\\1",jobs))
   inner<-as.integer(sub("^conditional-([0-9]+)[.]rds$","\\1",basename(paths)))
   seeds<-base_seed+rep*1000L+cal+200000L+inner
+  measurement_paths<-list.files(mechanism,"^measurement[.]rds$",recursive=TRUE,full.names=TRUE)
+  shared<-basename(dirname(measurement_paths));valid<-grepl("^shared-rep[0-9]+-cal[0-9]+$",shared)
+  measurement_paths<-measurement_paths[valid];shared<-shared[valid]
+  measurement_seeds<-base_seed+as.integer(sub("^shared-rep([0-9]+)-.*$","\\1",shared))*1000L+
+    as.integer(sub("^.*-cal([0-9]+)$","\\1",shared))
   dirs<-sort(list.dirs(checkpoint_root,recursive=FALSE,full.names=TRUE))
   dirs<-dirs[grepl("^[0-9a-f]{32}$",basename(dirs))]
   results<-list()
@@ -11824,16 +11881,17 @@ prune_study_checkpoints <- function(output_dir,dry_run=TRUE,audit_dir,progress_e
     }
     tryCatch({
       m<-readRDS(manifest)$model
-      if(!is.null(m$component)){row$reason<-"measurement_checkpoint";return(row)}
+      measurement<-identical(m$component,"cut-measurement")
+      if(!is.null(m$component)&&!measurement){row$reason<-"unsupported_measurement_checkpoint";return(row)}
       if(!is.null(m$resume)){row$reason<-"continuation_checkpoint";return(row)}
       if(!length(list.files(directory,"^chain-[0-9]+[.]rds$"))) {row$reason<-"no_chain_files";return(row)}
-      candidates<-paths[which(seeds==m$seed)]
-      if(!length(candidates)){row$reason<-"no_conditional_fit_candidate";return(row)}
+      candidates<-if(measurement)measurement_paths[which(measurement_seeds==m$seed)]else paths[which(seeds==m$seed)]
+      if(!length(candidates)){row$reason<-if(measurement)"no_measurement_candidate"else"no_conditional_fit_candidate";return(row)}
       successes<-list();errors<-character()
       for(p in candidates) {
         canonical<-normalizePath(p,mustWork=TRUE)
         if(!startsWith(canonical,paste0(normalizePath(mechanism),.Platform$file.sep)))next
-        v<-tryCatch(mixedgp_verify_checkpoint_pair(directory,p),error=function(e){errors<<-c(errors,conditionMessage(e));NULL})
+        v<-tryCatch(if(measurement)mixedgp_verify_cut_checkpoint_pair(directory,p)else mixedgp_verify_checkpoint_pair(directory,p),error=function(e){errors<<-c(errors,conditionMessage(e));NULL})
         if(!is.null(v))successes[[length(successes)+1L]]<-v
       }
       if(length(successes)!=1L) {row$reason<-if(length(successes)>1L)"ambiguous_verified_match"else paste(unique(errors),collapse="; ");return(row)}
@@ -11853,6 +11911,16 @@ prune_study_checkpoints <- function(output_dir,dry_run=TRUE,audit_dir,progress_e
         row$status<-if(result==0L&&all(removed))"removed"else"partial_removal"
         v$status<-row$status;v$removed<-removed
         mixedgp_checkpoint_write(v,receipt)
+        mixedgp_checkpoint_write(v,file.path(directory,"retired.rds"))
+        if(measurement && compact_measurement && identical(row$status,"removed")) {
+          object<-readRDS(v$fit_path)
+          object<-mixedgp_compact_cut_measurement(object,m$U_obs)
+          mixedgp_checkpoint_write(object,v$fit_path)
+          if(!identical(readRDS(v$fit_path),object))stop("Compact measurement read-back failed")
+          v$compact_md5<-unname(tools::md5sum(v$fit_path))
+          mixedgp_checkpoint_write(v,receipt)
+          mixedgp_checkpoint_write(v,file.path(directory,"retired.rds"))
+        }
       }
       row
     },error=function(e){if(row$removed_bytes==0)row$status<-"preserved";row$reason<-conditionMessage(e);row})
@@ -12506,4 +12574,153 @@ mixedgp_application_numerics <- function(nums) {
   out<-nums[1,,drop=FALSE]
   out$iterations<-min(nums$iterations);out$iterations_max<-max(nums$iterations)
   out
+}
+
+# Study II CUT storage: summaries are calculated from all post-warmup draws.
+# Selected states are still needed for nested prediction; terminal states/RNG
+# and fingerprints provide bounded evidence for safe checkpoint retirement.
+mixedgp_cut_hash <- function(x) {
+  path<-tempfile();on.exit(unlink(path),add=TRUE)
+  saveRDS(x,path,compress=FALSE,version=3L)
+  unname(tools::md5sum(path))
+}
+mixedgp_cut_trace_hash <- function(x) {
+  mixedgp_cut_hash(list(dim=dim(x),values=as.numeric(x)))
+}
+mixedgp_cut_chain_evidence <- function(raw) {
+  list(iteration=raw$iteration,state=raw$state,rng=raw$rng,
+    states_hash=mixedgp_cut_hash(raw$states),trace_hash=mixedgp_cut_trace_hash(raw$trace))
+}
+mixedgp_cut_imputation <- function(trace,U_obs) {
+  miss<-which(!complete.cases(U_obs));d<-ncol(U_obs)
+  if(!length(miss))return(data.frame(id=integer(),coordinate=integer(),mean=numeric(),lower=numeric(),upper=numeric()))
+  stopifnot(length(dim(trace))==3L,dim(trace)[2L]==4L,dim(trace)[3L]>=length(miss)*d)
+  u<-matrix(trace[,,seq_len(length(miss)*d),drop=FALSE],ncol=length(miss)*d)
+  data.frame(id=rep(miss,d),coordinate=rep(seq_len(d),each=length(miss)),
+    mean=colMeans(u),lower=apply(u,2,stats::quantile,.025),
+    upper=apply(u,2,stats::quantile,.975),row.names=NULL)
+}
+mixedgp_compact_cut_measurement <- function(object,U_obs=NULL) {
+  if(is.null(U_obs))U_obs<-object$checkpoint$model$U_obs
+  if(!is.null(object$trace)) {
+    if(is.null(U_obs))stop("Need observed-input mask to compact a legacy measurement result")
+    summary<-mixedgp_cut_imputation(object$trace,U_obs)
+    if(!is.null(object$imputation)&&!identical(object$imputation,summary))stop("Imputation summaries differ")
+    object$imputation<-summary
+    # Legacy full artifacts have no terminal metadata. Retain output fingerprints
+    # so interrupted cleanup can still verify their original chain files.
+    if(is.null(object$draw_fingerprints))object$draw_fingerprints<-vapply(1:4,function(i)
+      mixedgp_cut_trace_hash(matrix(object$trace[,i,],nrow=dim(object$trace)[1L])),character(1))
+    object$trace<-NULL
+  }
+  if(is.null(object$imputation)||!length(object$states)||is.null(object$diagnostics))
+    stop("Incomplete compact measurement result")
+  object$storage<-list(schema=1L,retention="summary",arbitrary_new_diagnostics="rerun required")
+  object
+}
+
+# Caller holds the directory lock. Legacy full results are compared directly;
+# new compact results carry fingerprints plus the exact terminal state and RNG.
+mixedgp_verify_cut_checkpoint_pair <- function(directory,fit_path) {
+  need<-function(ok,why)if(!isTRUE(ok))stop(why,call.=FALSE)
+  plain<-function(p)!isTRUE(nzchar(Sys.readlink(p)))
+  identity<-file.path(directory,"identity.rds")
+  need(plain(directory)&&plain(fit_path)&&plain(identity),"symlink_preserved")
+  identity_md5<-unname(tools::md5sum(identity));fit_md5<-unname(tools::md5sum(fit_path))
+  m<-readRDS(identity)$model;object<-readRDS(fit_path)
+  need(identical(m$component,"cut-measurement"),"not_cut_measurement")
+  need(length(m$iter)==1L&&length(m$warmup)==1L&&m$iter>m$warmup&&
+    length(m$outer)==1L&&m$outer>0&&m$outer%%4L==0L,"invalid_measurement_budget")
+  need(length(object$states)==m$outer&&!is.null(object$diagnostics),"missing_measurement_outputs")
+  if(!is.null(object$checkpoint))need(identical(object$checkpoint$schema,1L)&&
+    identical(object$checkpoint$model,m)&&length(object$checkpoint$chains)==4L,"measurement_identity_mismatch")
+  paths<-file.path(directory,sprintf("chain-%02d.rds",1:4))
+  need(setequal(paths,list.files(directory,"^chain-[0-9]+[.]rds$",full.names=TRUE))&&
+    all(file.exists(paths))&&all(vapply(paths,plain,logical(1))),"incomplete_or_extra_chain_files")
+  hashes<-unname(tools::md5sum(paths));info<-file.info(paths);elapsed<-numeric(4L)
+  need(!anyNA(c(hashes,fit_md5,identity_md5)),"unreadable_file")
+  n<-m$iter-m$warmup
+  columns<-sum(!complete.cases(m$U_obs))*ncol(m$U_obs)+ncol(m$C)*ncol(m$U_obs)+4L*ncol(m$C)
+  if(!is.null(object$trace))need(identical(as.integer(dim(object$trace)),as.integer(c(n,4L,columns))),"trace_dimensions_mismatch")
+  for(i in 1:4) {
+    raw<-readRDS(paths[i])
+    need(identical(as.integer(raw$iteration),as.integer(m$iter))&&
+      identical(as.integer(dim(raw$trace)),as.integer(c(n,columns)))&&
+      !is.null(raw$state)&&!is.null(raw$rng),"unfinished_measurement_chain")
+    selected<-object$states[seq.int(i,length(object$states),by=4L)]
+    need(identical(raw$states,selected),"measurement_selected_states_mismatch")
+    if(!is.null(object$checkpoint))need(identical(mixedgp_cut_chain_evidence(raw),
+      object$checkpoint$chains[[i]]),"measurement_checkpoint_evidence_mismatch")
+    else if(!is.null(object$trace)) {
+      expected<-matrix(object$trace[,i,],nrow=n)
+      need(identical(as.numeric(raw$trace),as.numeric(expected)),"measurement_trace_mismatch")
+    } else need(length(object$draw_fingerprints)==4L&&
+      identical(mixedgp_cut_trace_hash(raw$trace),object$draw_fingerprints[[i]]),"missing_or_mismatched_measurement_evidence")
+    elapsed[i]<-raw$elapsed_seconds
+  }
+  need(identical(unname(tools::md5sum(fit_path)),fit_md5)&&
+    identical(unname(tools::md5sum(identity)),identity_md5)&&
+    identical(file.info(paths)[,c("size","mtime")],info[,c("size","mtime")]),"files_changed_during_verification")
+  list(schema=1L,verified_utc=format(Sys.time(),tz="UTC",usetz=TRUE),
+    directory=normalizePath(directory),fit_path=normalizePath(fit_path),fit_md5=fit_md5,
+    identity_md5=identity_md5,files=data.frame(path=paths,md5=hashes,bytes=info$size,elapsed_seconds=elapsed),
+    checks=if(is.null(object$checkpoint))"all four completed traces and selected states (legacy output)"else
+      "model identity, budgets, all four trace fingerprints, selected states, terminal states and RNG")
+}
+mixedgp_retire_cut_measurement <- function(object,path) {
+  tryCatch({
+    ref<-attr(object,"eivgp_cut_restart_storage",exact=TRUE)
+    root<-getOption("eivGP.checkpoint_root",NULL)
+    if(is.null(ref)||is.null(root)||!dir.exists(ref$directory))return(invisible(NULL))
+    directory<-normalizePath(ref$directory);final<-normalizePath(path,mustWork=TRUE)
+    if(!startsWith(directory,paste0(normalizePath(root),.Platform$file.sep))||
+       startsWith(final,paste0(directory,.Platform$file.sep)))return(invisible(NULL))
+    if(!length(list.files(directory,"^chain-[0-9]+[.]rds$")))return(invisible(NULL))
+    lock<-file.path(directory,"LOCK")
+    if(!dir.create(lock,showWarnings=FALSE))return(invisible(NULL))
+    on.exit(unlink(lock,recursive=TRUE),add=TRUE)
+    if(!identical(readRDS(final),object))stop("Measurement read-back mismatch")
+    identity<-file.path(directory,"identity.rds")
+    if(!identical(unname(tools::md5sum(identity)),ref$identity_md5))stop("Measurement identity changed")
+    v<-mixedgp_verify_cut_checkpoint_pair(directory,final)
+    v$status<-"verified_before_deletion"
+    mixedgp_checkpoint_write(v,file.path(directory,"retired.rds"))
+    if(!identical(unname(tools::md5sum(final)),v$fit_md5)||
+       !identical(unname(tools::md5sum(identity)),v$identity_md5)||
+       !identical(unname(tools::md5sum(v$files$path)),v$files$md5))stop("Measurement files changed before retirement")
+    if(unlink(v$files$path)!=0L||any(file.exists(v$files$path)))stop("Some measurement checkpoints could not be removed")
+    v$status<-"removed";mixedgp_checkpoint_write(v,file.path(directory,"retired.rds"))
+  },error=function(e)warning("CUT measurement checkpoint cleanup: ",conditionMessage(e),call.=FALSE))
+  invisible(NULL)
+}
+mixedgp_load_cut_measurement <- function(path,retain_draws=FALSE,U_obs=NULL) {
+  object<-readRDS(path)
+  mixedgp_retire_saved_checkpoints(object,path)
+  if(is.null(U_obs))U_obs<-object$checkpoint$model$U_obs
+  if(is.null(object$imputation)&&!is.null(object$trace)&&!is.null(U_obs))
+    object$imputation<-mixedgp_cut_imputation(object$trace,U_obs)
+  ref<-attr(object,"eivgp_cut_restart_storage",exact=TRUE)
+  pending<-!is.null(ref) && (file.exists(file.path(ref$directory,"LOCK")) ||
+    length(list.files(ref$directory,"^chain-[0-9]+[.]rds$"))>0L)
+  if(!pending&&!isTRUE(retain_draws)&&!is.null(object$trace)&&!is.null(U_obs)) {
+    compact<-mixedgp_compact_cut_measurement(object,U_obs)
+    mixedgp_checkpoint_write(compact,path)
+    if(!identical(readRDS(path),compact))stop("Compact measurement read-back failed")
+    object<-compact
+    mixedgp_retire_saved_checkpoints(object,path)
+  }
+  object
+}
+mixedgp_cleanup_cut_cache <- function(folder,retain_draws=FALSE) {
+  name<-basename(folder)
+  if(!grepl("^rep[0-9]+-cal[0-9]+-",name)||file.exists(paste0(folder,".lock")))return(invisible(NULL))
+  shared<-sub("^(rep[0-9]+-cal[0-9]+)-.*$","shared-\\1",name)
+  path<-file.path(dirname(folder),shared,"measurement.rds")
+  if(file.exists(path))mixedgp_load_cut_measurement(path,retain_draws)
+  if(grepl("-CUT$",name)) {
+    api<-eivgp_numerical_api(tempdir())
+    paths<-list.files(folder,"^conditional-[0-9]+-states[.]rds$",full.names=TRUE)
+    for(sp in paths)api$retire_conditional_fit(sub("-states[.]rds$",".rds",sp),sp,retain_draws)
+  }
+  invisible(NULL)
 }

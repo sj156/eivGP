@@ -896,6 +896,79 @@ adni_screen_settings <- function(m,iter,cores) {
     samplers=get('samplers',list(O0='HMC',O20='HMC',O50='ESS')))
 }
 
+adni_with_lock <- function(path,FUN,wait=FALSE,timeout=60) {
+  dir.create(dirname(path),recursive=TRUE,showWarnings=FALSE)
+  started<-proc.time()[['elapsed']];announced<-FALSE
+  repeat {
+    if(dir.create(path,showWarnings=FALSE))break
+    if(!dir.exists(path))stop('ADNI cannot create lock; check directory permissions and free space: ',path)
+    owner<-base::file.path(path,'owner.json')
+    info<-tryCatch(if(file.exists(owner))jsonlite::fromJSON(owner)else NULL,error=function(e)NULL)
+    detail<-if(is.null(info))'owner record not yet available'else paste('PID',info$pid,'on',info$host)
+    if(!wait||proc.time()[['elapsed']]-started>=timeout)
+      stop('ADNI lock is held (',detail,'): ',path,
+        '. Check the owning process; remove a stale lock only after its workers have stopped.')
+    if(!announced){cat('[ADNI] Waiting briefly for shared initialization: ',detail,'\n',sep='');flush.console();announced<-TRUE}
+    Sys.sleep(.1)
+  }
+  token<-paste(Sys.getpid(),format(Sys.time(),'%Y%m%d%H%M%OS6'),sep='-')
+  on.exit({
+    owner<-base::file.path(path,'owner.json')
+    saved<-tryCatch(jsonlite::fromJSON(owner),error=function(e)NULL)
+    if(!is.null(saved)&&identical(saved$token,token))unlink(path,recursive=TRUE)
+  },add=TRUE)
+  atomic_json(list(pid=Sys.getpid(),host=Sys.info()[['nodename']],token=token,
+    started_at=format(Sys.time(),tz='UTC',usetz=TRUE)),base::file.path(path,'owner.json'))
+  FUN()
+}
+
+adni_check_legacy_lock <- function(root) {
+  old<-unlist(lapply(unique(c(root,adni_workflow_root(root))),function(path)
+    base::file.path(path,c('.application.lock','.adni-application.lock'))),use.names=FALSE)
+  if(any(dir.exists(old)))stop('ADNI found a lock from the earlier exclusive executor: ',old[dir.exists(old)][1],
+    '. Finish or stop that run before using the new executor; confirm all workers have stopped before removing a stale lock.')
+  invisible(NULL)
+}
+
+adni_execution_lock <- function(root,group,FUN) {
+  adni_check_legacy_lock(root)
+  if(group=='report')return(adni_execution_lock(root,'eivGP',function()
+    adni_execution_lock(root,'competitors',FUN)))
+  adni_with_lock(base::file.path(root,'_meta','locks',paste0(group,'.lock')),FUN)
+}
+
+adni_publish_progress <- function(root,group,phase,status) {
+  active<-status[status$state=='RUNNING',,drop=FALSE]
+  record<-list(application='ADNI',group=group,phase=phase,pid=Sys.getpid(),
+    updated_at=format(Sys.time(),tz='UTC',usetz=TRUE),completed=sum(status$state%in%c('DONE','REUSED')),
+    failed=sum(status$state=='FAILED'),total=nrow(status),active_jobs=active)
+  atomic_json(record,base::file.path(root,'_meta',paste0(group,'_status.json')))
+  lines<-c(paste('ADNI |',group,'|',phase,'|',record$updated_at),
+    sprintf('Completed %d/%d; failed %d; running %d',record$completed,record$total,record$failed,nrow(active)),
+    if(nrow(active))apply(active[,c('fold','cell','method','state'),drop=FALSE],1,paste,collapse=' | ')else 'No job currently running.',
+    'Detailed task logs and phase status CSVs are under logs/.')
+  path<-base::file.path(root,paste0('PROGRESS_',group,'.txt'))
+  tmp<-tempfile(tmpdir=dirname(path));on.exit(unlink(tmp),add=TRUE);writeLines(lines,tmp)
+  if(!file.rename(tmp,path))stop('ADNI cannot publish progress: ',path)
+}
+
+adni_workflow_identity <- function(path,id) {
+  if(!file.exists(path)){atomic_rds(id,path);return(id)}
+  saved<-readRDS(path)
+  if(identical(saved,id))return(saved)
+  a<-saved;b<-id;a$application<-b$application<-NULL;a$schema<-b$schema<-NULL
+  if(length(saved$schema)!=1L||!saved$schema%in%'adni-upstream-screening-v2'||!identical(a,b))
+    stop('ADNI saved model settings, package modules or inputs differ; use a new output root: ',dirname(path))
+  # Preserve the original fitting identity and receipts. Record only the new
+  # execution source; sampler/package/input identities must match exactly.
+  dest<-base::file.path(dirname(path),'executor_updates',paste0(digest::digest(id$application),'.rds'))
+  if(!file.exists(dest))atomic_rds(list(schema='adni-executor-update-v1',
+    original_identity=saved,current_execution_source=id$application,
+    package_and_statistical_identity_unchanged=TRUE),dest)
+  cat('[ADNI] Reusing the original saved fitting identity; execution-source update recorded.\n');flush.console()
+  saved
+}
+
 adni_screen_manifest <- function(path,api) {
   m<-jsonlite::fromJSON(normalizePath(path),simplifyVector=FALSE)
   if(!m$schema%in%c('adni-screening-v2','adni-application-v1')||!length(m$cases))stop('Unsupported ADNI manifest')
@@ -959,44 +1032,56 @@ adni_resident_workers <- function(cores,phase,n_tasks,chains=4L) {
   as.integer(min(n_tasks,mixedgp_stage_workers(cores,phase,n_tasks,chains)))
 }
 
-adni_screen_phase <- function(tasks,phase,cores,api,FUN,status_dir,chains=4L) {
+adni_screen_phase <- function(tasks,phase,cores,api,FUN,status_dir,chains=4L,root=NULL,group='eivGP') {
   dir.create(status_dir,recursive=TRUE,showWarnings=FALSE)
   status<-tasks;status$state<-'PENDING';status$detail<-'';status$worker_pid<-NA_integer_;status$seconds<-NA_real_
   outer<-adni_resident_workers(cores,phase,nrow(tasks),chains)
-  publish<-function()api$atomic_csv(status,adni_path(status_dir,paste0(phase,'_status.csv')))
+  publish<-function() {
+    api$atomic_csv(status,adni_path(status_dir,paste0(phase,'_status.csv')))
+    if(!is.null(root))adni_publish_progress(root,group,phase,status)
+  }
   publish()
+  cat(sprintf('[ADNI %s] Phase %s: %d jobs; %d cores; up to %d resident jobs.\n',group,phase,nrow(tasks),cores,outer));flush.console()
   # Match the public Ocean executor: resident jobs share the full active-worker pool.
   api$mixedgp_budget_yield(function()api$queue$mixedgp_schedule(seq_len(nrow(tasks)),rep(1L,nrow(tasks)),outer,
     function(i,allocated)api$mixedgp_budget_worker(function(){
       logpath<-adni_path(status_dir,paste0(phase,'_',make.names(tasks$id[i]),'.log'));con<-file(logpath,'at')
       old_message<-getConnection(sink.number(type='message'));sink(con);sink(con,type='message')
       on.exit({sink(old_message,type='message');sink();close(con)},add=TRUE);t<-proc.time()[3]
-      err<-tryCatch({FUN(tasks[i,,drop=FALSE],min(cores,chains));NULL},error=function(e)conditionMessage(e))
+      result<-NULL
+      err<-tryCatch({result<-FUN(tasks[i,,drop=FALSE],min(cores,chains));NULL},error=function(e)conditionMessage(e))
       if(!is.null(err))cat('FAILED:',err,'\n')
-      list(state=if(is.null(err))'DONE'else'FAILED',detail=if(is.null(err))''else err,seconds=as.numeric(proc.time()[3]-t))
+      list(state=if(!is.null(err))'FAILED'else if(identical(result,'REUSED'))'REUSED'else'DONE',
+        detail=if(is.null(err))''else err,seconds=as.numeric(proc.time()[3]-t))
     }),
-    function(i,n,pid,active){status$state[i]<<-'RUNNING';status$worker_pid[i]<<-pid;publish()},
+    function(i,n,pid,active){
+      status$state[i]<<-'RUNNING';status$worker_pid[i]<<-pid;publish()
+      cat(sprintf('[ADNI %s] START %s | fold %d | %s | %s | PID %d\n',group,phase,tasks$fold[i],tasks$cell[i],tasks$method[i],pid));flush.console()
+    },
     function(i,r,active){if(!is.list(r)||is.null(r$state))r<-list(state='FAILED',detail='Worker exited without a result',seconds=NA_real_)
-      status$state[i]<<-r$state;status$detail[i]<<-r$detail;status$seconds[i]<<-r$seconds;publish()}))
+      status$state[i]<<-r$state;status$detail[i]<<-r$detail;status$seconds[i]<<-r$seconds;publish()
+      cat(sprintf('[ADNI %s] %s %s | fold %d | %s | %s | %.1f sec %s\n',group,r$state,phase,tasks$fold[i],tasks$cell[i],tasks$method[i],r$seconds,r$detail));flush.console()
+    }))
   status
 }
 
-adni_screen_collect <- function(m,api) {
+adni_screen_collect <- function(m,api,group='report') {
   pred<-conv<-u<-pros<-list()
   for(z in m$cases){
-    for(mark in list.files(z$output,'^EVALUATION_VALIDATION[.]json$',recursive=TRUE,full.names=TRUE)){
+    for(mark in if(group=='competitors')character()else list.files(z$output,'^EVALUATION_VALIDATION[.]json$',recursive=TRUE,full.names=TRUE)){
       dir<-dirname(mark)
       for(pair in list(c('prediction_metrics.csv','pred'),c('convergence.csv','conv'),c('U_metrics.csv','u'),c('PROSPECTIVE_U_metrics.csv','pros'))){
         p<-adni_path(dir,pair[1]);if(!file.exists(p))next
         val<-cbind(plan=z$id,read.csv(p));dest<-get(pair[2]);dest[[length(dest)+1L]]<-val;assign(pair[2],dest)
       }
     }
-    files<-list.files(z$output,'^metrics[.]csv$',recursive=TRUE,full.names=TRUE)
+    files<-if(group=='eivGP')character()else list.files(z$output,'^metrics[.]csv$',recursive=TRUE,full.names=TRUE)
     for(p in files){x<-read.csv(p);if('stage'%in%names(x)&&all(x$stage=='BASELINE'))pred[[length(pred)+1L]]<-cbind(plan=z$id,x)}
   }
   bind<-function(x)if(length(x))api$queue$mixedgp_bind(x)else data.frame()
   tables<-list(prediction=bind(pred),convergence=bind(conv),training_U=bind(u),prospective_U=bind(pros))
-  dest<-if(adni_storage_flat(m$output_root))adni_path(m$output_root,'reports','prediction_report')else adni_path(m$output_root,'reports');dir.create(dest,recursive=TRUE,showWarnings=FALSE)
+  dest<-adni_path(m$output_root,'reports',if(group=='report')'prediction_report'else group,'progress')
+  dir.create(dest,recursive=TRUE,showWarnings=FALSE)
   for(k in names(tables))if(nrow(tables[[k]]))api$atomic_csv(tables[[k]],adni_path(dest,paste0(k,'_fold_metrics.csv')))
   p<-tables$prediction;summary<-list()
   if(nrow(p))for(ix in split(seq_len(nrow(p)),interaction(p$plan,p$stage,p$cell,p$method,p$protocol,drop=TRUE))){
@@ -1032,6 +1117,7 @@ adni_screen_collect <- function(m,api) {
 
 adni_screen_run <- function(repo,p,group) {
   api<-adni_screen_api(repo);bundle<-adni_screen_manifest(p$manifest,api);m<-bundle$manifest;inputs<-bundle$inputs
+
   cases<-setNames(m$cases,vapply(m$cases,`[[`,'','id'));api$B<-dirname(normalizePath(p$manifest))
   if(p$plan){
     for(g in if(group=='report')c('eivGP','competitors')else group){x<-adni_screen_tasks(m,g);print(x,row.names=FALSE)}
@@ -1043,9 +1129,10 @@ adni_screen_run <- function(repo,p,group) {
     stop('Saved/manifest chains must equal min(--cores,4); use a matching core budget or a new output.')
   root<-m$output_root
   adni_output_check(root,repo)
-  dir.create(root,recursive=TRUE,showWarnings=FALSE);lock<-adni_path(root,if(adni_storage_flat(root))'.application.lock'else'.adni-application.lock')
-  if(!dir.create(lock,showWarnings=FALSE))stop('ADNI workflow already active: ',lock)
-  writeLines(as.character(Sys.getpid()),adni_path(lock,'pid'));on.exit(unlink(lock,recursive=TRUE),add=TRUE)
+  if(!isTRUE(p$lock_held))return(adni_execution_lock(root,group,function(){
+    p$lock_held<-TRUE;adni_screen_run(repo,p,group)
+  }))
+  cat('[ADNI ',group,'] BEGIN | output: ',root,'\n',sep='');flush.console()
   code<-adni_source_files(repo)
   base_id<-list(schema='adni-upstream-screening-v2',trial=m$trial_id,modules=api$eivgp_module_identity(),
     application=setNames(unname(tools::md5sum(code)),substring(code,nchar(repo)+2L)),burn=m$burn,stages=unlist(m$stages),smoke=isTRUE(m$smoke),ess_min=m$ess_min,
@@ -1054,11 +1141,13 @@ adni_screen_run <- function(repo,p,group) {
     baseline_profile=if(is.null(m$baseline_profile))if(isTRUE(m$smoke))'pilot'else'paper'else m$baseline_profile,
     draws_per_chain=if(is.null(m$draws_per_chain))if(isTRUE(m$smoke))5L else 250L else m$draws_per_chain)
   identities<-list()
-  for(z in m$cases){
-    id<-c(base_id,list(plan=z$id,inputs=unname(tools::md5sum(inputs[[z$id]]$files))))
-    identities[[z$id]]<-id;path<-adni_path(z$output,'workflow_identity.rds')
-    if(file.exists(path)){if(!identical(readRDS(path),id))stop('Saved workflow identity differs; use a new output root')}else if(group!='report'&&!p$reuse_only)api$atomic_rds(id,path)
-  }
+  adni_with_lock(base::file.path(dirname(root),paste0('.',basename(root),'.initialization.lock')),function(){
+    for(z in m$cases){
+      id<-c(base_id,list(plan=z$id,inputs=unname(tools::md5sum(inputs[[z$id]]$files))))
+      path<-adni_path(z$output,'workflow_identity.rds')
+      identities[[z$id]]<<-adni_workflow_identity(path,id)
+    }
+  },wait=TRUE)
   required<-list()
   for(g in if(group=='report')c('eivGP','competitors')else group){
     for(st in if(g=='eivGP')paste0('S',unlist(m$stages))else'BASELINE'){
@@ -1069,7 +1158,7 @@ adni_screen_run <- function(repo,p,group) {
   }
   if(group=='report'||p$reuse_only){
     if(!all(vapply(required,function(r)adni_screen_verified(r$path,r$identity),logical(1))))stop('Saved-only prerequisites incomplete; no fitting or continuation started')
-    return(adni_screen_collect(m,api))
+    return(adni_screen_collect(m,api,group))
   }
   api$adni_plan_require();job<-adni_path(root,'logs',paste0(group,'_',format(Sys.time(),'%Y%m%d_%H%M%S')))
   old<-options(eivGP.core_events=adni_path(job,'core-events'));on.exit(options(old),add=TRUE)
@@ -1081,7 +1170,7 @@ adni_screen_run <- function(repo,p,group) {
     work<-function(t,n,evaluate=FALSE){
       out<-cases[[t$plan]]$output;inp<-inputs[[t$plan]];id<-identities[[t$plan]];s<-adni_screen_settings(m,if(iter)iter else max(unlist(m$stages)),n)
       phase<-if(evaluate)'evaluate'else'fit';receipt<-adni_screen_receipt(out,t,phase)
-      if(adni_screen_verified(receipt,id))return(invisible(NULL))
+      if(adni_screen_verified(receipt,id))return(invisible('REUSED'))
       if(t$kind=='eiv'){
         path<-api$adni_plan_fit_path(out,t)
         if(evaluate){
@@ -1098,22 +1187,27 @@ adni_screen_run <- function(repo,p,group) {
         failures<-character()
         for(method in methods){one<-t;one$method<-method;tryCatch(api$baseline_cell(one,inp,out,s,cc=t$kind=='cc'),error=function(e)failures<<-c(failures,paste(method,conditionMessage(e))))}
         if(length(failures))stop(paste(failures,collapse='; '))
-        folder<-if(t$kind=='cc')adni_path(out,'CC',t$cell,'baselines',sprintf('fold%02d',t$fold),t$method)else adni_path(out,'baselines',sprintf('fold%02d',t$fold))
+        folder<-if(t$kind=='cc')adni_path(out,'CC',t$cell,'baselines',sprintf('fold%02d',t$fold),t$method)else
+          adni_path(out,'baselines',sprintf('fold%02d',t$fold),t$method)
       }
       files<-if(is.null(folder))character()else sort(list.files(folder,recursive=TRUE,full.names=TRUE))
-      api$atomic_rds(list(identity=id,task=t,files=files,md5=unname(tools::md5sum(files)),finished=as.character(Sys.time())),receipt)
+      api$atomic_rds(list(identity=id,task=t,files=files,md5=unname(tools::md5sum(files)),
+        execution_source=base_id$application,finished=as.character(Sys.time())),receipt)
     }
     nchains<-if(group=='competitors')1L else if(is.null(m$chains))4L else as.integer(m$chains)
-    status<-adni_screen_phase(tasks,'fit',cores,api,function(t,n)work(t,n),adni_path(job,stage),nchains)
+    status<-adni_screen_phase(tasks,'fit',cores,api,function(t,n)work(t,n),adni_path(job,stage),nchains,root,group)
     if(group=='eivGP'&&any(status$state=='FAILED'))stop('EIV stage incomplete; checkpoints retained. Inspect ',job)
     if(group=='eivGP'){
-      status<-adni_screen_phase(tasks,'evaluate',cores,api,function(t,n)work(t,n,TRUE),adni_path(job,stage),nchains)
+      status<-adni_screen_phase(tasks,'evaluate',cores,api,function(t,n)work(t,n,TRUE),adni_path(job,stage),nchains,root,group)
       if(any(status$state=='FAILED'))stop('EIV evaluation incomplete; continuation not started. Inspect ',job)
-    }else if(any(status$state=='FAILED'))warning('Comparator failures retained; saved results remain available.')
-    adni_screen_collect(m,api)
+    }
+    adni_screen_collect(m,api,group)
+    if(any(status$state=='FAILED'))stop('ADNI comparator tasks incomplete; completed results retained. Inspect ',job)
   }
-  for(z in m$cases)mixedgp_application_trace_report(z$output,adni_path(z$output,'reports','scientific-traces'))
-  invisible(adni_screen_collect(m,api))
+  adni_publish_progress(root,group,'FITTING_COMPLETE',status)
+  cat('[ADNI ',group,'] FITTING AND EVALUATION COMPLETE; rendering its saved-results report.\n',sep='');flush.console()
+  tables<-adni_screen_collect(m,api,group);attr(tables,'phase_status')<-status
+  invisible(tables)
 }
 
 # ADNI application: functionals. Reuses package model and sampler functions.
@@ -1142,7 +1236,9 @@ adni_saved_functionals <- function(a) {
   summarize_draws<-function(x)data.frame(mean=colMeans(x),lo=apply(x,2,quantile,.025),hi=apply(x,2,quantile,.975))
   for(key in names(a$paths)) {
     path<-a$paths[[key]];f<-path$fold;cell<-path$cell;z<-a$input$cells[[key]];p<-z$protocol
-    cache<-adni_path(dest,paste0('fold',f,'_',cell,'.rds'))
+    cache_root<-adni_path(dest,'cache',digest::digest(unname(tools::md5sum(code))))
+    dir.create(cache_root,recursive=TRUE,showWarnings=FALSE)
+    cache<-adni_path(cache_root,paste0('fold',f,'_',cell,'.rds'))
     identity<-list(fit=unname(tools::md5sum(path$fit)),inputs=unname(tools::md5sum(a$input$files)),
       code=unname(tools::md5sum(code)),states=a$settings$functional_draws_per_chain,n_latent=a$settings$n_latent,
       analysis_modules=a$api$eivgp_module_identity())
@@ -2483,7 +2579,7 @@ adni_report_prepare <- function(repo,data_dir,output_dir,settings,report_source=
   # Historical folders may use explicit stage labels rather than S<iteration>.
   if(length(m$stage_directories))stages<-unlist(m$stage_directories)
   stability<-list()
-  for(st in stages)for(i in seq_len(nrow(selected))) {
+  for(st in if(want_eiv)stages else character())for(i in seq_len(nrow(selected))) {
     path<-adni_path(output_dir,st,'analysis',sprintf('fold%02d',selected$fold[i]),selected$cell[i],'prediction_metrics.csv')
     d<-adni_csv(path,FALSE)
     if(nrow(d)){d<-d[d$protocol=='OI',];d$stage<-st;stability[[length(stability)+1L]]<-d}
@@ -2825,6 +2921,7 @@ adni_method_run <- function(repo,params,group) {
     'baseline_profile','sampler_o0','sampler_o20','sampler_o50','representative_fold','appendix',
     'functional_draws_per_chain','n_latent','run_id','ess_min')
   s<-do.call(adni_settings,c(list(profile=get('profile','pilot'),cores=get('cores',4L)),params[intersect(names(params),fields)]))
+
   dataset<-get('dataset','adni')
   if(!grepl('^[A-Za-z0-9][A-Za-z0-9_-]*$',dataset))stop('Invalid dataset name')
   default_input<-adni_default_input(dataset,repo)
@@ -2841,13 +2938,17 @@ adni_method_run <- function(repo,params,group) {
   report_source<-if(!is.null(params$report_source))adni_resolve_path(params$report_source,repo)else NULL
   saved_only<-group=='report'||isTRUE(params$reuse_only)
   if(saved_only&&!isTRUE(params$plan)) {
+
     default_report<-if(group=='report')out else adni_path(out,'reports',group)
-    return(adni_render_report(repo,input,out,s,report_source,
+    return(adni_execution_lock(adni_workflow_root(out),group,function()adni_render_report(repo,input,out,s,report_source,
       report_dir=adni_resolve_path(get('report_dir',default_report),repo),group=group,
-      filename=if(group!='report'&&adni_storage_flat(out))'index.html'else'adni.html'))
+      filename=if(group!='report'&&adni_storage_flat(out))'index.html'else'adni.html')))
   }
   api<-adni_load_api(repo);inp<-api$adni_plan_inputs(input);p<-inp$cells[[1]]$protocol
   api$application$adni_output_check(out,repo)
+  if(!isTRUE(params$plan))adni_check_legacy_lock(out)
+  initialize<-function() {
+  input<-input;inp<-inp;s<-s
   if(!isTRUE(params$plan)) {
     adni_storage_init(out,s$stages)
     if(adni_storage_flat(out)) {
@@ -2855,6 +2956,13 @@ adni_method_run <- function(repo,params,group) {
       inp<-api$adni_plan_inputs(input)
     }
   }
+  manifest<-adni_path(out,'application_manifest.json')
+  if(file.exists(manifest)) {
+    prior<-jsonlite::fromJSON(manifest,simplifyVector=FALSE)
+    # Existing runs retain their checkpoint cadence unless explicitly changed.
+    for(n in c('first_checkpoint','checkpoint_step'))if(is.null(params[[n]])&&!is.null(prior[[n]]))s[[n]]<-as.integer(prior[[n]])
+    if(group=='competitors')s$chains<-as.integer(prior$chains)
+  }else if(group=='competitors')s$chains<-4L
   files<-setNames(lapply(inp$files,function(x)digest::digest(file=x,algo='sha256')),inp$files)
   m<-list(schema='adni-application-v1',author='Xinye Chen',profile=s$profile,
     package_version=as.character(packageVersion('eivGP')),
@@ -2863,27 +2971,45 @@ adni_method_run <- function(repo,params,group) {
     first_checkpoint=s$first_checkpoint,checkpoint_step=s$checkpoint_step,draws_per_chain=s$draws_per_chain,ess_min=s$ess_min,
     samplers=list(O0=s$sampler_o0,O20=s$sampler_o20,O50=s$sampler_o50),folds=s$folds,cells=s$cells,
     cases=list(list(id=p$plan_id,input=input,output=out,C=p$C_order,N=inp$N,q=p$q)),frozen_inputs=files)
+  if(!isTRUE(params$plan)) {
+    if(file.exists(manifest)) {
+      a<-m;b<-prior;a$cores<-b$cores<-NULL
+      canonical<-function(x)jsonlite::fromJSON(jsonlite::toJSON(x,auto_unbox=TRUE,null='null'),simplifyVector=FALSE)
+      if(!identical(canonical(a),canonical(b)))stop('Saved ADNI settings/inputs differ; select a new output directory. ',
+        paste(all.equal(canonical(a),canonical(b)),collapse='; '))
+    }else api$atomic_json(m,manifest)
+  }
+  list(m=m,input=input,s=s,manifest=manifest)
+  }
+  prepared<-if(isTRUE(params$plan))initialize()else adni_with_lock(
+    base::file.path(dirname(out),paste0('.',basename(out),'.initialization.lock')),initialize,wait=TRUE)
+  m<-prepared$m;input<-prepared$input;s<-prepared$s;manifest<-prepared$manifest
   if(isTRUE(params$plan)) {
     e<-adni_load_api(repo)
-    tasks<-e$adni_screen_tasks(m,group)
+    plan_manifest<-m
+
+    tasks<-e$adni_screen_tasks(plan_manifest,group)
     print(tasks,row.names=FALSE);print(s[c('profile','chains','iter','burn','cores')])
     cat('Resident fit jobs:',adni_resident_workers(s$cores,'fit',nrow(tasks),if(group=='competitors')1L else s$chains),
       '; resident evaluation jobs:',adni_resident_workers(s$cores,'evaluate',nrow(tasks),if(group=='competitors')1L else s$chains),'\n')
     return(invisible(m))
   }
-  dir.create(out,recursive=TRUE,showWarnings=FALSE);manifest<-adni_path(out,'application_manifest.json')
-  if(file.exists(manifest)) {
-    prior<-jsonlite::fromJSON(manifest,simplifyVector=FALSE);a<-m;b<-prior;a$cores<-b$cores<-NULL
-    canonical<-function(x)jsonlite::fromJSON(jsonlite::toJSON(x,auto_unbox=TRUE,null='null'),simplifyVector=FALSE)
-    if(!identical(canonical(a),canonical(b)))
-      stop('Saved ADNI settings/inputs differ; select a new output directory. ',
-        paste(all.equal(canonical(a),canonical(b)),collapse='; '))
-  }else api$atomic_json(m,manifest)
+  adni_execution_lock(adni_workflow_root(out),group,function(){
   e<-adni_load_api(repo)
-  result<-e$adni_screen_run(repo,list(manifest=manifest,cores=s$cores,plan=FALSE,reuse_only=FALSE),group)
-  adni_render_report(repo,input,out,s,report_dir=adni_path(out,'reports',group),group=group,
-    filename=if(adni_storage_flat(out))'index.html'else'adni.html')
+  result<-e$adni_screen_run(repo,list(manifest=manifest,cores=s$cores,plan=FALSE,reuse_only=FALSE,
+    lock_held=TRUE),group)
+
+  phase_status<-attr(result,'phase_status')
+  if(!is.null(phase_status))adni_publish_progress(adni_workflow_root(out),group,'REPORTING',phase_status)
+  tryCatch(adni_render_report(repo,input,out,s,report_dir=adni_path(out,'reports',group),group=group,
+    filename=if(adni_storage_flat(out))'index.html'else'adni.html'),error=function(e){
+      if(!is.null(phase_status))adni_publish_progress(adni_workflow_root(out),group,'REPORT_FAILED',phase_status)
+      stop(e)
+    })
+  if(!is.null(phase_status))adni_publish_progress(adni_workflow_root(out),group,'COMPLETE',phase_status)
+  cat('[ADNI ',group,'] COMPLETE | report: ',adni_path(out,'reports',group,'index.html'),'\n',sep='');flush.console()
   invisible(result)
+  })
 }
 
 adni_render_report <- function(repo,data_dir,output_dir,settings,report_source=NULL,

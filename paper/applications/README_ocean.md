@@ -16,12 +16,14 @@ coverage audit. No preparation command is required for these cohorts. See
 [the preparation details](#prepare-calibration-and-folds-separately) for the
 sampling rule and optional regeneration.
 
-Run these sequentially against the same result directory. `ocean-eivGP.R` owns
+The method commands may run concurrently against the same result directory;
+either method group may be started first. Each command generates its own method report
+without requiring the other group to be complete. `ocean-eivGP.R` owns
 EIV-GP prediction, oxygen imputation, m/f summaries and scientific-target traces.
 `ocean-competitors.R` owns UC-GP, LVGP and EzGP together, including their original
 categorical and complete-case fits, predictions and scores. `ocean-report.R`
 assembles the comparisons, six manuscript tables, eight figures and `ocean.html`
-from saved results. Model calculations remain in the installed package;
+from saved results after both groups finish. Model calculations remain in the installed package;
 All executable Ocean scripts are directly in `tools/`.
 `tools/ocean-tools.R` contains Ocean-specific functions, including preparation, CLI orchestration and reporting. It reuses shared package utilities and model implementations.
 Method reports are `reports/eivGP/index.html` and `reports/competitors/index.html`.
@@ -46,7 +48,8 @@ Use `--plan=true` on a method script to list its tasks without running them.
 `--profile=pilot|quick`, `--dataset`, `--output`, `--data-root`, `--folds`, and
 `--cells` remain available. Method reports summarize available saved scores;
 selectors constrain fitting tasks. Quick is a one-fold EIV/CC workflow check;
-use pilot to exercise the original categorical competitors as well.
+use pilot for five short-chain folds, m/f diagnostics and the original
+categorical competitors.
 The existing `ocean.R`/`ocean.Rmd` remain compatible with older callers and explicit
 continuation, but the three scripts above are the paper reproduction interface.
 
@@ -70,7 +73,12 @@ Changing chain count requires a new output; saved fits retain their chains.
 
 `--cores=N` caps active computation across all these stages; it does not promise
 100% utilization during I/O or serial work. Waiting coordinators release slots.
-The application holds `.application.lock` through rendering to prevent concurrent writers.
+The method commands hold separate `_meta/locks/eivGP.lock` and
+`_meta/locks/competitors.lock` through their own reporting. A short initialization
+lock protects the shared frozen inputs and fitting identity. Duplicate writers
+for the same group are blocked. The combined report requires both groups to be
+idle. Each command has its own CPU pool; choose the sum of their `--cores`
+budgets for the machine and available memory.
 The per-invocation `core-events/` logs record acquired/released slots; task logs
 record completion and failures. Seeds, iterations and evaluation budgets remain unchanged; chain count follows the core budget for new fits. The CLI caps workers to detected CPU capacity.
 macOS/Linux use forked workers; Windows currently falls back to serial execution.

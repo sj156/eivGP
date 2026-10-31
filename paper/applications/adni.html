@@ -471,15 +471,16 @@ observation masks are fixed before fitting.</p>
 analyzes EIV-GP; <code>adni-competitors.R</code> fits and analyzes
 UC-GP, LVGP and EzGP; <code>adni-report.R</code> assembles this Rmd from
 saved results. <code>--reuse-only=true</code> prohibits fitting in the
-method scripts.</li>
+method scripts. Each method produces its own report. The groups may run
+concurrently; run the combined report after both finish.</li>
 <li><strong>Profiles:</strong> ADNI <code>pilot</code> defaults to four
 chains, stages 1,000 and 1,500 total iterations, with one burn of 500.
 <code>paper</code> defaults to four chains, 50,000 total iterations and
 burn 5,000. Explicit numerical overrides are recorded and must remain
 compatible with saved fitting identities.</li>
 <li><strong>Sampling:</strong> defaults are HMC at O0/O20 and elliptical
-slice sampling at O50. Core allocation changes execution concurrency,
-not chains, seeds or masks.</li>
+slice sampling at O50. New fits use min(cores,4) chains; saved fits
+retain their chains, seeds and masks.</li>
 <li><strong>Inputs and outputs:</strong> private prepared folds are read
 from <code>data/adni</code> or <code>--data-root</code>. Fits,
 diagnostics and empirical HTML are written to ignored
@@ -505,7 +506,8 @@ are embedded in this document.</p>
 <tr class="odd">
 <td>Fit</td>
 <td>Frozen folds → EIV fits and native/complete-case comparators</td>
-<td>One public shared CPU pool; bounded resident fit objects</td>
+<td>CPU budget per command; EIV and competitor groups may run
+concurrently</td>
 </tr>
 <tr class="even">
 <td>Predict</td>
@@ -1039,20 +1041,20 @@ Supplementary: environment and provenance
 <pre><code>## R version 4.5.1 (2025-06-13)
 ## Platform: aarch64-apple-darwin20
 ## Running under: macOS Sonoma 14.8.1
-## 
+##
 ## Matrix products: default
 ## BLAS:   /Library/Frameworks/R.framework/Versions/4.5-arm64/Resources/lib/libRblas.0.dylib
 ## LAPACK: /Library/Frameworks/R.framework/Versions/4.5-arm64/Resources/lib/libRlapack.dylib;  LAPACK version 3.12.1
-## 
+##
 ## locale:
 ## [1] C
-## 
+##
 ## time zone: Asia/Shanghai
 ## tzcode source: internal
-## 
+##
 ## attached base packages:
 ## [1] stats     graphics  grDevices utils     datasets  methods   base
-## 
+##
 ## loaded via a namespace (and not attached):
 ##  [1] patchwork_1.3.2    vctrs_0.7.3        cli_3.6.5          knitr_1.50
 ##  [5] rlang_1.2.0        xfun_0.53          eivGP_0.4.0.9014   purrr_1.1.0

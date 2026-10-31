@@ -49,12 +49,14 @@ table_html<-function(x,caption='',note='')cat(adni_table_html(x,caption,note),'\
 - **Workflow:** `adni-eivGP.R` fits and analyzes EIV-GP; `adni-competitors.R`
   fits and analyzes UC-GP, LVGP and EzGP; `adni-report.R` assembles this Rmd from
   saved results. `--reuse-only=true` prohibits fitting in the method scripts.
+  Each method produces its own report. The groups may run concurrently; run
+  the combined report after both finish.
 - **Profiles:** ADNI `pilot` defaults to four chains, stages 1,000 and 1,500 total
   iterations, with one burn of 500. `paper` defaults to four chains, 50,000 total
   iterations and burn 5,000. Explicit numerical overrides are recorded and must
   remain compatible with saved fitting identities.
 - **Sampling:** defaults are HMC at O0/O20 and elliptical slice sampling at O50.
-  Core allocation changes execution concurrency, not chains, seeds or masks.
+  New fits use min(cores,4) chains; saved fits retain their chains, seeds and masks.
 - **Inputs and outputs:** private prepared folds are read from `data/adni`
   or `--data-root`. Fits, diagnostics and empirical HTML are written to ignored
   `results/` or an external directory. Data preparation is separate from fitting.
@@ -72,7 +74,7 @@ if(has_results) {
 
 | Stage | Dependencies and work | Scheduling |
 |---|---|---|
-| Fit | Frozen folds → EIV fits and native/complete-case comparators | One public shared CPU pool; bounded resident fit objects |
+| Fit | Frozen folds → EIV fits and native/complete-case comparators | CPU budget per command; EIV and competitor groups may run concurrently |
 | Predict | Saved fits → seeded response draws, intervals and scores | Workers borrow the same allocation |
 | Functionals | Saved posterior → observable means, calibrated surfaces and target traces | Read-only, deterministic selected states and seeds |
 | Report assets | Scores → tables, imputation and diagnostic figures | Cached against source and fit hashes |
@@ -231,9 +233,10 @@ per-fit iterations appear in the convergence tables; nominal stage names retain
 the initially requested budget. This precision rule does not certify convergence.
 
 ```{r full-history-scientific-traces, eval=has_results, echo=FALSE, out.width='100%'}
-full_history <- getFromNamespace('mixedgp_application_trace_report','eivGP')(
-  a$output_dir, adni_path(a$output_dir,'reports','scientific-traces'))
-if(length(full_history))knitr::include_graphics(full_history[grepl('[.]png$',full_history)])
+full_history <- if(a$group=='competitors')character()else
+ getFromNamespace('mixedgp_application_trace_report','eivGP')(
+  a$output_dir, file.path(a$report_dir,'scientific-traces'))
+if(length(full_history))knitr::include_graphics(full_history[grepl('[.]png$',full_history)],rel_path=FALSE)
 ```
 
 

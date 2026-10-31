@@ -266,6 +266,66 @@ ocean_prepare_inputs <- function(data_dir) {
       train_exact=c(O0=0L,O20=.2*ntrain,O50=.5*ntrain),test_exact=c(O0=0L,O20=.2*ntest,O50=.5*ntest)))
 }
 
+ocean_atomic_json <- function(value,path) {
+  ocean_atomic_lines(jsonlite::toJSON(value,auto_unbox=TRUE,pretty=TRUE,null='null',na='null'),path)
+}
+
+ocean_check_legacy_lock <- function(root) {
+  paths<-file.path(root,c('.application.lock','.workflow.lock'))
+  if(any(dir.exists(paths)))stop('Ocean found an active exclusive workflow lock: ',paths[dir.exists(paths)][1],
+    '. Finish or stop that run and its workers before using the method commands.')
+}
+
+ocean_with_lock <- function(path,FUN,wait=FALSE,timeout=60) {
+  dir.create(dirname(path),recursive=TRUE,showWarnings=FALSE)
+  started<-proc.time()[['elapsed']];announced<-FALSE
+  repeat {
+    if(dir.create(path,showWarnings=FALSE))break
+    if(!dir.exists(path))stop('Ocean cannot create lock; check directory permissions and free space: ',path)
+    owner<-base::file.path(path,'owner.json')
+    info<-tryCatch(if(file.exists(owner))jsonlite::fromJSON(owner)else NULL,error=function(e)NULL)
+    detail<-if(is.null(info))'owner record not yet available'else paste('PID',info$pid,'on',info$host)
+    if(!wait||proc.time()[['elapsed']]-started>=timeout)
+      stop('Ocean lock is held (',detail,'): ',path,
+        '. Check the owning process; remove a stale lock only after its workers have stopped.')
+    if(!announced){cat('[Ocean] Waiting briefly for shared initialization: ',detail,'\n',sep='');flush.console();announced<-TRUE}
+    Sys.sleep(.1)
+  }
+  token<-paste(Sys.getpid(),format(Sys.time(),'%Y%m%d%H%M%OS6'),sep='-')
+  on.exit({
+    owner<-base::file.path(path,'owner.json')
+    saved<-tryCatch(jsonlite::fromJSON(owner),error=function(e)NULL)
+    if(!is.null(saved)&&identical(saved$token,token))unlink(path,recursive=TRUE)
+  },add=TRUE)
+  ocean_atomic_json(list(pid=Sys.getpid(),host=Sys.info()[['nodename']],token=token,
+    started_at=format(Sys.time(),tz='UTC',usetz=TRUE)),base::file.path(path,'owner.json'))
+  FUN()
+}
+
+ocean_execution_lock <- function(root,group,FUN) {
+  ocean_check_legacy_lock(root)
+  if(group=='report')return(ocean_execution_lock(root,'eivGP',function()
+    ocean_execution_lock(root,'competitors',FUN)))
+  ocean_with_lock(base::file.path(root,'_meta','locks',paste0(group,'.lock')),function(){
+    ocean_check_legacy_lock(root)
+    FUN()
+  })
+}
+
+ocean_workflow_identity <- function(path,current) {
+  if(!file.exists(path)){mixedgp_atomic_rds(current,path);return(current)}
+  saved<-readRDS(path)
+  if(identical(saved,current))return(saved)
+  a<-saved;b<-current;a$application<-b$application<-NULL
+  if(!identical(saved$schema,'ocean-package-CC-v2')||!identical(a,b))
+    ocean_assert_identity(saved,current,dirname(path))
+  dest<-file.path(dirname(path),'executor_updates',paste0(digest::digest(current$application),'.rds'))
+  if(!file.exists(dest))mixedgp_atomic_rds(list(schema='ocean-executor-update-v1',
+    original_identity=saved,current_execution_source=current$application,
+    package_and_statistical_identity_unchanged=TRUE),dest)
+  saved
+}
+
 ocean_identity <- function(repository_dir,data_dir,settings) {
   packages<-c("eivGP","kergp","LVGP","EzGP")
   versions<-setNames(vapply(packages,function(p)as.character(utils::packageVersion(p)),""),packages)
@@ -414,17 +474,21 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
     suppressPackageStartupMessages(library(eivGP))
     identity <- ocean_identity(repository_dir,data_dir,settings)
     dir.create(output_dir,recursive=TRUE,showWarnings=FALSE)
+    group<-settings$method_group
+    if(is.null(group)) {
     lock <- ocean_path(output_dir,".workflow.lock")
     if(!dir.create(lock,showWarnings=FALSE)) stop("Output directory is locked: ",lock,
       ". Confirm the previous process has stopped before removing a stale lock.")
     on.exit(unlink(lock,recursive=TRUE),add=TRUE)
+    }
+    initialize<-function(){
     idfile <- ocean_path(output_dir,"workflow_identity.rds")
     if(file.exists(idfile)) {
-      ocean_assert_identity(readRDS(idfile),identity,output_dir)
+      identity<<-ocean_workflow_identity(idfile,identity)
     } else {
       if(length(setdiff(list.files(output_dir,all.files=TRUE,no..=TRUE),c(".workflow.lock",".application.lock","jobs","_meta","logs",basename(ocean_job_dir(output_dir,settings$run_id))))))
         stop("Existing outputs lack distributed provenance. Read them with action=report, or use a fresh directory.")
-      mixedgp_atomic_rds(identity,idfile)
+      identity<<-ocean_workflow_identity(idfile,identity)
     }
     dir.create(ocean_path(output_dir,"data"),showWarnings=FALSE)
     # Task readers validate the frozen calibration design and CSV checksums.
@@ -438,8 +502,13 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
       path <- ocean_path(output_dir,if(settings$profile!="quick") "full5_class4" else "smoke_class4",sprintf("fold%02d",f),"test_U_masks.csv")
       mixedgp_atomic_csv(inputs$folds[[paste(f,"O20",sep="/")]]$masks,path)
     }
-    mixedgp_atomic_rds(settings,ocean_path(output_dir,"execution_settings.rds"))
-    mixedgp_atomic_rds(settings,ocean_path(output_dir,paste0("execution_settings_",stage,".rds")))
+    if(is.null(group)||!file.exists(ocean_path(output_dir,"execution_settings.rds")))
+      mixedgp_atomic_rds(settings,ocean_path(output_dir,"execution_settings.rds"))
+    mixedgp_atomic_rds(settings,ocean_path(output_dir,paste0("execution_settings_",
+      if(is.null(group))""else paste0(group,"_"),stage,".rds")))
+    }
+    if(is.null(group))initialize()else ocean_with_lock(
+      file.path(dirname(output_dir),paste0('.',basename(output_dir),'.initialization.lock')),initialize,wait=TRUE)
     ocean_combine_results(import_dirs,output_dir,identity)
     job <- ocean_job_dir(output_dir,settings$run_id)
     status <- if(execute) selected else selected[FALSE,,drop=FALSE]
@@ -552,10 +621,13 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
     if(any(failed))warning("Comparator tasks failed; continuing analysis of available results. See ",
       ocean_path(job,"task_status.csv"),call.=FALSE)
   }
-  decisions<-ocean_continuation_decisions(output_dir,settings$profile,write=dir.exists(output_dir),
-    continuation_iter=settings$continuation_iter)
+  decisions<-if(identical(settings$method_group,'competitors'))data.frame()else
+    ocean_continuation_decisions(output_dir,settings$profile,
+      write=dir.exists(output_dir)&&is.null(settings$method_group),continuation_iter=settings$continuation_iter)
   result <- if(!stage%in%c("fit","continue") && "prediction" %in% settings$modules) ocean_prediction_report(output_dir,inputs,
-    settings$profile) else NULL
+    settings$profile,group=if(is.null(settings$method_group))'report'else settings$method_group,
+    report_dir=if(is.null(settings$method_group))ocean_path(output_dir,'prediction_report')else
+      ocean_path(output_dir,'reports',settings$method_group,'progress')) else NULL
   list(tasks=selected,inputs=inputs,settings=settings,prediction=result,output_dir=output_dir,continuation_decisions=decisions)
 }
 
@@ -1084,7 +1156,8 @@ ocean_migrate_storage <- function(source,destination,dry_run=TRUE) {
   if(file.exists(destination)||dir.exists(destination))stop("Destination already exists: ",destination)
   if(startsWith(paste0(destination,"/"),paste0(source,"/")))stop("Destination must be outside source.")
   lock <- file.path(source,".workflow.lock")
-  if(dir.exists(lock) || dir.exists(file.path(source,".application.lock")))
+  group_locks<-file.path(source,'_meta','locks',paste0(c('eivGP','competitors'),'.lock'))
+  if(dir.exists(lock) || dir.exists(file.path(source,".application.lock")) || any(dir.exists(group_locks)))
     stop("Source is locked. Wait for its job to finish; do not migrate an active run.")
   if(ocean_storage_flat(source))stop("Source already uses the flat layout.")
   files <- character(); pending <- ""
@@ -1104,6 +1177,7 @@ ocean_migrate_storage <- function(source,destination,dry_run=TRUE) {
   if(isTRUE(dry_run))return(plan)
   if(!dir.create(lock,showWarnings=FALSE))stop("Source became locked.")
   on.exit(unlink(lock,recursive=TRUE),add=TRUE)
+  if(any(dir.exists(group_locks)))stop('Source became locked by a method command.')
   current_files <- sort(list.files(source,recursive=TRUE,all.files=TRUE,no..=TRUE))
   current_files <- current_files[!dir.exists(file.path(source,current_files))]
   if(!identical(files,current_files))stop("Source inventory changed before migration acquired its lock.")
@@ -1206,9 +1280,9 @@ ocean_combine_results <- function(source_dirs, output_dir, identity) {
   invisible(names(receipts))
 }
 
-ocean_prediction_report <- function(output_dir,inputs,profile="paper",report_dir=ocean_path(output_dir,"prediction_report")) {
+ocean_prediction_report <- function(output_dir,inputs,profile="paper",report_dir=ocean_path(output_dir,"prediction_report"),group="report") {
   rows <- list(); inventory <- list(); original <- if(profile!="quick") "full5_class4" else "smoke_class4"
-  final_sources <- ocean_final_eiv_sources(output_dir,profile)
+  final_sources <- if(group=="competitors")data.frame()else ocean_final_eiv_sources(output_dir,profile)
   add <- function(path,f,cell,variant) {
     if(!file.exists(path)) return(invisible(NULL))
     z <- read.csv(path,stringsAsFactors=FALSE)
@@ -1224,8 +1298,8 @@ ocean_prediction_report <- function(output_dir,inputs,profile="paper",report_dir
   }
   for(f in if(profile!="quick") 1:5 else 1L) {
     initial <- ocean_path(output_dir,original,sprintf("fold%02d",f))
-    add(ocean_path(initial,"baseline_metrics.csv"),f,"baseline","Original baseline")
-    for(cell in if(profile!="quick") c("O0","O20","O50") else c("O0","O20","O50")) {
+    if(group!="eivGP")add(ocean_path(initial,"baseline_metrics.csv"),f,"baseline","Original baseline")
+    for(cell in if(group=="competitors")character()else c("O0","O20","O50")) {
       final<-final_sources[final_sources$fold==f & final_sources$cell==cell,]
       path<-ocean_path(output_dir,final$source)
       available<-isTRUE(final$available)
@@ -1523,9 +1597,10 @@ ocean_evidence_table <- function(evidence, type, eiv_only=FALSE, labels=ocean_pr
 
 ocean_cc_prediction_tables <- function(output_dir,inputs,legacy,cc_output_dir="",
   profile="paper",dest=ocean_path(output_dir,"prediction_report","cc_revision"),
-  expected_folds=NULL) {
-  roots <- ocean_final_eiv_sources(output_dir,profile)
-  if(is.null(expected_folds))expected_folds<-sort(unique(roots$fold))
+  expected_folds=NULL,include_eiv=TRUE) {
+  roots <- if(include_eiv)ocean_final_eiv_sources(output_dir,profile)else
+    data.frame(fold=integer(),cell=character(),source=character(),available=logical())
+  if(is.null(expected_folds))expected_folds<-if(profile=="quick")1L else 1:5
   roots<-roots[roots$fold %in% expected_folds,,drop=FALSE]
   score_env <- new.env(parent=environment());ocean_initial_functions(score_env)
   rows <- list();add <- function(z,scope,training,test,source_profile=profile) {
@@ -2142,7 +2217,7 @@ ocean_diag_plots <- function(u, m, f, grids, representative_fold, baseline_same_
       if(!is.null(db)) db <- db[db$fold == representative_fold, ]
     }
     df$model <- paste0("EIV-GP ",df$cell); dm$model <- paste0("EIV-GP ",dm$cell)
-    means <- mixedgp_bind(list(dm,db))
+    means <- if(is.null(db) || !nrow(db)) dm else mixedgp_bind(list(dm,db))
     palette <- c("EIV-GP O20"="#2365a3","EIV-GP O50"="#c76326",
       "UC-GP (x,c)"="#7b3294","LVGP (x,c)"="#008837","EzGP (x,c)"="#a6761d")
     models <- names(palette)[names(palette) %in% means$model]
@@ -2183,7 +2258,8 @@ ocean_diag_plots <- function(u, m, f, grids, representative_fold, baseline_same_
       widths=c(1.65,1),guides="collect") +
       patchwork::plot_annotation(title = "Salinity 34.25, pressure 650 dbar",
         subtitle = if (all_folds) "All five folds; separate fitted posteriors" else paste("Fixed fold", representative_fold),
-        caption = paste("EIV bars/shading: pointwise 95% mean credible intervals. Triangles: original (x,c) baseline fitted means.",
+        caption = paste(paste0("EIV bars/shading: pointwise 95% mean credible intervals.",
+          if(any(!grepl("^EIV",means$model))) " Triangles: original (x,c) baseline fitted means." else ""),
           "\nm integrates the full fitted oxygen distribution. Dotted lines: recorded band boundaries; rug: nearby reference oxygen.")) &
       ggplot2::theme(legend.position="bottom",plot.caption=ggplot2::element_text(hjust=0,size=10))
   }
@@ -2193,7 +2269,7 @@ ocean_diag_plots <- function(u, m, f, grids, representative_fold, baseline_same_
 
 ocean_build_diagnostics <- function(output_dir, data_dir = ocean_path(output_dir, "data"),
   report_dir = ocean_path(output_dir, "diagnostics"), representative_fold = 1L,
-  overwrite = FALSE) {
+  overwrite = FALSE, include_baselines = TRUE) {
   for (package in c("eivGP", "ggplot2", "patchwork"))
     ocean_diag_require(requireNamespace(package, quietly = TRUE), paste("Required package:", package))
   ocean_diag_require(utils::packageVersion("eivGP") >= "0.4.0.9004",
@@ -2234,7 +2310,7 @@ ocean_build_diagnostics <- function(output_dir, data_dir = ocean_path(output_dir
     data.frame(fold = s$fold, cell = s$cell, d)
   })
   baseline_paths <- ocean_path(output_dir,"full5_class4",sprintf("fold%02d",1:5),"baseline_package_outputs.rds")
-  baseline_same_x <- if(all(file.exists(baseline_paths)))
+  baseline_same_x <- if(include_baselines && all(file.exists(baseline_paths)))
     ocean_baseline_mean_grid(output_dir,grids$m[grids$m$design=="same_x",]) else NULL
   plots <- ocean_diag_plots(u,m,f,grids,representative_fold,baseline_same_x)
   write_csv <- function(x, subdir, name) utils::write.csv(x, ocean_path(report_dir, subdir, name), row.names = FALSE)
@@ -2481,7 +2557,8 @@ ocean_surface_report <- function(output_dir,data_dir,diagnostics_dir=ocean_path(
 ocean_run_diagnostics <- function(output_dir,data_dir,
   report_dir=ocean_path(output_dir,"diagnostics"),
   representative_fold=1L,cache_from="",
-  build_prediction=TRUE,build_surfaces=TRUE,prediction_report=NULL) {
+  build_prediction=TRUE,build_surfaces=TRUE,prediction_report=NULL,
+  include_baselines=TRUE) {
   for(p in c("eivGP","ggplot2","patchwork","digest"))
     ocean_diag_require(requireNamespace(p,quietly=TRUE),paste("Required package:",p))
   output_dir <- normalizePath(output_dir,mustWork=TRUE)
@@ -2508,7 +2585,7 @@ ocean_run_diagnostics <- function(output_dir,data_dir,
   }
   progress("U imputation and cached package m/f calculations")
   diagnostics <- ocean_build_diagnostics(output_dir,data_dir,report_dir=report_dir,
-    representative_fold=representative_fold)
+    representative_fold=representative_fold,include_baselines=include_baselines)
   prediction <- prediction_report; surfaces <- NULL
   if(build_prediction) {
     progress("saved response prediction summaries")
@@ -3350,6 +3427,7 @@ ocean_run_cli <- function(repository_dir,params=list()) {
       "chain workers per EIV fit; prediction, diagnostics and plots share the same budget; HTML assembly is serial.\n")
   } else {
     if(settings$action=="fit")api$ocean_storage_init(output_dir)
+    result<-ocean_execution_lock(output_dir,'report',function(){
     # Own the result root through all stages, including reporting and HTML.
     if(dir.exists(output_dir)) {
       application_lock <- file.path(output_dir,".application.lock")
@@ -3368,6 +3446,8 @@ ocean_run_cli <- function(repository_dir,params=list()) {
     result<-api$ocean_logged(file.path(api$ocean_job_dir(output_dir,settings$run_id),"execution.log"),
       ocean_cli_workflow(settings,execute,render))
     cat("Saved results:",output_dir,"\nHTML:",result$html,"\n")
+    result
+    })
   }
   invisible(result)
 }
@@ -3425,19 +3505,23 @@ ocean_method_run <- function(repository_dir,params,group) {
     print(api$ocean_select_tasks(settings),row.names=FALSE)
     cat('Group:',group,'; shared core budget:',settings$cores,'\n');return(invisible(settings))
   }
+  settings$method_group<-group
+  settings$run_id<-paste0(group,'_',settings$run_id)
   if(settings$action=='report')ocean_saved_method_check(out,data_dir,settings)
   if(group=='report')return(ocean_run_cli(repository_dir,params[setdiff(names(params),c('chains','iter','burn'))]))
-  if(settings$action=='fit') {
-    identity<-api$ocean_identity(repository_dir,data_dir,settings)
-    idfile<-F('ocean_path')(out,'workflow_identity.rds')
-    # Never silently split the two method groups into different output roots.
-    if(file.exists(idfile))api$ocean_assert_identity(readRDS(idfile),identity,out)
-    api$ocean_storage_init(out)
+  if(!isTRUE(params$.lock_held)) {
+    F('ocean_check_legacy_lock')(out)
+    if(settings$action=='fit')F('ocean_with_lock')(
+      file.path(dirname(out),paste0('.',basename(out),'.initialization.lock')),function(){
+        api$ocean_storage_init(out)
+        identity<-api$ocean_identity(repository_dir,data_dir,settings)
+        idfile<-F('ocean_path')(out,'workflow_identity.rds')
+        if(file.exists(idfile))api$ocean_workflow_identity(idfile,identity)
+      },wait=TRUE)
+    return(F('ocean_execution_lock')(out,group,function(){
+      params$.lock_held<-TRUE;ocean_method_run(repository_dir,params,group)
+    }))
   }
-  dir.create(out,recursive=TRUE,showWarnings=FALSE)
-  lock<-file.path(out,'.application.lock')
-  if(!dir.create(lock,showWarnings=FALSE))stop('Ocean application already running: ',lock)
-  writeLines(as.character(Sys.getpid()),file.path(lock,'pid'));on.exit(unlink(lock,recursive=TRUE),add=TRUE)
   job<-api$ocean_job_dir(out,settings$run_id)
   old<-options(eivGP.core_events=file.path(job,'core-events'));on.exit(options(old),add=TRUE)
   release<-F('mixedgp_budget_enter')(settings$cores);on.exit(release(),add=TRUE,after=FALSE)
@@ -3466,14 +3550,14 @@ ocean_method_run <- function(repository_dir,params,group) {
     if(group=='competitors') {
       cc<-F('ocean_cc_prediction_tables')(out,a$inputs,a$prediction,
         cc_output_dir=if(nzchar(getp('cc_output_dir','')))api$ocean_resolve_path(params$cc_output_dir,repository_dir) else out,
-        profile=profile,dest=file.path(dest,'complete_case'),expected_folds=settings$folds)
+        profile=profile,dest=file.path(dest,'complete_case'),expected_folds=settings$folds,include_eiv=FALSE)
       F('mixedgp_atomic_csv')(cc$cc,file.path(dest,'complete_case','competitor_fold_metrics.csv'))
       sections<-c(sections,F('mixedgp_table_html')(cc$cc,'Complete-case competitors: fold scores'))
     } else if(profile!='quick' && all(a$prediction$availability$available)) {
-      diagnostics_dir<-if(nzchar(getp('diagnostics_dir','')))api$ocean_resolve_path(params$diagnostics_dir,repository_dir) else F('ocean_path')(out,'diagnostics')
+      diagnostics_dir<-if(nzchar(getp('diagnostics_dir','')))api$ocean_resolve_path(params$diagnostics_dir,repository_dir) else file.path(dest,'diagnostics')
       d<-F('ocean_run_diagnostics')(out,data_dir,report_dir=diagnostics_dir,
         representative_fold=getp('representative_fold',1L),build_prediction=FALSE,
-        build_surfaces=FALSE,prediction_report=prediction)
+        build_surfaces=FALSE,prediction_report=prediction,include_baselines=FALSE)
       targets<-F('ocean_build_target_traces')(out,a$inputs,settings)
       F('mixedgp_save_plot_jobs')(list(fig_ocean500_target_traces=F('ocean_target_trace_plot')(targets$traces)),dest,function(n)c(7.1,6.5))
       F('mixedgp_atomic_csv')(targets$summary,file.path(dest,'target_diagnostics.csv'))

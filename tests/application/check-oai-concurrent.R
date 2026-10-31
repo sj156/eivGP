@@ -44,6 +44,7 @@ while(length(jobs)) {
 stopifnot(both_owned,all(vapply(finished,function(x)identical(x,0L),logical(1))))
 for(group in c('eivGP','competitors')) {
   text<-readLines(file.path(out,paste0(group,'.log')))
+  stopifnot(any(grepl(paste0('; ',workers,' cores;'),text,fixed=TRUE)))
   stopifnot(any(grepl('START fit',text,fixed=TRUE)),any(grepl('DONE fit',text,fixed=TRUE)),
     any(grepl('COMPLETE | report:',text,fixed=TRUE)),!any(grepl('ADNI',text,fixed=TRUE)),
     file.exists(file.path(result,paste0('PROGRESS_',group,'.txt'))),

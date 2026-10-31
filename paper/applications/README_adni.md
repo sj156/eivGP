@@ -8,10 +8,6 @@ fold preparation, fitting orchestration, evaluation, and reporting. The Rmd
 report, HTML, and this guide remain under `paper/applications/`.
 The installed package supplies general numerical functions; it contains no ADNI
 workflow functions. Changes to ADNI scripts do not require reinstalling eivGP.
-The former package exports `adni_workflow_api`, `run_adni_application`, and
-`run_adni_analysis` are now application functions available after sourcing
-`tools/adni.R`. Install the refactored package once to remove the
-old package-owned implementation.
 
 ```sh
 Rscript tools/adni-eivGP.R --plan=true --profile=paper --cores=16
@@ -20,10 +16,12 @@ Rscript tools/adni-competitors.R --profile=paper --cores=16
 Rscript tools/adni-report.R --profile=paper --cores=16
 ```
 
-Run these sequentially against the same input and output directories. The first
-method fits compatible missing EIV tasks and immediately scores them. The second
+The two method commands may run concurrently against the same input and output
+directories; either method group may be started first. Each generates its own
+report without requiring the other group to be complete. The first method fits
+compatible missing EIV tasks and immediately scores them. The second
 owns original ordinal-input and complete-case UC-GP, LVGP and EzGP tasks and their
-scores. The report entry assembles the saved analyses through `adni.Rmd` and
+scores. After both finish, the report entry assembles the saved analyses through `adni.Rmd` and
 writes a self-contained `adni.html`. Reporting never fits, retries an optimizer
 or extends MCMC. `--reuse-only=true` on either method also prohibits fitting.
 `--plan=true` lists work without starting it.
@@ -31,7 +29,13 @@ or extends MCMC. `--reuse-only=true` on either method also prohibits fitting.
 The default source directory is `data/adni`; these paper commands save
 results in `results/adni`. Supply `--profile=paper` explicitly because the
 ADNI CLI defaults to `pilot`, which saves separately in `results/adni_pilot`.
-Choose `--cores` for the available machine; it does not alter chain counts.
+Choose `--cores` per command for the available machine and memory; the two budgets
+add together. New EIV fits use min(cores,4) chains; saved fits retain their chains.
+Each method holds its own lock, task folders, logs, progress summaries and report
+directory. A short initialization lock protects shared inputs, the manifest and
+fitting identity. Duplicate writers for one group are blocked; the combined
+report requires both groups to be idle. Terminal output and
+`PROGRESS_eivGP.txt` / `PROGRESS_competitors.txt` identify current jobs and completion.
 Fold CSVs and protocols sit directly in the dataset folder, with filenames such
 as `fold01_O20_train.csv`; no `inputs/` or per-fold subdirectories are needed.
 Both participant inputs and empirical outputs stay out of Git.

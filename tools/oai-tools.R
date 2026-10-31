@@ -1554,7 +1554,7 @@ oai_report_prepare <- function(repo,data_dir,output_dir,settings,report_source=N
   # Historical folders may use explicit stage labels rather than S<iteration>.
   if(length(m$stage_directories))stages<-unlist(m$stage_directories)
   stability<-list()
-  for(st in stages)for(i in seq_len(nrow(selected))) {
+  for(st in if(want_eiv)stages else character())for(i in seq_len(nrow(selected))) {
     path<-oai_path(output_dir,st,'analysis',sprintf('fold%02d',selected$fold[i]),selected$cell[i],'prediction_metrics.csv')
     d<-oai_csv(path,FALSE)
     if(nrow(d)){d<-d[d$protocol=='OI',];d$stage<-st;stability[[length(stability)+1L]]<-d}

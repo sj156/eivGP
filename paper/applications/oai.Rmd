@@ -53,6 +53,8 @@ table_html<-function(x,caption='',note='')cat(oai_table_html(x,caption,note),'\n
 - **Workflow:** `oai-eivGP.R` fits and analyzes EIV-GP; `oai-competitors.R`
   fits and analyzes UC-GP, LVGP and EzGP; `oai-report.R` assembles this Rmd from
   saved results. `--reuse-only=true` prohibits fitting in the method scripts.
+  Each method produces its own report. The groups may run concurrently; run
+  the combined report after both finish.
 - **Profiles:** OAI `pilot` uses min(cores,4) chains, 1,500 total
   iterations, with one burn of 500. `paper` uses min(cores,4) chains, 50,000 total
   iterations and burn 5,000. Explicit numerical overrides are recorded and must

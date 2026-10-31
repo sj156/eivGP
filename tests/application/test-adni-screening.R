@@ -71,8 +71,8 @@ testthat::test_that('real four-chain q4 smoke continues same states and exports 
   testthat::expect_true(file.info(file.path(p,'training_U_imputation_std.png'))$size>1000)
   testthat::expect_true(file.exists(file.path(p,'PROSPECTIVE_U_metrics.csv')))
  }
- testthat::expect_true(file.exists(file.path(root,'workflow/reports/stage_stability.csv')))
- testthat::expect_true(file.exists(file.path(root,'workflow/reports/index.html')))
+ testthat::expect_true(file.exists(file.path(root,'workflow/reports/eivGP/progress/stage_stability.csv')))
+ testthat::expect_true(file.exists(file.path(root,'workflow/reports/eivGP/progress/index.html')))
  before<-tools::md5sum(a$adni_plan_fit_path(file.path(root,'results'),t))
  adni_screen_run(repo,list(manifest=path,cores=1L,plan=FALSE,reuse_only=TRUE),'eivGP')
  testthat::expect_identical(tools::md5sum(a$adni_plan_fit_path(file.path(root,'results'),t)),before)

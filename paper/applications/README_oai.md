@@ -40,7 +40,8 @@ is limited: two commands each requesting eight cores need a combined budget of
 16 workers. Changing only resources for saved-only reporting does not refit.
 
 The two fitting groups own separate locks, task folders, logs, method reports
-and progress summaries. A short initialization lock protects the common frozen
+and progress summaries. Each summarizes its own results without requiring the
+other group to be complete. A short initialization lock protects the common frozen
 inputs, manifest and fitting identity. Duplicate commands for the same group are
 blocked. The combined report temporarily requires both groups to be idle.
 

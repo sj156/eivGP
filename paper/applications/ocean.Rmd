@@ -31,6 +31,8 @@ nested measurement masks are constructed on a fixed, class-balanced cohort.
 ## 1. Computation settings
 
 - **Workflow:** `ocean-eivGP.R` and `ocean-competitors.R` each fit and analyze their method group with one shared core budget; `ocean-report.R` assembles this report from saved results. Use `--reuse-only=true` on the method scripts to prohibit fitting.
+  Each method produces its own report. The groups may run concurrently with
+  separate CPU budgets; run the combined report after both finish.
 - **Action:** `report` reads saved fits; `plan` displays the proposed analysis without fitting.
 - **Dataset:** `ocean200`, `ocean500` or `ocean1000`; prepare the 1000-profile folds once using `tools/ocean-prepare-folds.R`.
 - **Selection:** `folds`, `cells` and `modules` select tasks without changing seeds or numerical settings.

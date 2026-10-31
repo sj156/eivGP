@@ -4,7 +4,8 @@ test_that('Ocean ESS settings are validated',{
   expect_null(ocean_settings()$ess_min)
   expect_equal(ocean_settings(ess_min='100')$ess_min,100)
   expect_null(ocean_settings(ess_min='NULL')$ess_min)
-  expect_error(ocean_settings(profile='quick',ess_min=100),'four chains')
+  expect_error(ocean_settings(profile='quick',cores=1L,ess_min=100),'four chains')
+  expect_equal(ocean_settings(profile='quick',cores=4L,ess_min=100)$ess_min,100)
 })
 test_that('Ocean fit phase attaches scientific diagnostics without changing a sufficient fit', {
   set.seed(29);X<-matrix(rnorm(24),12,2);u<-sort(rnorm(12));C<-rep(1:4,each=3)

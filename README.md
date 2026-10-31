@@ -187,6 +187,8 @@ monitored scientific bulk and tail ESS exceed 100; its default is `NULL`.
 For a separate explicit fixed-length extension, use
 `tools/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=16`.
 Neither operation repeats warmup. Reporting never starts continuation.
+The EIV-GP command summarizes its own predictions, oxygen imputation and
+scientific-target diagnostics without requiring completed competitors.
 
 **B3. Fit and analyze competitors.** Run against the same input/output root:
 
@@ -195,6 +197,10 @@ Rscript tools/ocean-competitors.R --profile=paper --cores=16
 ```
 
 This includes original categorical UC-GP/LVGP/EzGP and complete-case comparisons.
+The competitor command summarizes its own results without requiring completed
+EIV-GP fits. The two method commands may run concurrently against the same result
+directory; either method group may be started first. `--cores` is a budget per
+command, so two commands requesting 16 cores request 32 workers in total.
 Rerunning a compatible command reuses successful tasks; failures and optimizer
 nonconvergence remain visible.
 
@@ -204,7 +210,8 @@ nonconvergence remain visible.
 Rscript tools/ocean-report.R --profile=paper --cores=16
 ```
 
-The combined report reads saved fits and scores. `reports/paper/` contains the
+After both method groups finish, the combined report reads saved fits and scores
+and assembles their comparisons. `reports/paper/` contains the
 manuscript figures, tables and `artifact_manifest.csv`; method reports are
 `reports/eivGP/index.html` and `reports/competitors/index.html`. To rebuild method
 reports without fitting, add `--reuse-only=true` to the corresponding method
@@ -220,6 +227,9 @@ Rscript tools/ocean-eivGP.R --profile=quick --dataset=ocean200 --cores=8 --outpu
 Rscript tools/ocean-competitors.R --profile=quick --dataset=ocean200 --cores=12 --output=results/ocean200_check
 Rscript tools/ocean-report.R --profile=quick --dataset=ocean200 --cores=8 --output=results/ocean200_check
 ```
+
+Quick checks cover one fold. Use `--profile=pilot` with a separate output root
+for five short-chain folds and the m/f diagnostic plots.
 
 | Path | Contents |
 | --- | --- |
@@ -260,7 +270,8 @@ recorded in the run identity. Optional `--ess-min=100` enables scientific-target
 continuation after the final planned stage. O20 calibration is nested in O50
 under the supplied C-stratified design.
 
-**C3. Fit and analyze competitors.** Run sequentially against the same root:
+**C3. Fit and analyze competitors.** This command may run in a second Terminal
+while C2 is running, using the same result root:
 
 ```sh
 Rscript tools/adni-competitors.R --profile=paper --cores=16
@@ -269,9 +280,11 @@ Rscript tools/adni-competitors.R --profile=paper --cores=16
 This covers original ordinal-input UC-GP/LVGP/EzGP and matched complete-case
 comparisons. Specify only `--cores` for resource allocation. Fitting and evaluation
 use complete chain-sized groups for eivGP and one core per competitor job; lower the budget if memory pressure is
-high. See the ADNI guide.
+high. Each command summarizes its own results independently. The CPU budget is
+per command: two commands requesting 16 cores request 32 workers in total.
+See the ADNI guide.
 
-**C4. Assemble and inspect the paper report.**
+**C4. Assemble and inspect the paper report.** After both fitting commands finish:
 
 ```sh
 Rscript tools/adni-report.R --profile=paper --cores=16
@@ -334,6 +347,8 @@ budgets: 8 + 8 requests 16 workers in total, so choose their sum to fit the
 machine and available memory. Each prints job starts, completions and failures;
 `results/oai/PROGRESS_eivGP.txt` and `PROGRESS_competitors.txt` retain the latest
 group status. OAI application functions are self-contained in `tools/oai-tools.R`.
+Each method report summarizes its own results without requiring the other group
+to be complete.
 
 **D4. Assemble and inspect the paper report.** After both fitting commands finish:
 

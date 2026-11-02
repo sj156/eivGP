@@ -25,7 +25,7 @@ root<-if(nzchar(params$results_root))params$results_root else Sys.getenv("EIVGP_
 if(!nzchar(root))stop("Set results_root or EIVGP_RESULTS_ROOT")
 if(params$lane=="historical") {
   source(file.path(here,"study2.R"),local=TRUE)
-  result<-study2_analysis(root,tables_dir=if(nzchar(params$tables_dir))params$tables_dir else NULL)
+  result<-study2_analysis(root,tables_dir=if(nzchar(params$tables_dir))params$tables_dir else NULL,repo_root=repo)
 } else {
   source(file.path(here,"common.R"),local=TRUE)
   numerical_package_check()
@@ -40,7 +40,8 @@ if(params$lane=="historical") {
 
 Original categorical predictors use all responses and ignore calibration.
 Complete-case adaptations receive the same exact inputs as EIV-GP but fit fewer
-responses. FULL is EIV-GP; CUT is the secondary feedback ablation. Missing jobs
+responses. FULL is EIV-GP; CUT is the secondary appendix feedback comparison, using the 28/14 reported
+pairs by default; FULL and complete-case summaries retain all 50 datasets. Missing jobs
 remain missing. Replication MCSEs omit within-fit error, and diagnostic warnings
 are retained. Independent machine outputs must be paired by dataset and method,
 not compared by averaging host-level summaries.

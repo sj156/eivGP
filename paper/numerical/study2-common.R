@@ -15,6 +15,10 @@ study2_paper_workflow <- function(lane,args=list(),repo_root=getwd(),
   retain<-if(is.null(args[["retain-draws"]]))"false"else tolower(as.character(args[["retain-draws"]]))
   if(length(retain)!=1L||is.na(retain)||!retain%in%c("true","false"))stop("retain-draws must be true or false")
   args[["retain-draws"]]<-retain
+  if(is.null(args$cores))args$cores<-"12"
+  budget<-suppressWarnings(as.integer(args$cores))
+  if(length(budget)!=1L||is.na(budget)||budget<4L||as.character(budget)!=as.character(args$cores))
+    stop("Paper reproduction requires an integer cores budget >=4, retaining four chains per fit")
   args$action<-action;args$profile<-"paper"
   if(is.null(args$output))args$output<-file.path(path.expand("~/eivGP-results"),paste0("study2-",lane))
   original<-if(lane=="eivGP")intersect(selected,"FULL")else intersect(selected,c("UC-GP","LVGP","EzGP"))
@@ -24,6 +28,13 @@ study2_paper_workflow <- function(lane,args=list(),repo_root=getwd(),
   if(run_original&&any(c("reps","calib")%in%names(args)))
     stop("The original paper grid is fixed; reps/calib require selecting only CUT or -CC methods, or supplying saved FULL archives")
   common<-c("action","profile","output","data-root","cores","mixing-plots","checkpoint-seconds","checkpoint-iterations","checkpoint-after-seconds")
+  scientific<-list(outer="32",latent="128",`inner-draws`="4",iter="100000",
+    warmup="20000",`inner-iter`="4000",`inner-warmup`="1000",
+    `gp-response-latent`="16",`cc-response-latent`="64")
+  allowed<-c(common,"methods","reps","calib","full-fit-map","full-fit-root","retain-draws",names(scientific))
+  if(length(setdiff(names(args),allowed)))stop("Unknown options: ",paste(setdiff(names(args),allowed),collapse=", "))
+  for(k in intersect(names(args),names(scientific)))
+    if(!identical(as.character(args[[k]]),scientific[[k]]))stop("Paper fixes ",k,"=",scientific[[k]],"; use the package API for sensitivity studies")
   result<-list()
   if(run_original) {
     a<-args[intersect(names(args),common)]
@@ -32,6 +43,8 @@ study2_paper_workflow <- function(lane,args=list(),repo_root=getwd(),
     result$original<-runner("study2",a,repo_root)
   }
   extra<-if(lane=="eivGP")selected else selected[grepl("-CC$",selected)]
+  paper_cut<-lane=="eivGP" && "CUT"%in%extra && !any(c("reps","calib")%in%names(args))
+  if(paper_cut)extra<-setdiff(extra,"CUT")
   if(length(extra)) {
     a<-args;a$methods<-paste(extra,collapse=",");a$component<-"follow-up"
     if(lane=="eivGP"&&"FULL"%in%extra&&!supplied_full&&action%in%c("run","report")) {
@@ -55,6 +68,22 @@ study2_paper_workflow <- function(lane,args=list(),repo_root=getwd(),
       a[["full-fit-map"]]<-mapfile
     }
     result$calibrated<-runner("study2",a,repo_root)
+  }
+  if(paper_cut) {
+    pairs<-utils::read.csv(file.path(repo_root,"paper/manifests/study2/feedback-pairs.csv"))
+    if(!identical(names(pairs),c("calib","rep")) || anyDuplicated(pairs) ||
+       !setequal(unique(pairs$calib),c(20L,50L)) ||
+       !identical(sort(pairs$rep[pairs$calib==20L]),1:28) ||
+       !identical(sort(pairs$rep[pairs$calib==50L]),1:14))stop("Invalid published feedback-pair manifest")
+    groups<-split(pairs$rep,pairs$calib)
+    result$feedback<-lapply(names(groups),function(cal) {
+      ids<-groups[[cal]]
+      a<-args;a$methods<-"CUT";a$component<-"follow-up";a$reps<-paste(ids,collapse=",")
+      a$calib<-cal
+      # This remains appendix evidence. Completed CC and FULL comparisons use
+      # all 50 datasets, and are never truncated to the CUT subset.
+      runner("study2",a,repo_root)
+    })
   }
   invisible(result)
 }

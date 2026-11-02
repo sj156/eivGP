@@ -25,5 +25,27 @@
     "study1/runs/recovery-publication-mini/provenance.rds": "cbddae89b07f24de28c78788cd21d9be9a54dd31db80286e6c79d6d704223577",
     "study1/runs/recovery-publication-mini/state.rds": "22b0cc45415d40064ceeec1a62b6e93879acb7e6296f125764363d6d237f5ff9"
   },
-  "scope": "Numerical results audited against paper summaries on 2026-10-14. Historical rendered reports may predate current diagnostic wording."
+  "scope": "Numerical results audited against paper summaries on 2026-10-14. Historical rendered reports may predate current diagnostic wording.",
+  "current_primary_export": {
+    "audited": "2026-10-24",
+    "raw_tables": "study1-eivGP/core/study1-publication-v2-9d3ac08614b5/combined",
+    "md5": {
+      "ablation_predictive_metrics.csv": "b1aa513236d07d0402caf59a5e54b6ae",
+      "ablation_status.csv": "7dfd513b52ee82794d8191541cfa7567",
+      "ablation_surface_recovery.csv": "8d8705da25a34dd5534d6e89416f6362",
+      "design_contrasts_paired_raw.csv": "c3f22b0e7b8858dbe6dcf58bef246f7c",
+      "design_contrasts_paired_summary.csv": "36d4b741b92d90a231df0faf196d6a1f",
+      "latent_imputation.csv": "7295336d5282f4c3676d1dfa2734259a",
+      "mcmc_diagnostics.csv": "2a792c94eaef5e6eb76248b39f5884f1",
+      "mean_recovery.csv": "72d1171e34f1bf9295f58ee1a74ffdf9",
+      "method_comparisons_paired_raw.csv": "616fdb4b788218e9797da3bc1b2d9e91",
+      "method_comparisons_paired_summary.csv": "132815f52fa2a673c4b10e2a1e9393ea",
+      "predictive_metrics.csv": "903bf1e45c5eab3286fae7107b36016f",
+      "result_manifest.csv": "59afadf0a1596fc732a302a5a98e56d2",
+      "sampler_control_manifest.csv": "f926653c10f02666829c1f2aa0ddc2d7",
+      "surface_recovery.csv": "c82eeacbeae934c7916aa49b2e446f45"
+    },
+    "selection": "All 50 datasets per reported cell, including diagnostic flags and completed target-ESS continuations. The older merged export above is archival.",
+    "code_provenance": "Historical execution commit is not inferred from the current checkout."
+  }
 }

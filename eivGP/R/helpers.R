@@ -8274,10 +8274,6 @@ run_or_load_study1_replication <- function(rr) {
         tolower(as.character(cached$metadata$frozen_data_md5)),
         tolower(unname(tools::md5sum(data_path)))
       )
-    if(!is.null(STUDY2_ESS_MIN))cache_valid<-isTRUE(cache_valid) &&
-      identical(cached$metadata$scientific_ess_min,STUDY2_ESS_MIN) &&
-      is.data.frame(cached$diagnostics) && nrow(cached$diagnostics)==length(scenario_calib_grid(scenario)) && "scientific_ess_pass" %in% names(cached$diagnostics) &&
-      all(cached$diagnostics$scientific_ess_pass %in% TRUE)
     if (isTRUE(cache_valid)) { attr(cached,"eivgp_cache_hit") <- TRUE; return(cached) }
     message("Ignoring incompatible Study I cache: ", rep_file)
   }
@@ -9941,6 +9937,10 @@ run_or_load_study2_replication <- function(ii) {
         tolower(as.character(cached$metadata$frozen_data_md5)),
         tolower(unname(tools::md5sum(data_path)))
       )
+    if(!is.null(STUDY2_ESS_MIN))cache_valid<-isTRUE(cache_valid) &&
+      identical(cached$metadata$scientific_ess_min,STUDY2_ESS_MIN) &&
+      is.data.frame(cached$diagnostics) && nrow(cached$diagnostics)==length(scenario_calib_grid(scenario)) && "scientific_ess_pass" %in% names(cached$diagnostics) &&
+      all(cached$diagnostics$scientific_ess_pass %in% TRUE)
     if (isTRUE(cache_valid)) { attr(cached,"eivgp_cache_hit") <- TRUE; return(cached) }
     message("Ignoring incompatible Study II cache: ", rep_files[ii])
   }
@@ -10240,8 +10240,18 @@ study_config <- function(study = c("study1", "study2"), profile = c("quick", "de
   study <- match.arg(study); profile <- match.arg(profile)
   mode <- c(quick="smoke",development="development",paper="publication")[[profile]]
   constructor <- get(paste0(study,"_simulation_config"))
-  constructor(mode, code_dir=system.file(package="eivGP"), output_root=output_root,
+  config <- constructor(mode, code_dir=system.file(package="eivGP"), output_root=output_root,
               data_root=data_root, core_budget=cores)
+  if(profile == "paper") {
+    # Retain every reported cell/pressure test, but omit the superseded PI/CC
+    # component ablations. Their response-free fits are not matched CUT fits.
+    config$cells <- lapply(config$cells,function(cell) {cell$run_ablations<-FALSE;cell})
+    # The reported Study II primary grid used 20,000 total / 5,000 warmup,
+    # without scientific-ESS extensions. Keep continuation opt-in in the API.
+    if(study == "study2") config$mcmc$ess_min <- NULL
+    config$paper_protocol <- "manuscript-2026-11-02"
+  }
+  validate_simulation_config(config)
 }
 
 run_numerical_study <- function(config, action=c("plan","data","fit","run","report"),

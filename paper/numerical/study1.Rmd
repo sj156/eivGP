@@ -131,9 +131,9 @@ if(!is_eiv) {
     result<-study1_analysis(root,'report',params$profile,params$cores,
       tables_dir=if(nzchar(params$tables_dir))params$tables_dir else NULL,
       competitor_dir=if(nzchar(params$competitor_dir))params$competitor_dir else NULL,
-      mixing_plots=FALSE)
-    cat('# Historical merged original-grid snapshot\n\n')
-    show_table(result$summary,'Historical method comparison.')
+      mixing_plots=FALSE,repo_root=NUMERICAL_REPO_ROOT)
+    cat('# Saved paper primary export\n\n')
+    show_table(result$summary,'Selected saved primary scores.')
     show_table(result$diagnostics,'Saved diagnostics.')
   } else {
     source(file.path(here,'study1-common.R'),local=TRUE)

@@ -6,7 +6,7 @@ can run on different machines, not old and new experiments.
 
 | Script | Complete paper workload |
 |---|---|
-| `study2-eivGP.R` | Original EIV-GP grid; reuse its calibrated four-proxy fits for independent-test FULL scoring; CUT feedback comparison |
+| `study2-eivGP.R` | Reported fixed-budget EIV-GP grid; independent-test FULL scoring over all 50 datasets; appendix CUT comparison on 28/14 pairs |
 | `study2-competitors.R` | Original UC-GP, LVGP, EzGP; all three calibration-aware complete-case versions |
 | `study2.R` / `study2.Rmd` | Read saved results; no fitting |
 
@@ -16,12 +16,13 @@ Install this checkout on each machine with `Rscript tools/setup_numerical.R`.
 Use matching source and locked dependencies. Plan first:
 
 ```sh
-Rscript paper/numerical/study2-eivGP.R --action=plan --cores=4 --output="$HOME/eivGP-results/study2-eivGP" --data-root="$HOME/eivGP-results/data/study2"
-Rscript paper/numerical/study2-competitors.R --action=plan --cores=4 --output="$HOME/eivGP-results/study2-competitors" --data-root="$HOME/eivGP-results/data/study2"
+Rscript paper/numerical/study2-eivGP.R --action=plan --cores=12 --output="$HOME/eivGP-results/study2-eivGP" --data-root="$HOME/eivGP-results/data/study2"
+Rscript paper/numerical/study2-competitors.R --action=plan --cores=12 --output="$HOME/eivGP-results/study2-competitors" --data-root="$HOME/eivGP-results/data/study2"
 ```
 
 Replace `plan` with `run` on the respective machines for complete reproduction.
-Both generate the same fixed-seed datasets and calibration masks locally. The
+Both generate the same fixed-seed datasets and calibration masks locally.
+The paper scripts default to 12 cores and retain four chains per fit. The
 competitor machine needs no EIV-GP fit archives. The EIV-GP machine automatically
 creates a FULL map from its newly saved core run; FULL is **scored again**, not
 fitted a second time. Missing or ambiguous archives stop scoring rather than
@@ -47,8 +48,11 @@ Method selection is optional. `--methods=CUT` runs only the feedback comparison;
 `--methods=UC-GP-CC,LVGP-CC,EzGP-CC` runs only the calibrated competitors. These
 selections accept `--reps` and `--calib` for incomplete subsets. The original
 paper grid is fixed, so subset flags are rejected when original fitting is also
-selected. The audited remaining subsets are calibration 50 / reps 15:50 and
-calibration 20 / reps 29:50, totaling 174 competitor and 58 CUT results.
+selected. Without subset flags, CUT reproduces the reported appendix sample: replications
+1:28 at calibration 20 and 1:14 at calibration 50. The exact 42 keys are recorded
+in `../manifests/study2/feedback-pairs.csv`. FULL rescoring and the calibrated
+competitors still use all 50 datasets per calibration. Explicit subset flags
+request a separate subset; extending CUT to 50 changes the appendix experiment.
 
 For evaluation of existing FULL fits, explicitly supply `--full-fit-root` or
 `--full-fit-map` with `--methods=FULL` (or FULL,CUT). This skips original EIV-GP
@@ -125,17 +129,14 @@ conditioning on success can select easier datasets. Diagnostics do not prove
 convergence. Render `convergence-report.Rmd` with `manifest` and `output` parameters
 for the same analysis in HTML. Partial-run reports are snapshots, not final results.
 
-## Scientific ESS continuation (joint EIV-GP fits)
+## Fixed primary budget and optional continuation
 
-The paper-profile core FULL workflow uses `config$mcmc$ess_min = 100`.
-It runs the initial budget, then checks scientific-target bulk and tail ESS
-on all retained draws at the fixed five-point test panel. Compatible saved fits
-are checked and extended before prediction/recovery scoring. Additional batches
-are estimated from the weakest ESS, with a 20% margin and 5,000–20,000 transitions
-per chain per check. Sampling stops only when both ESS types strictly exceed the
-threshold; R-hat remains reported, not a stopping condition. Persistent separated
-chains still require investigation. Set `config$mcmc$ess_min <- NULL` in a custom
-configuration to retain fixed-budget behavior.
+The paper lane uses four chains with 20,000 total iterations and 5,000 warmup,
+without automatic ESS continuation. Diagnostics and unfavorable fits remain in
+the summaries. This restores the budget underlying the reported primary grid;
+the older script default that extended fits until ESS >100 produces a different
+experiment. Optional continuation remains available through the package API and
+must use a separate output root and be labeled as a new analysis.
 
 For ordinary package fits, automatic continuation is opt-in:
 
@@ -222,3 +223,27 @@ metadata remain unchanged. No archive is modified by installing this revision.
 New source identity still requires a new run root; maintenance does not relax
 cache compatibility or migrate unfinished runs. Install the updated checkout
 before using these commands; do not replace a library used by an active process.
+
+## Manuscript selection and reproducibility
+
+The paper profile retains every completed reported setting, including the
+category-sufficient boundary and logistic-error pressure test. It omits the older
+response-free PI-GP/CC-GP component ablations from new primary jobs; calibrated
+literature competitors and the separate Study II CUT comparison are retained.
+Removing a duplicated table does not remove its experiment.
+
+The published evaluation budgets, data/calibration seeds and four-chain design
+are fixed. The lane scripts reject altered scoring/sampling budgets; use package
+APIs and a separate root for sensitivity work. Plan and report do not fit models.
+Source changes require new fitting roots; archived results keep their actual
+provenance. Install this checkout before a new session.
+
+Reproducing a saved score from the same retained draws should agree to numerical
+tolerance. Fresh MCMC fits can additionally differ through Monte Carlo error,
+chain exploration and numerical libraries; locked dependencies and seeds do not
+justify a floating-point-only guarantee. Compare replication-level paired scores,
+diagnostics and numerical precision, not rounded table entries alone. No complete
+fresh 50-dataset rerun was used to certify this code revision. Existing HTML files
+are historical snapshots; render the matching Rmd against the selected results
+for an updated report. FULL-CUT details remain appendix evidence and should have
+only a brief interpretation in the main text.

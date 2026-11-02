@@ -4,14 +4,17 @@
 # Original (X,C) predictors and complete-case (X,U,C) additions share this entry point.
 # Study-specific choices; all implementation and reporting come from eivGP.
 study1_analysis <- function(results_root, action=c("report","plan","data","fit","run"),
-                              profile="paper", cores=4L, tables_dir=NULL, competitor_dir=NULL,
-                              mixing_plots=TRUE) {
+                              profile="paper", cores=12L, tables_dir=NULL, competitor_dir=NULL,
+                              mixing_plots=TRUE, repo_root=Sys.getenv("EIVGP_REPO_ROOT",getwd())) {
   action<-match.arg(action)
   if(!requireNamespace("eivGP",quietly=TRUE) || packageVersion("eivGP") < "0.4.0")
     stop("Install the repository eivGP package first.")
   if(action=="report") {
-    source<-file.path(results_root,"study1/runs/recovery-publication-mini/study1")
-    if(!is.null(tables_dir) && nzchar(tables_dir)) source<-tables_dir
+    if(!is.null(tables_dir) && nzchar(tables_dir)) source<-tables_dir else {
+      manifest<-file.path(repo_root,"paper/manifests/study1/manifest.json")
+      if(!file.exists(manifest))stop("Set EIVGP_REPO_ROOT to the checkout for the paper result manifest")
+      source<-file.path(results_root,jsonlite::read_json(manifest)$current_primary_export$raw_tables)
+    }
     if(!file.exists(file.path(source,"predictive_metrics.csv"))) stop("Selected paper export not found: ",source)
     results<-eivGP::read_study_results(source,competitor_dir)
     plots<-if(isTRUE(mixing_plots)) eivGP::save_mixing_plots(source) else character()
@@ -26,6 +29,7 @@ study1_workflow <- function(args=list(), repo_root=Sys.getenv("EIVGP_REPO_ROOT",
   env<-new.env(parent=globalenv())
   sys.source(file.path(repo_root,"paper/numerical/common.R"),envir=env)
   env$numerical_package_check()
+  if(is.null(args$cores))args$cores<-"12"
   eivGP::run_paper_study("study1",args,repo_root)
 }
 if(sys.nframe()==0L) {

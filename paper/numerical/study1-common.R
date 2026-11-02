@@ -13,6 +13,10 @@ study1_paper_workflow <- function(lane,args=list(),repo_root=getwd(),
   selected<-if(is.null(args$methods))available else strsplit(args$methods,",",fixed=TRUE)[[1]]
   if(!length(selected)||anyDuplicated(selected)||any(!selected%in%available))
     stop("Allowed methods: ",paste(available,collapse=", "))
+  if(is.null(args$cores))args$cores<-"12"
+  budget<-suppressWarnings(as.integer(args$cores))
+  if(length(budget)!=1L||is.na(budget)||budget<4L||as.character(budget)!=as.character(args$cores))
+    stop("Paper reproduction requires an integer cores budget >=4, retaining four chains per fit")
   args$action<-action;args$profile<-"paper"
   if(is.null(args$output))args$output<-file.path(path.expand("~/eivGP-results"),paste0("study1-",lane))
   original<-if(lane=="eivGP")intersect(selected,"FULL")else intersect(selected,c("UC-GP","LVGP","EzGP"))
@@ -27,6 +31,10 @@ study1_paper_workflow <- function(lane,args=list(),repo_root=getwd(),
   if(!is.null(args[["mixing-plots"]]) &&
      (length(args[["mixing-plots"]])!=1L || is.na(args[["mixing-plots"]]) ||
       !tolower(as.character(args[["mixing-plots"]]))%in%c("true","false")))stop("mixing-plots must be true or false")
+  scientific<-list(outer="16",latent="128",iter="12000",warmup="4000",`cc-response-latent`="64")
+  for(k in intersect(names(args),names(scientific)))
+    if(!identical(as.character(args[[k]]),scientific[[k]]))stop("Paper fixes ",k,"=",scientific[[k]],"; use the package API for sensitivity studies")
+  if("seed"%in%names(args))stop("Paper seeds are fixed; use the package API for alternate seeds")
   result<-list()
   if(lane=="eivGP" && action=="report") {
     result$report<-reporter(if(is.null(args[["run-dir"]]))args$output else args[["run-dir"]],

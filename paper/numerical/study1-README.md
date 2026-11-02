@@ -15,14 +15,15 @@ Do not replace a library used by running jobs or change their output folders.
 
 ```sh
 Rscript tools/setup_numerical.R
-Rscript paper/numerical/study1-eivGP.R --action=plan --cores=4 --output="$HOME/eivGP-results/study1-eivGP" --data-root="$HOME/eivGP-results/data/study1"
-Rscript paper/numerical/study1-competitors.R --action=plan --cores=4 --output="$HOME/eivGP-results/study1-competitors" --data-root="$HOME/eivGP-results/data/study1"
+Rscript paper/numerical/study1-eivGP.R --action=plan --cores=12 --output="$HOME/eivGP-results/study1-eivGP" --data-root="$HOME/eivGP-results/data/study1"
+Rscript paper/numerical/study1-competitors.R --action=plan --cores=12 --output="$HOME/eivGP-results/study1-competitors" --data-root="$HOME/eivGP-results/data/study1"
 ```
 
 Replace `plan` with `run` on the respective machines. The scripts default to plan;
 no fitting occurs without an explicit run action. The competitor machine does
 not require eivGP response fits. Both machines generate the fixed-seed data from
-the same protocol. No new fitting was used to validate these scripts.
+the same protocol. The paper scripts default to 12 cores, retaining four chains
+per fit and parallelizing across independent fits. No new fitting was used to validate these scripts.
 
 Original competitors use all `(X,C,Y)` records and ignore calibrated `U`.
 Complete-case competitors use only calibrated `(X,U,C,Y)` records for the response
@@ -141,3 +142,27 @@ Then use the normal `--action=report --run-dir=...` command to regenerate
 `continue_eivgp_until_ess(fit, X, C, U, checkpoint_file = "continuation.rds")`.
 The default has no extension-count limit; an explicit `max_extensions` is an
 operational limit and returns `success=FALSE` if the requirement is unmet.
+
+## Manuscript selection and reproducibility
+
+The paper profile retains every completed reported setting, including the
+category-sufficient boundary and logistic-error pressure test. It omits the older
+response-free PI-GP/CC-GP component ablations from new primary jobs; calibrated
+literature competitors and the separate Study II CUT comparison are retained.
+Removing a duplicated table does not remove its experiment.
+
+The published evaluation budgets, data/calibration seeds and four-chain design
+are fixed. The lane scripts reject altered scoring/sampling budgets; use package
+APIs and a separate root for sensitivity work. Plan and report do not fit models.
+Source changes require new fitting roots; archived results keep their actual
+provenance. Install this checkout before a new session.
+
+Reproducing a saved score from the same retained draws should agree to numerical
+tolerance. Fresh MCMC fits can additionally differ through Monte Carlo error,
+chain exploration and numerical libraries; locked dependencies and seeds do not
+justify a floating-point-only guarantee. Compare replication-level paired scores,
+diagnostics and numerical precision, not rounded table entries alone. No complete
+fresh 50-dataset rerun was used to certify this code revision. Existing HTML files
+are historical snapshots; render the matching Rmd against the selected results
+for an updated report. FULL-CUT details remain appendix evidence and should have
+only a brief interpretation in the main text.

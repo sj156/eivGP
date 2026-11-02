@@ -41,5 +41,6 @@ run_study_cli <- function(study,args=commandArgs(TRUE)) {
     a[[key]]<-sub("^--[^=]+=","",x)
   }
   numerical_package_check()
+  if(is.null(a$cores))a$cores<-"12"
   eivGP::run_paper_study(study,a,NUMERICAL_REPO_ROOT)
 }

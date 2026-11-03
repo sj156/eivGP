@@ -75,7 +75,11 @@ EIV-GP results under `core/<run-id>/`, original competitors under
 not separate user workflows. Reports contain raw per-dataset scores, summary and
 paired CSVs, failure counts and diagnostics. Native competitor exports also
 include LaTeX summaries. The historical notebook reports the audited merged core
-export once and labels it separately from the calibrated results.
+export once and labels it separately from the calibrated results. Historical
+CSV-only reporting defaults to `mixing_plots: false`: combined run-level
+diagnostic screens cannot supply chain traces. The method-lane reports produce
+the saved scientific-target trace figures; explicitly enabling mixing plots in a
+historical view requires detailed compatible diagnostic inputs.
 
 When collecting machines' results, pair raw scores by study, regime, replication,
 calibration and method; validate data identities and settings, and reject duplicate

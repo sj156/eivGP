@@ -1,7 +1,7 @@
 # Saved historical paper export only. No fitting or data generation.
 study2_analysis <- function(results_root, action="report",
                               profile="paper", cores=4L, tables_dir=NULL, competitor_dir=NULL,
-                              mixing_plots=TRUE, repo_root=Sys.getenv("EIVGP_REPO_ROOT",getwd())) {
+                              mixing_plots=FALSE, repo_root=Sys.getenv("EIVGP_REPO_ROOT",getwd())) {
   if(!identical(action,"report"))stop("This script only reports saved results; use study2-eivGP.R or study2-competitors.R to plan/run jobs")
   if(!requireNamespace("eivGP",quietly=TRUE) || packageVersion("eivGP") < "0.4.0")
     stop("Install the repository eivGP package first.")
@@ -14,6 +14,8 @@ study2_analysis <- function(results_root, action="report",
     }
     if(!file.exists(file.path(source,"predictive_metrics.csv"))) stop("Selected paper export not found: ",source)
     results<-eivGP::read_study_results(source,competitor_dir)
+    # Combined CSV exports contain run-level screens, not chain-resolved traces.
+    # Historical reporting is CSV-only by default; lane reports own trace plots.
     plots<-if(isTRUE(mixing_plots)) eivGP::save_mixing_plots(source) else character()
     return(list(source=source,mixing_plots=plots,summary=eivGP::summarize_comparison(results),diagnostics=results$diagnostics))
   }

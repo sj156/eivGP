@@ -7,6 +7,7 @@
   path<-if(length(files))tail(files,1L)else sub('^--file=','',grep('^--file=',commandArgs(FALSE),value=TRUE)[1])
   normalizePath(file.path(dirname(normalizePath(path)),'..'))
 })
+
 ocean_workflow_api <- function(repository_dir=.ocean_repository) {
   lib<-Sys.getenv('EIVGP_R_LIBRARY',file.path(repository_dir,'.r-library'))
   if(nzchar(lib)&&dir.exists(lib)).libPaths(c(normalizePath(lib),.libPaths()))
@@ -280,7 +281,7 @@ ocean_with_lock <- function(path,FUN,wait=FALSE,timeout=60) {
   repeat {
     if(dir.create(path,showWarnings=FALSE))break
     if(!dir.exists(path))stop('Ocean cannot create lock; check directory permissions and free space: ',path)
-    owner<-base::file.path(path,'owner.json')
+    owner<-file.path(path,'owner.json')
     info<-tryCatch(if(file.exists(owner))jsonlite::fromJSON(owner)else NULL,error=function(e)NULL)
     detail<-if(is.null(info))'owner record not yet available'else paste('PID',info$pid,'on',info$host)
     if(!wait||proc.time()[['elapsed']]-started>=timeout)
@@ -291,12 +292,12 @@ ocean_with_lock <- function(path,FUN,wait=FALSE,timeout=60) {
   }
   token<-paste(Sys.getpid(),format(Sys.time(),'%Y%m%d%H%M%OS6'),sep='-')
   on.exit({
-    owner<-base::file.path(path,'owner.json')
+    owner<-file.path(path,'owner.json')
     saved<-tryCatch(jsonlite::fromJSON(owner),error=function(e)NULL)
     if(!is.null(saved)&&identical(saved$token,token))unlink(path,recursive=TRUE)
   },add=TRUE)
   ocean_atomic_json(list(pid=Sys.getpid(),host=Sys.info()[['nodename']],token=token,
-    started_at=format(Sys.time(),tz='UTC',usetz=TRUE)),base::file.path(path,'owner.json'))
+    started_at=format(Sys.time(),tz='UTC',usetz=TRUE)),file.path(path,'owner.json'))
   FUN()
 }
 
@@ -304,7 +305,7 @@ ocean_execution_lock <- function(root,group,FUN) {
   ocean_check_legacy_lock(root)
   if(group=='report')return(ocean_execution_lock(root,'eivGP',function()
     ocean_execution_lock(root,'competitors',FUN)))
-  ocean_with_lock(base::file.path(root,'_meta','locks',paste0(group,'.lock')),function(){
+  ocean_with_lock(file.path(root,'_meta','locks',paste0(group,'.lock')),function(){
     ocean_check_legacy_lock(root)
     FUN()
   })
@@ -333,7 +334,8 @@ ocean_identity <- function(repository_dir,data_dir,settings) {
   list(schema="ocean-package-CC-v2",profile=settings$profile,
     upstream_commit="677791de6637298ead40d87a534ccd761722d1d5",
     data=setNames(ocean_hashes(paths),basename(paths)),code=eivgp_module_identity(),
-    application=unname(tools::md5sum(file.path(repository_dir,"tools/ocean-tools.R"))),packages=versions,
+    application=unname(tools::md5sum(file.path(repository_dir,"tools/ocean-tools.R"))),
+    packages=versions,
     package_functions=setNames(vapply(functions,function(n)digest::digest(
       paste(deparse(get(n,asNamespace("eivGP"))),collapse="\n"),algo="sha256"),""),functions),
     numerics=list(iter=settings$iter,burn=settings$burn,chains=settings$chains,u_block=8L,ess_min=settings$ess_min,

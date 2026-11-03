@@ -75,6 +75,12 @@ test_that("CUT measurement restarts without changing selected states or traces",
     expect_error(api$measurement_cut(C,U,cfg,123L),"simulated outage")
     env$mixedgp_checkpoint_write<-writer
     actual<-suppressWarnings(api$measurement_cut(C,U,cfg,123L))
+    # The scientific result and terminal RNG must match. The disk-backed run
+    # additionally carries its own, location-specific cleanup reference.
+    ref<-attr(actual,"eivgp_cut_restart_storage",exact=TRUE)
+    expect_true(is.list(ref))
+    expect_identical(ref,mixedgp_checkpoint_reference(ref$directory))
+    attr(actual,"eivgp_cut_restart_storage")<-NULL
     expect_identical(actual,reference)
   }
 })

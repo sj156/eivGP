@@ -43,9 +43,9 @@ study1_write_csv_safe(
 )
 
 failure_summary <- competitor_status |>
-  group_by(method) |>
-  summarise(
-    n_attempted = n(),
+  dplyr::group_by(method) |>
+  dplyr::summarise(
+    n_attempted = dplyr::n(),
     n_success = sum(status == "success"),
     failure_rate = mean(status != "success"),
     .groups = "drop"
@@ -65,13 +65,13 @@ if (any(failure_summary$failure_rate > 0.05)) {
 
 if (nrow(latent_imputation) > 0L) {
   latent_imputation_summary <- latent_imputation |>
-    filter(score_status == "scored") |>
-    pivot_longer(
-      cols = all_of(c("Bias", "RMSE", "MAE", "Coverage95", "Width95")),
+    dplyr::filter(score_status == "scored") |>
+    mixedgp_pivot_longer(
+      cols = c("Bias", "RMSE", "MAE", "Coverage95", "Width95"),
       names_to = "metric", values_to = "value"
     ) |>
-    group_by(scenario, n_calib, method, metric) |>
-    summarise(
+    dplyr::group_by(scenario, n_calib, method, metric) |>
+    dplyr::summarise(
       mean = mean(value, na.rm = TRUE),
       se = safe_se(value),
       n_rep_eff = sum(is.finite(value)),
@@ -83,15 +83,15 @@ if (nrow(latent_imputation) > 0L) {
   )
 }
 
-surface_all <- bind_rows(surface_recovery, ablation_surface_recovery)
+surface_all <- mixedgp_bind_rows(surface_recovery, ablation_surface_recovery)
 if (nrow(surface_all) > 0L) {
   surface_summary <- surface_all |>
-    pivot_longer(
-      cols = all_of(c("ISE", "Bias", "Coverage95", "Width95")),
+    mixedgp_pivot_longer(
+      cols = c("ISE", "Bias", "Coverage95", "Width95"),
       names_to = "metric", values_to = "value"
     ) |>
-    group_by(scenario, n_calib, method, metric) |>
-    summarise(
+    dplyr::group_by(scenario, n_calib, method, metric) |>
+    dplyr::summarise(
       mean = mean(value, na.rm = TRUE),
       se = safe_se(value),
       n_rep_eff = sum(is.finite(value)),
@@ -108,21 +108,21 @@ if (nrow(surface_all) > 0L) {
 ############################################################
 
 mean_point_metrics <- c("RMSE", "MAE", "Bias")
-mean_curve <- bind_rows(
-  mean_recovery |> filter(!is.na(n_calib)),
+mean_curve <- mixedgp_bind_rows(
+  mean_recovery |> dplyr::filter(!is.na(n_calib)),
   mean_recovery |>
-    filter(is.na(n_calib)) |>
-    select(-n_calib) |>
-    tidyr::crossing(n_calib = calib_grid)
+    dplyr::filter(is.na(n_calib)) |>
+    dplyr::select(-n_calib) |>
+    mixedgp_cross_calibration(n_calib = calib_grid)
 )
 mean_summary <- mean_curve |>
-  pivot_longer(
-    cols = all_of(c(mean_point_metrics, "Coverage95", "Width95")),
+  mixedgp_pivot_longer(
+    cols = c(mean_point_metrics, "Coverage95", "Width95"),
     names_to = "metric",
     values_to = "value"
   ) |>
-  group_by(scenario, n_calib, method, metric) |>
-  summarise(
+  dplyr::group_by(scenario, n_calib, method, metric) |>
+  dplyr::summarise(
     mean = if (all(!is.finite(value))) NA_real_ else mean(value, na.rm = TRUE),
     se = safe_se(value),
     n_success = sum(is.finite(value)),
@@ -135,83 +135,83 @@ write.csv(
 )
 
 p_mean <- mean_summary |>
-  filter(metric %in% mean_point_metrics) |>
-  ggplot(aes(x = n_calib, y = mean, color = method, group = method)) +
-  geom_line(data = function(z) mixedgp_line_rows(z, c("method", "metric")), linewidth = 0.85) +
-  geom_point(size = 2) +
-  geom_errorbar(
-    aes(ymin = mean - 1.96 * se, ymax = mean + 1.96 * se),
+  dplyr::filter(metric %in% mean_point_metrics) |>
+  ggplot2::ggplot(ggplot2::aes(x = n_calib, y = mean, color = method, group = method)) +
+  ggplot2::geom_line(data = function(z) mixedgp_line_rows(z, c("method", "metric")), linewidth = 0.85) +
+  ggplot2::geom_point(size = 2) +
+  ggplot2::geom_errorbar(
+    ggplot2::aes(ymin = mean - 1.96 * se, ymax = mean + 1.96 * se),
     width = 1.2, alpha = 0.7
   ) +
-  facet_wrap(~metric, scales = "free_y", nrow = 1) +
-  scale_color_manual(values = method_cols, name = NULL, drop = FALSE) +
-  labs(
+  ggplot2::facet_wrap(~metric, scales = "free_y", nrow = 1) +
+  ggplot2::scale_color_manual(values = method_cols, name = NULL, drop = FALSE) +
+  ggplot2::labs(
     x = "Number of calibrated latent observations",
     y = "Monte Carlo mean",
     title = "Study I: recovery of the observed-input mean m(x,c)"
   ) +
-  theme(legend.position = "bottom")
+  ggplot2::theme(legend.position = "bottom")
 ggsave(
   file.path(FIG_DIR, "fig6_study1_mean_recovery.pdf"),
   p_mean, width = 11, height = 4.2
 )
 
-curve_results <- bind_rows(
-  mc_results |> filter(!is.na(n_calib)),
+curve_results <- mixedgp_bind_rows(
+  mc_results |> dplyr::filter(!is.na(n_calib)),
   mc_results |>
-    filter(is.na(n_calib)) |>
-    select(-n_calib) |>
-    tidyr::crossing(n_calib = calib_grid)
+    dplyr::filter(is.na(n_calib)) |>
+    dplyr::select(-n_calib) |>
+    mixedgp_cross_calibration(n_calib = calib_grid)
 )
 curve_long <- curve_results |>
-  pivot_longer(
-    cols = all_of(metric_levels),
+  mixedgp_pivot_longer(
+    cols = metric_levels,
     names_to = "metric",
     values_to = "value"
   ) |>
-  mutate(metric = factor(metric, levels = metric_levels))
+  dplyr::mutate(metric = factor(metric, levels = metric_levels))
 curve_summary <- curve_long |>
-  group_by(scenario, n_calib, method, metric) |>
-  summarise(mean = mean(value, na.rm = TRUE), se = safe_se(value), .groups = "drop")
+  dplyr::group_by(scenario, n_calib, method, metric) |>
+  dplyr::summarise(mean = mean(value, na.rm = TRUE), se = safe_se(value), .groups = "drop")
 
-p_mc <- ggplot(
+p_mc <- ggplot2::ggplot(
   curve_summary,
-  aes(x = n_calib, y = mean, color = method, group = method)
+  ggplot2::aes(x = n_calib, y = mean, color = method, group = method)
 ) +
-  geom_line(data = function(z) mixedgp_line_rows(z, c("method", "metric")), linewidth = 0.85) +
-  geom_point(size = 2) +
-  geom_errorbar(
-    aes(ymin = mean - 1.96 * se, ymax = mean + 1.96 * se),
+  ggplot2::geom_line(data = function(z) mixedgp_line_rows(z, c("method", "metric")), linewidth = 0.85) +
+  ggplot2::geom_point(size = 2) +
+  ggplot2::geom_errorbar(
+    ggplot2::aes(ymin = mean - 1.96 * se, ymax = mean + 1.96 * se),
     width = 1.2, alpha = 0.7
   ) +
-  geom_hline(
+  ggplot2::geom_hline(
     data = data.frame(
       metric = factor("Coverage95", levels = metric_levels), yint = 0.95
     ),
-    aes(yintercept = yint), inherit.aes = FALSE,
+    ggplot2::aes(yintercept = yint), inherit.aes = FALSE,
     linetype = "dashed", color = "gray35"
   ) +
-  facet_wrap(~metric, scales = "free_y", ncol = 3) +
-  scale_color_manual(values = method_cols, name = NULL, drop = FALSE) +
-  labs(
+  ggplot2::facet_wrap(~metric, scales = "free_y", ncol = 3) +
+  ggplot2::scale_color_manual(values = method_cols, name = NULL, drop = FALSE) +
+  ggplot2::labs(
     x = "Number of calibrated latent observations",
     y = "Monte Carlo mean",
     title = "Study I: prediction of Y* given x* and c*"
   ) +
-  theme(legend.position = "bottom")
+  ggplot2::theme(legend.position = "bottom")
 ggsave(
   file.path(FIG_DIR, "fig5_study1_mc_metrics_revised.pdf"),
   p_mc, width = 12, height = 7.5
 )
 
 summary_long <- mc_results |>
-  pivot_longer(
-    cols = all_of(metric_levels),
+  mixedgp_pivot_longer(
+    cols = metric_levels,
     names_to = "metric",
     values_to = "value"
   ) |>
-  group_by(n_calib, method, metric) |>
-  summarise(
+  dplyr::group_by(n_calib, method, metric) |>
+  dplyr::summarise(
     mean = mean(value, na.rm = TRUE),
     se = safe_se(value),
     n_success = sum(is.finite(value)),
@@ -219,15 +219,15 @@ summary_long <- mc_results |>
   )
 
 summary_table <- summary_long |>
-  mutate(value = mapply(format_mean_se, mean, se, USE.NAMES = FALSE)) |>
-  select(n_calib, method, metric, value) |>
-  pivot_wider(names_from = metric, values_from = value) |>
-  arrange(is.na(n_calib), n_calib, method) |>
-  mutate(
+  dplyr::mutate(value = mapply(format_mean_se, mean, se, USE.NAMES = FALSE)) |>
+  dplyr::select(n_calib, method, metric, value) |>
+  mixedgp_pivot_wider(names_from = "metric", values_from = "value") |>
+  dplyr::arrange(is.na(n_calib), n_calib, method) |>
+  dplyr::mutate(
     calibration = ifelse(is.na(n_calib), "--", as.character(n_calib)),
     Method = as.character(method)
   ) |>
-  select(
+  dplyr::select(
     `$|\\mathcal O|$` = calibration, Method,
     RMSE, CRPS, NLPD, Coverage95, Width95, IntervalScore95
   )
@@ -240,7 +240,7 @@ writeLines(
 )
 
 main_table <- summary_table |>
-  filter(
+  dplyr::filter(
     Method != "EIV-GP" |
       `$|\\mathcal O|$` %in% c("0", "10", "50")
   )
@@ -253,15 +253,15 @@ writeLines(
 )
 
 fixed_competitors <- mc_results |>
-  filter(method %in% STUDY1_PUBLISHED_COMPETITORS) |>
-  select(rep, competitor = method, CRPS_comp = CRPS,
+  dplyr::filter(method %in% STUDY1_PUBLISHED_COMPETITORS) |>
+  dplyr::select(rep, competitor = method, CRPS_comp = CRPS,
          IntervalScore95_comp = IntervalScore95)
 paired_raw <- mc_results |>
-  filter(method == "EIV-GP") |>
-  select(rep, n_calib, CRPS_eiv = CRPS,
+  dplyr::filter(method == "EIV-GP") |>
+  dplyr::select(rep, n_calib, CRPS_eiv = CRPS,
          IntervalScore95_eiv = IntervalScore95) |>
-  inner_join(fixed_competitors, by = "rep") |>
-  mutate(
+  dplyr::inner_join(fixed_competitors, by = "rep") |>
+  dplyr::mutate(
     CRPS_difference = CRPS_eiv - CRPS_comp,
     IntervalScore95_difference =
       IntervalScore95_eiv - IntervalScore95_comp
@@ -272,8 +272,8 @@ write.csv(
   row.names = FALSE
 )
 paired_summary <- paired_raw |>
-  group_by(n_calib, competitor) |>
-  summarise(
+  dplyr::group_by(n_calib, competitor) |>
+  dplyr::summarise(
     CRPS_difference = format_mean_se(
       mean(CRPS_difference), safe_se(CRPS_difference)
     ),
@@ -281,7 +281,7 @@ paired_summary <- paired_raw |>
       mean(IntervalScore95_difference),
       safe_se(IntervalScore95_difference)
     ),
-    n_pairs = n(),
+    n_pairs = dplyr::n(),
     .groups = "drop"
   )
 writeLines(
@@ -297,20 +297,20 @@ writeLines(
 
 if (nrow(ablation_results) > 0L) {
   ablation_summary <- ablation_results |>
-    pivot_longer(
-      cols = all_of(metric_levels),
+    mixedgp_pivot_longer(
+      cols = metric_levels,
       names_to = "metric", values_to = "value"
     ) |>
-    group_by(n_calib, method, metric) |>
-    summarise(
+    dplyr::group_by(n_calib, method, metric) |>
+    dplyr::summarise(
       mean = mean(value, na.rm = TRUE), se = safe_se(value),
       .groups = "drop"
     ) |>
-    mutate(value = mapply(format_mean_se, mean, se, USE.NAMES = FALSE)) |>
-    select(n_calib, method, metric, value) |>
-    pivot_wider(names_from = metric, values_from = value) |>
-    arrange(n_calib, method) |>
-    select(
+    dplyr::mutate(value = mapply(format_mean_se, mean, se, USE.NAMES = FALSE)) |>
+    dplyr::select(n_calib, method, metric, value) |>
+    mixedgp_pivot_wider(names_from = "metric", values_from = "value") |>
+    dplyr::arrange(n_calib, method) |>
+    dplyr::select(
       `$|\\mathcal O|$` = n_calib,
       Method = method,
       RMSE, CRPS, Coverage95, Width95, IntervalScore95
@@ -323,32 +323,32 @@ if (nrow(ablation_results) > 0L) {
     file.path(TAB_DIR, "study1_ablation_summary.tex")
   )
 
-  mechanism_table <- bind_rows(
+  mechanism_table <- mixedgp_bind_rows(
     mc_results |>
-      filter(method == "EIV-GP", n_calib == STUDY1_MECHANISM_CALIB),
+      dplyr::filter(method == "EIV-GP", n_calib == STUDY1_MECHANISM_CALIB),
     ablation_results |>
-      filter(
+      dplyr::filter(
         method %in% c("PI-GP", "CC-GP"),
         n_calib == STUDY1_MECHANISM_CALIB
       )
   ) |>
-    pivot_longer(
-      cols = all_of(metric_levels), names_to = "metric", values_to = "value"
+    mixedgp_pivot_longer(
+      cols = metric_levels, names_to = "metric", values_to = "value"
     ) |>
-    group_by(method, metric) |>
-    summarise(
+    dplyr::group_by(method, metric) |>
+    dplyr::summarise(
       mean = mean(value, na.rm = TRUE),
       se = safe_se(value),
       .groups = "drop"
     ) |>
-    mutate(value = mapply(format_mean_se, mean, se, USE.NAMES = FALSE)) |>
-    select(method, metric, value) |>
-    pivot_wider(names_from = metric, values_from = value) |>
-    mutate(
+    dplyr::mutate(value = mapply(format_mean_se, mean, se, USE.NAMES = FALSE)) |>
+    dplyr::select(method, metric, value) |>
+    mixedgp_pivot_wider(names_from = "metric", values_from = "value") |>
+    dplyr::mutate(
       Method = factor(method, levels = c("EIV-GP", "PI-GP", "CC-GP"))
     ) |>
-    arrange(Method) |>
-    select(Method, RMSE, CRPS, Coverage95, Width95, IntervalScore95)
+    dplyr::arrange(Method) |>
+    dplyr::select(Method, RMSE, CRPS, Coverage95, Width95, IntervalScore95)
   writeLines(
     knitr::kable(
       mechanism_table,
@@ -467,9 +467,9 @@ write_csv_safe(
 
 if (nrow(competitor_status) > 0L) {
   competitor_failure_summary <- competitor_status |>
-    group_by(method) |>
-    summarise(
-      n_attempted = n(),
+    dplyr::group_by(method) |>
+    dplyr::summarise(
+      n_attempted = dplyr::n(),
       n_success = sum(status == "success"),
       failure_rate = mean(status != "success"),
       .groups = "drop"
@@ -496,7 +496,7 @@ if (nrow(competitor_status) > 0L) {
 ## Design manifest
 ############################################################
 
-design_manifest <- bind_rows(lapply(STUDY2_SCENARIOS, function(scenario) {
+design_manifest <- mixedgp_bind_rows(lapply(STUDY2_SCENARIOS, function(scenario) {
   pars <- make_study2_true_params(
     scenario = scenario, q = length(m_vec), m = m_vec[1L]
   )
@@ -589,30 +589,30 @@ capture.output(
 ## Publication summaries
 ############################################################
 
-mean_calibration_grid <- bind_rows(lapply(STUDY2_SCENARIOS, function(sc) {
+mean_calibration_grid <- mixedgp_bind_rows(lapply(STUDY2_SCENARIOS, function(sc) {
   data.frame(scenario = sc, n_calib = scenario_calib_grid(sc))
 }))
-mean_curve <- bind_rows(
-  mc_mean_recovery |> filter(!is.na(n_calib)),
+mean_curve <- mixedgp_bind_rows(
+  mc_mean_recovery |> dplyr::filter(!is.na(n_calib)),
   mc_mean_recovery |>
-    filter(is.na(n_calib)) |>
-    select(-n_calib) |>
-    inner_join(mean_calibration_grid, by = "scenario")
+    dplyr::filter(is.na(n_calib)) |>
+    dplyr::select(-n_calib) |>
+    dplyr::inner_join(mean_calibration_grid, by = "scenario")
 )
 mean_summary <- mean_curve |>
-  pivot_longer(
-    cols = all_of(c("RMSE", "MAE", "Bias", "Coverage95", "Width95")),
+  mixedgp_pivot_longer(
+    cols = c("RMSE", "MAE", "Bias", "Coverage95", "Width95"),
     names_to = "metric",
     values_to = "value"
   ) |>
-  group_by(scenario, n_calib, method, metric) |>
-  summarise(
+  dplyr::group_by(scenario, n_calib, method, metric) |>
+  dplyr::summarise(
     mean = if (all(!is.finite(value))) NA_real_ else mean(value, na.rm = TRUE),
     se = safe_se(value),
     n_success = sum(is.finite(value)),
     .groups = "drop"
   ) |>
-  mutate(scenario_label = vapply(scenario, scenario_label, character(1)))
+  dplyr::mutate(scenario_label = vapply(scenario, scenario_label, character(1)))
 write.csv(
   mean_summary,
   file.path(TAB_DIR, paste0("study2_mean_recovery_summary_", CACHE_TAG, ".csv")),
@@ -620,22 +620,22 @@ write.csv(
 )
 
 p_mean <- mean_summary |>
-  filter(metric %in% c("RMSE", "MAE", "Bias")) |>
-  ggplot(aes(n_calib, mean, color = method, group = method)) +
-  geom_line(data = function(z) mixedgp_line_rows(z, c("method", "scenario_label", "metric")), linewidth = 0.8) +
-  geom_point(size = 1.8) +
-  geom_errorbar(
-    aes(ymin = mean - 1.96 * se, ymax = mean + 1.96 * se),
+  dplyr::filter(metric %in% c("RMSE", "MAE", "Bias")) |>
+  ggplot2::ggplot(ggplot2::aes(n_calib, mean, color = method, group = method)) +
+  ggplot2::geom_line(data = function(z) mixedgp_line_rows(z, c("method", "scenario_label", "metric")), linewidth = 0.8) +
+  ggplot2::geom_point(size = 1.8) +
+  ggplot2::geom_errorbar(
+    ggplot2::aes(ymin = mean - 1.96 * se, ymax = mean + 1.96 * se),
     width = 1.2, alpha = 0.7
   ) +
-  facet_grid(scenario_label ~ metric, scales = "free_y") +
-  scale_color_manual(values = method_cols, name = NULL, drop = FALSE) +
-  labs(
+  ggplot2::facet_grid(scenario_label ~ metric, scales = "free_y") +
+  ggplot2::scale_color_manual(values = method_cols, name = NULL, drop = FALSE) +
+  ggplot2::labs(
     x = "Number of calibrated latent observations",
     y = "Monte Carlo mean",
     title = "Study II: recovery of the observed-input mean m(x,c)"
   ) +
-  theme(legend.position = "bottom")
+  ggplot2::theme(legend.position = "bottom")
 save_plot(
   file.path(FIG_DIR, paste0("study2_mean_recovery_", CACHE_TAG)),
   p_mean,
@@ -644,16 +644,16 @@ save_plot(
 )
 
 mc_overall <- mc_results |>
-  filter(evaluation_stratum == "overall")
+  dplyr::filter(evaluation_stratum == "overall")
 
 metric_summary <- mc_overall |>
-  pivot_longer(
-    cols = all_of(metric_levels),
+  mixedgp_pivot_longer(
+    cols = metric_levels,
     names_to = "metric",
     values_to = "value"
   ) |>
-  group_by(scenario, n_calib, method, metric) |>
-  summarise(
+  dplyr::group_by(scenario, n_calib, method, metric) |>
+  dplyr::summarise(
     mean = mean(value, na.rm = TRUE),
     se = safe_se(value),
     n_rep_eff = sum(is.finite(value)),
@@ -662,14 +662,14 @@ metric_summary <- mc_overall |>
 write.csv(metric_summary, file.path(TAB_DIR, paste0("study2_metric_summary_", CACHE_TAG, ".csv")), row.names = FALSE)
 
 pattern_summary <- mc_results |>
-  filter(evaluation_stratum != "overall") |>
-  pivot_longer(
-    cols = all_of(metric_levels),
+  dplyr::filter(evaluation_stratum != "overall") |>
+  mixedgp_pivot_longer(
+    cols = metric_levels,
     names_to = "metric",
     values_to = "value"
   ) |>
-  group_by(scenario, evaluation_stratum, n_calib, method, metric) |>
-  summarise(
+  dplyr::group_by(scenario, evaluation_stratum, n_calib, method, metric) |>
+  dplyr::summarise(
     mean = mean(value, na.rm = TRUE),
     se = safe_se(value),
     n_rep_eff = sum(is.finite(value)),
@@ -679,14 +679,14 @@ write.csv(pattern_summary, file.path(TAB_DIR, paste0("study2_pattern_summary_", 
 
 if (nrow(mc_ablation_results) > 0L) {
   ablation_metric_summary <- mc_ablation_results |>
-    filter(evaluation_stratum == "overall") |>
-    pivot_longer(
-      cols = all_of(metric_levels),
+    dplyr::filter(evaluation_stratum == "overall") |>
+    mixedgp_pivot_longer(
+      cols = metric_levels,
       names_to = "metric",
       values_to = "value"
     ) |>
-    group_by(scenario, n_calib, method, metric) |>
-    summarise(
+    dplyr::group_by(scenario, n_calib, method, metric) |>
+    dplyr::summarise(
       mean = mean(value, na.rm = TRUE),
       se = safe_se(value),
       n_rep_eff = sum(is.finite(value)),
@@ -706,13 +706,13 @@ if (nrow(mc_ablation_results) > 0L) {
 
 if (nrow(mc_imputation) > 0L) {
   imputation_summary <- mc_imputation |>
-    pivot_longer(
-      cols = all_of(c("Bias", "RMSE", "MAE", "Coverage95", "Width95")),
+    mixedgp_pivot_longer(
+      cols = c("Bias", "RMSE", "MAE", "Coverage95", "Width95"),
       names_to = "metric",
       values_to = "value"
     ) |>
-    group_by(scenario, target, n_calib, method, coordinate, metric) |>
-    summarise(
+    dplyr::group_by(scenario, target, n_calib, method, coordinate, metric) |>
+    dplyr::summarise(
       mean = mean(value, na.rm = TRUE),
       se = safe_se(value),
       n_rep_eff = sum(is.finite(value)),
@@ -730,16 +730,16 @@ if (nrow(mc_imputation) > 0L) {
   imputation_summary <- data.frame()
 }
 
-surface_all <- bind_rows(mc_surface, mc_ablation_surface)
+surface_all <- mixedgp_bind_rows(mc_surface, mc_ablation_surface)
 if (nrow(surface_all) > 0L) {
   surface_summary <- surface_all |>
-    pivot_longer(
-      cols = c(ISE, Bias, Coverage95, Width95),
+    mixedgp_pivot_longer(
+      cols = c("ISE", "Bias", "Coverage95", "Width95"),
       names_to = "metric",
       values_to = "value"
     ) |>
-    group_by(scenario, n_calib, method, metric) |>
-    summarise(
+    dplyr::group_by(scenario, n_calib, method, metric) |>
+    dplyr::summarise(
       mean = mean(value, na.rm = TRUE),
       se = safe_se(value),
       n_rep_eff = sum(is.finite(value)),
@@ -759,9 +759,9 @@ if (nrow(surface_all) > 0L) {
 
 if (nrow(mc_ablation_results) > 0L) {
   ablation_table <- mc_ablation_results |>
-    filter(scenario == "primary", evaluation_stratum == "overall") |>
-    group_by(n_calib, method) |>
-    summarise(
+    dplyr::filter(scenario == "primary", evaluation_stratum == "overall") |>
+    dplyr::group_by(n_calib, method) |>
+    dplyr::summarise(
       RMSE = format_mean_se(mean(RMSE), safe_se(RMSE)),
       CRPS = format_mean_se(mean(CRPS), safe_se(CRPS)),
       Coverage95 = format_mean_se(mean(Coverage95), safe_se(Coverage95)),
@@ -771,8 +771,8 @@ if (nrow(mc_ablation_results) > 0L) {
       ),
       .groups = "drop"
     ) |>
-    arrange(factor(method, levels = c("PI-GP", "CC-GP")), n_calib) |>
-    select(Calibration = n_calib, Method = method, everything())
+    dplyr::arrange(factor(method, levels = c("PI-GP", "CC-GP")), n_calib) |>
+    dplyr::select(Calibration = n_calib, Method = method, dplyr::everything())
 
   writeLines(
     knitr::kable(
@@ -794,9 +794,9 @@ if (nrow(mc_ablation_results) > 0L) {
 
 if (nrow(surface_all) > 0L) {
   surface_table <- surface_all |>
-    filter(scenario == "primary") |>
-    group_by(n_calib, method) |>
-    summarise(
+    dplyr::filter(scenario == "primary") |>
+    dplyr::group_by(n_calib, method) |>
+    dplyr::summarise(
       ISE = format_mean_se(mean(ISE), safe_se(ISE)),
       Bias = format_mean_se(mean(Bias), safe_se(Bias)),
       Coverage95 = format_mean_se(
@@ -805,12 +805,12 @@ if (nrow(surface_all) > 0L) {
       Width95 = format_mean_se(mean(Width95), safe_se(Width95)),
       .groups = "drop"
     ) |>
-    mutate(Calibration = ifelse(is.na(n_calib), "--", n_calib)) |>
-    arrange(
+    dplyr::mutate(Calibration = ifelse(is.na(n_calib), "--", n_calib)) |>
+    dplyr::arrange(
       factor(method, levels = c("EIV-GP", "PI-GP", "CC-GP", "Full-U GP")),
       n_calib
     ) |>
-    select(Calibration, Method = method, ISE, Bias, Coverage95, Width95)
+    dplyr::select(Calibration, Method = method, ISE, Bias, Coverage95, Width95)
 
   writeLines(
     knitr::kable(
@@ -831,17 +831,17 @@ if (nrow(surface_all) > 0L) {
 }
 
 paired_differences <- mc_overall |>
-  select(rep, scenario, n_calib, method, CRPS, IntervalScore95) |>
-  filter(method == "EIV-GP") |>
-  rename(EIV_CRPS = CRPS, EIV_IntervalScore95 = IntervalScore95) |>
-  inner_join(
+  dplyr::select(rep, scenario, n_calib, method, CRPS, IntervalScore95) |>
+  dplyr::filter(method == "EIV-GP") |>
+  dplyr::rename(EIV_CRPS = CRPS, EIV_IntervalScore95 = IntervalScore95) |>
+  dplyr::inner_join(
     mc_overall |>
-      filter(!method %in% c("EIV-GP", "Oracle")) |>
-      select(rep, scenario, competitor = method, Comp_CRPS = CRPS,
+      dplyr::filter(!method %in% c("EIV-GP", "Oracle")) |>
+      dplyr::select(rep, scenario, competitor = method, Comp_CRPS = CRPS,
              Comp_IntervalScore95 = IntervalScore95),
     by = c("rep", "scenario")
   ) |>
-  mutate(
+  dplyr::mutate(
     CRPS_difference = EIV_CRPS - Comp_CRPS,
     IntervalScore95_difference =
       EIV_IntervalScore95 - Comp_IntervalScore95
@@ -849,8 +849,8 @@ paired_differences <- mc_overall |>
 write.csv(paired_differences, file.path(TAB_DIR, paste0("study2_paired_differences_", CACHE_TAG, ".csv")), row.names = FALSE)
 
 paired_summary <- paired_differences |>
-  group_by(scenario, n_calib, competitor) |>
-  summarise(
+  dplyr::group_by(scenario, n_calib, competitor) |>
+  dplyr::summarise(
     CRPS_difference = mean(CRPS_difference),
     CRPS_difference_se = safe_se(CRPS_difference),
     IntervalScore95_difference = mean(IntervalScore95_difference),
@@ -864,9 +864,9 @@ write.csv(paired_summary, file.path(TAB_DIR, paste0("study2_paired_summary_", CA
 ############################################################
 
 primary_summary <- mc_overall |>
-  filter(scenario == "primary") |>
-  group_by(n_calib, method) |>
-  summarise(
+  dplyr::filter(scenario == "primary") |>
+  dplyr::group_by(n_calib, method) |>
+  dplyr::summarise(
     RMSE_mean = mean(RMSE), RMSE_se = safe_se(RMSE),
     CRPS_mean = mean(CRPS), CRPS_se = safe_se(CRPS),
     NLPD_mean = mean(NLPD), NLPD_se = safe_se(NLPD),
@@ -875,7 +875,7 @@ primary_summary <- mc_overall |>
     Score_mean = mean(IntervalScore95), Score_se = safe_se(IntervalScore95),
     .groups = "drop"
   ) |>
-  mutate(
+  dplyr::mutate(
     Calibration = ifelse(is.na(n_calib), "--", as.character(n_calib)),
     RMSE = mapply(format_mean_se, RMSE_mean, RMSE_se),
     CRPS = mapply(format_mean_se, CRPS_mean, CRPS_se),
@@ -884,8 +884,8 @@ primary_summary <- mc_overall |>
     Width95 = mapply(format_mean_se, Width_mean, Width_se),
     IntervalScore95 = mapply(format_mean_se, Score_mean, Score_se)
   ) |>
-  arrange(factor(method, levels = method_levels), n_calib) |>
-  select(
+  dplyr::arrange(factor(method, levels = method_levels), n_calib) |>
+  dplyr::select(
     Calibration, Method = method, RMSE, CRPS, NLPD,
     Coverage95, Width95, IntervalScore95
   )
@@ -911,33 +911,33 @@ writeLines(
 ############################################################
 
 contrast_eiv <- mc_overall |>
-  filter(
+  dplyr::filter(
     scenario %in% c(
       "primary", "latent_additive_control", "high_uncertainty"
     ),
     method == "EIV-GP",
     n_calib == STUDY2_CONTRAST_CALIB
   ) |>
-  select(
+  dplyr::select(
     rep, scenario, EIV_CRPS = CRPS,
     EIV_IntervalScore95 = IntervalScore95
   )
 contrast_competitors <- mc_overall |>
-  filter(
+  dplyr::filter(
     scenario %in% c(
       "primary", "latent_additive_control", "high_uncertainty"
     ),
     method %in% STUDY2_PUBLISHED_COMPETITORS,
     is.na(n_calib)
   ) |>
-  select(
+  dplyr::select(
     rep, scenario, competitor = method, Comp_CRPS = CRPS,
     Comp_IntervalScore95 = IntervalScore95
   )
 
 scenario_advantages <- contrast_eiv |>
-  inner_join(contrast_competitors, by = c("rep", "scenario")) |>
-  mutate(
+  dplyr::inner_join(contrast_competitors, by = c("rep", "scenario")) |>
+  dplyr::mutate(
     CRPS_advantage = Comp_CRPS - EIV_CRPS,
     IntervalScore95_advantage =
       Comp_IntervalScore95 - EIV_IntervalScore95
@@ -952,13 +952,13 @@ write.csv(
 )
 
 advantage_wide <- scenario_advantages |>
-  select(
+  dplyr::select(
     rep, competitor, scenario, CRPS_advantage,
     IntervalScore95_advantage
   ) |>
-  pivot_wider(
-    names_from = scenario,
-    values_from = c(CRPS_advantage, IntervalScore95_advantage)
+  mixedgp_pivot_wider(
+    names_from = "scenario",
+    values_from = c("CRPS_advantage", "IntervalScore95_advantage")
   )
 
 required_advantage_columns <- c(
@@ -971,9 +971,9 @@ required_advantage_columns <- c(
 )
 if (nrow(advantage_wide) > 0L &&
     all(required_advantage_columns %in% names(advantage_wide))) {
-  advantage_contrasts <- bind_rows(
+  advantage_contrasts <- mixedgp_bind_rows(
     advantage_wide |>
-      transmute(
+      dplyr::transmute(
         rep, competitor,
         contrast = "Interactions: primary minus additive",
         CRPS_advantage_change =
@@ -983,7 +983,7 @@ if (nrow(advantage_wide) > 0L &&
             IntervalScore95_advantage_latent_additive_control
       ),
     advantage_wide |>
-      transmute(
+      dplyr::transmute(
         rep, competitor,
         contrast = "Uncertainty: high minus primary",
         CRPS_advantage_change =
@@ -1003,8 +1003,8 @@ if (nrow(advantage_wide) > 0L &&
   )
 
   main_contrast_table <- advantage_contrasts |>
-    group_by(contrast, competitor) |>
-    summarise(
+    dplyr::group_by(contrast, competitor) |>
+    dplyr::summarise(
       `Change in CRPS advantage` = format_mean_se(
         mean(CRPS_advantage_change), safe_se(CRPS_advantage_change)
       ),
@@ -1015,7 +1015,7 @@ if (nrow(advantage_wide) > 0L &&
       Pairs = sum(is.finite(CRPS_advantage_change)),
       .groups = "drop"
     ) |>
-    mutate(
+    dplyr::mutate(
       Contrast = factor(
         contrast,
         levels = c(
@@ -1025,8 +1025,8 @@ if (nrow(advantage_wide) > 0L &&
       ),
       Competitor = factor(competitor, levels = STUDY2_PUBLISHED_COMPETITORS)
     ) |>
-    arrange(Contrast, Competitor) |>
-    select(
+    dplyr::arrange(Contrast, Competitor) |>
+    dplyr::select(
       Contrast, Competitor, `Change in CRPS advantage`,
       `Change in interval-score advantage`, Pairs
     )
@@ -1050,15 +1050,15 @@ if (nrow(advantage_wide) > 0L &&
 }
 
 logistic_rows <- mc_overall |>
-  filter(
+  dplyr::filter(
     scenario == "logistic_misspec",
     (method == "EIV-GP" & n_calib == STUDY2_CONTRAST_CALIB) |
       (method != "EIV-GP" & is.na(n_calib))
   )
 if (nrow(logistic_rows) > 0L) {
   logistic_table <- logistic_rows |>
-    group_by(method) |>
-    summarise(
+    dplyr::group_by(method) |>
+    dplyr::summarise(
       n_rep_eff = sum(is.finite(CRPS)),
       RMSE = format_mean_se(mean(RMSE), safe_se(RMSE)),
       CRPS = format_mean_se(mean(CRPS), safe_se(CRPS)),
@@ -1071,9 +1071,9 @@ if (nrow(logistic_rows) > 0L) {
       ),
       .groups = "drop"
     ) |>
-    mutate(Method = factor(method, levels = method_levels)) |>
-    arrange(Method) |>
-    select(
+    dplyr::mutate(Method = factor(method, levels = method_levels)) |>
+    dplyr::arrange(Method) |>
+    dplyr::select(
       Method, RMSE, CRPS, Coverage95, Width95, IntervalScore95,
       `Successful replications` = n_rep_eff
     )
@@ -1097,7 +1097,7 @@ if (nrow(logistic_rows) > 0L) {
 }
 
 pattern_rows <- mc_results |>
-  filter(
+  dplyr::filter(
     scenario == "primary",
     evaluation_stratum %in% c("common", "rare", "unobserved"),
     (method == "EIV-GP" & n_calib == STUDY2_CONTRAST_CALIB) |
@@ -1105,12 +1105,12 @@ pattern_rows <- mc_results |>
   )
 if (nrow(pattern_rows) > 0L) {
   pattern_sizes <- pattern_counts |>
-    filter(scenario == "primary") |>
-    group_by(evaluation_stratum) |>
-    summarise(mean_n_test = mean(n_test), .groups = "drop")
+    dplyr::filter(scenario == "primary") |>
+    dplyr::group_by(evaluation_stratum) |>
+    dplyr::summarise(mean_n_test = mean(n_test), .groups = "drop")
   pattern_table <- pattern_rows |>
-    group_by(evaluation_stratum, method) |>
-    summarise(
+    dplyr::group_by(evaluation_stratum, method) |>
+    dplyr::summarise(
       n_rep_eff = sum(is.finite(CRPS)),
       CRPS = format_mean_se(mean(CRPS), safe_se(CRPS)),
       Coverage95 = format_mean_se(
@@ -1119,8 +1119,8 @@ if (nrow(pattern_rows) > 0L) {
       Width95 = format_mean_se(mean(Width95), safe_se(Width95)),
       .groups = "drop"
     ) |>
-    left_join(pattern_sizes, by = "evaluation_stratum") |>
-    mutate(
+    dplyr::left_join(pattern_sizes, by = "evaluation_stratum") |>
+    dplyr::mutate(
       Pattern = factor(
         evaluation_stratum,
         levels = c("common", "rare", "unobserved")
@@ -1128,8 +1128,8 @@ if (nrow(pattern_rows) > 0L) {
       Method = factor(method, levels = method_levels),
       `Mean test-set size` = sprintf("%.1f", mean_n_test)
     ) |>
-    arrange(Pattern, Method) |>
-    select(
+    dplyr::arrange(Pattern, Method) |>
+    dplyr::select(
       Pattern, Method, `Mean test-set size`, CRPS, Coverage95, Width95,
       `Successful replications` = n_rep_eff
     )
@@ -1152,22 +1152,22 @@ if (nrow(pattern_rows) > 0L) {
   )
 
   pattern_advantages <- pattern_rows |>
-    filter(method == "EIV-GP") |>
-    select(
+    dplyr::filter(method == "EIV-GP") |>
+    dplyr::select(
       rep, evaluation_stratum, EIV_CRPS = CRPS,
       EIV_IntervalScore95 = IntervalScore95
     ) |>
-    inner_join(
+    dplyr::inner_join(
       pattern_rows |>
-        filter(method %in% STUDY2_PUBLISHED_COMPETITORS) |>
-        select(
+        dplyr::filter(method %in% STUDY2_PUBLISHED_COMPETITORS) |>
+        dplyr::select(
           rep, evaluation_stratum, competitor = method,
           Comp_CRPS = CRPS,
           Comp_IntervalScore95 = IntervalScore95
         ),
       by = c("rep", "evaluation_stratum")
     ) |>
-    mutate(
+    dplyr::mutate(
       CRPS_advantage = Comp_CRPS - EIV_CRPS,
       IntervalScore95_advantage =
         Comp_IntervalScore95 - EIV_IntervalScore95
@@ -1181,8 +1181,8 @@ if (nrow(pattern_rows) > 0L) {
     row.names = FALSE
   )
   pattern_advantage_table <- pattern_advantages |>
-    group_by(evaluation_stratum, competitor) |>
-    summarise(
+    dplyr::group_by(evaluation_stratum, competitor) |>
+    dplyr::summarise(
       `EIV CRPS advantage` = format_mean_se(
         mean(CRPS_advantage), safe_se(CRPS_advantage)
       ),
@@ -1193,15 +1193,15 @@ if (nrow(pattern_rows) > 0L) {
       Pairs = sum(is.finite(CRPS_advantage)),
       .groups = "drop"
     ) |>
-    mutate(
+    dplyr::mutate(
       Pattern = factor(
         evaluation_stratum,
         levels = c("common", "rare", "unobserved")
       ),
       Competitor = factor(competitor, levels = STUDY2_PUBLISHED_COMPETITORS)
     ) |>
-    arrange(Pattern, Competitor) |>
-    select(
+    dplyr::arrange(Pattern, Competitor) |>
+    dplyr::select(
       Pattern, Competitor, `EIV CRPS advantage`,
       `EIV interval-score advantage`, Pairs
     )
@@ -1221,51 +1221,51 @@ if (nrow(pattern_rows) > 0L) {
 ############################################################
 
 plot_summary <- metric_summary |>
-  filter(scenario == "primary")
+  dplyr::filter(scenario == "primary")
 
-fixed_rows <- plot_summary |> filter(is.na(n_calib))
-varying_rows <- plot_summary |> filter(!is.na(n_calib))
+fixed_rows <- plot_summary |> dplyr::filter(is.na(n_calib))
+varying_rows <- plot_summary |> dplyr::filter(!is.na(n_calib))
 if (nrow(fixed_rows) > 0L) {
   fixed_rows <- merge(
-    fixed_rows |> select(-n_calib),
+    fixed_rows |> dplyr::select(-n_calib),
     data.frame(n_calib = scenario_calib_grid("primary")),
     by = NULL
   )
 }
-plot_summary <- bind_rows(varying_rows, fixed_rows)
+plot_summary <- mixedgp_bind_rows(varying_rows, fixed_rows)
 plot_summary$metric <- factor(plot_summary$metric, levels = metric_levels)
 plot_summary$method <- factor(plot_summary$method, levels = method_levels)
 
-p_primary <- ggplot(
+p_primary <- ggplot2::ggplot(
   plot_summary,
-  aes(x = n_calib, y = mean, color = method, group = method)
+  ggplot2::aes(x = n_calib, y = mean, color = method, group = method)
 ) +
-  geom_line(data = function(z) mixedgp_line_rows(z, c("method", "metric")), linewidth = 0.8) +
-  geom_point(size = 1.8) +
-  geom_errorbar(
-    aes(ymin = mean - 1.96 * se, ymax = mean + 1.96 * se),
+  ggplot2::geom_line(data = function(z) mixedgp_line_rows(z, c("method", "metric")), linewidth = 0.8) +
+  ggplot2::geom_point(size = 1.8) +
+  ggplot2::geom_errorbar(
+    ggplot2::aes(ymin = mean - 1.96 * se, ymax = mean + 1.96 * se),
     width = 1.2,
     alpha = 0.65
   ) +
-  geom_hline(
+  ggplot2::geom_hline(
     data = data.frame(
       metric = factor("Coverage95", levels = metric_levels),
       yint = 0.95
     ),
-    aes(yintercept = yint),
+    ggplot2::aes(yintercept = yint),
     inherit.aes = FALSE,
     linetype = "dashed",
     color = "gray35"
   ) +
-  facet_wrap(~metric, scales = "free_y", ncol = 3) +
-  scale_color_manual(values = method_cols, drop = FALSE, name = NULL) +
-  labs(
+  ggplot2::facet_wrap(~metric, scales = "free_y", ncol = 3) +
+  ggplot2::scale_color_manual(values = method_cols, drop = FALSE, name = NULL) +
+  ggplot2::labs(
     x = "Number of calibrated latent observations",
     y = "Monte Carlo mean",
     title = "Study II: primary multivariate interactive setting"
   ) +
-  theme_bw(base_size = 11) +
-  theme(legend.position = "bottom")
+  ggplot2::theme_bw(base_size = 11) +
+  ggplot2::theme(legend.position = "bottom")
 
 save_plot(
   file.path(FIG_DIR, paste0("fig5_study2_mc_metrics_", CACHE_TAG)),
@@ -1275,13 +1275,13 @@ save_plot(
 )
 
 contrast_crps <- metric_summary |>
-  filter(
+  dplyr::filter(
     scenario %in% c("primary", "logistic_misspec"),
     metric == "CRPS",
     (method == "EIV-GP" & n_calib == STUDY2_CONTRAST_CALIB) |
       method != "EIV-GP"
   ) |>
-  mutate(
+  dplyr::mutate(
     scenario = factor(
       scenario,
       levels = c("primary", "logistic_misspec"),
@@ -1294,17 +1294,17 @@ contrast_crps <- metric_summary |>
     method = factor(method, levels = method_levels)
   )
 
-p_contrast <- ggplot(
+p_contrast <- ggplot2::ggplot(
   contrast_crps,
-  aes(x = method, y = mean, color = method)
+  ggplot2::aes(x = method, y = mean, color = method)
 ) +
-  geom_point(size = 2.2) +
-  geom_errorbar(aes(ymin = mean - 1.96 * se, ymax = mean + 1.96 * se), width = 0.15) +
-  facet_wrap(~scenario, scales = "free_y") +
-  scale_color_manual(values = method_cols, drop = FALSE, guide = "none") +
-  labs(x = NULL, y = "CRPS", title = "Study II: prespecified design contrasts") +
-  theme_bw(base_size = 11) +
-  theme(axis.text.x = element_text(angle = 35, hjust = 1))
+  ggplot2::geom_point(size = 2.2) +
+  ggplot2::geom_errorbar(ggplot2::aes(ymin = mean - 1.96 * se, ymax = mean + 1.96 * se), width = 0.15) +
+  ggplot2::facet_wrap(~scenario, scales = "free_y") +
+  ggplot2::scale_color_manual(values = method_cols, drop = FALSE, guide = "none") +
+  ggplot2::labs(x = NULL, y = "CRPS", title = "Study II: prespecified design contrasts") +
+  ggplot2::theme_bw(base_size = 11) +
+  ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 35, hjust = 1))
 
 save_plot(
   file.path(FIG_DIR, paste0("fig_study2_scenario_crps_", CACHE_TAG)),
@@ -1319,15 +1319,15 @@ save_plot(
 
 if (nrow(mc_diagnostics) > 0L) {
   mcmc_gate <- mc_diagnostics |>
-    group_by(mcmc_gate_rule) |>
-    summarise(
-      n_fits = n(),
+    dplyr::group_by(mcmc_gate_rule) |>
+    dplyr::summarise(
+      n_fits = dplyr::n(),
       n_pass = sum(mcmc_pass),
       pass_rate = mean(mcmc_pass),
-      rhat_limit = first(mcmc_rhat_limit),
-      raw_ess_limit = first(mcmc_raw_ess_limit),
-      target_bulk_ess_limit = first(mcmc_target_bulk_ess_limit),
-      target_tail_ess_limit = first(mcmc_target_tail_ess_limit),
+      rhat_limit = dplyr::first(mcmc_rhat_limit),
+      raw_ess_limit = dplyr::first(mcmc_raw_ess_limit),
+      target_bulk_ess_limit = dplyr::first(mcmc_target_bulk_ess_limit),
+      target_tail_ess_limit = dplyr::first(mcmc_target_tail_ess_limit),
       .groups = "drop"
     )
   write.csv(mcmc_gate, file.path(TAB_DIR, paste0("study2_mcmc_gate_", CACHE_TAG, ".csv")), row.names = FALSE)
@@ -2250,7 +2250,7 @@ mixedgp_study1_trace_selection <- function(z,run_dir) {
         b$selection<-'Continued scientific targets';extra[[length(extra)+1L]]<-b
       }
     }
-    if(length(extra))selected<-bind_rows(selected[selected$selection!='Weakest mean',],bind_rows(extra))
+    if(length(extra))selected<-mixedgp_bind_rows(selected[selected$selection!='Weakest mean',],mixedgp_bind_rows(extra))
   }
   selected
 }

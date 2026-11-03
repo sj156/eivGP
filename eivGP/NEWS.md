@@ -1,5 +1,21 @@
 # Unreleased
 
+- Preserve empty factor prototypes, numeric column types and zero-column row
+  counts in local row binding. Exercise checkpoint equality separately from
+  location-specific storage metadata and scale scheduling tests to host capacity.
+  Scope operational-limit mocks so they cannot leak into later multivariate tests.
+
+- Replace simple table binding, metric reshaping and calibration crossing with
+  local helpers; remove tidyr and its exclusive dependency closure.
+- Make plotting/report libraries optional. Qualify reporting
+  calls explicitly while preserving saved-report plot-write controls. Basic
+  fitting, prediction and diagnostics no longer load the reporting stack.
+
+- Use serial Rfast distance primitives and chain-local distance caches in MCMC.
+  Reuse fixed observed-input distances, update only affected covariance rows
+  for Schur proposals, and reuse observed-input distances within HMC trajectories.
+  Preserve random draws, checkpoint semantics and dense-factorization fallbacks.
+
 - Move ADNI and Ocean application functions to the flat `tools/adni-tools.R`
   and `tools/ocean-tools.R` scripts. Keep shared scheduling, atomic storage,
   table formatting and competitor controls in the package as `mixedgp_*` helpers.

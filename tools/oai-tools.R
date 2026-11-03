@@ -7,6 +7,7 @@
   path<-if(length(files))tail(files,1L)else sub('^--file=','',grep('^--file=',commandArgs(FALSE),value=TRUE)[1])
   normalizePath(file.path(dirname(normalizePath(path)),'..'))
 })
+
 oai_load_api <- function(repo=.oai_repository) {
   repo<-normalizePath(repo)
   lib<-Sys.getenv('EIVGP_R_LIBRARY',file.path(repo,'.r-library'))
@@ -25,7 +26,7 @@ oai_labels <- function(fields,labels=NULL) {
 
 # Task folders and shared directories mirror the Ocean flat result layout.
 oai_storage_flat <- function(root) {
-  marker<-base::file.path(root,'_meta','storage-layout.rds')
+  marker<-file.path(root,'_meta','storage-layout.rds')
   if(!file.exists(marker))return(FALSE)
   if(!readRDS(marker)$schema%in%c('oai-flat-v1','adni-flat-v1'))stop('Unknown OAI storage schema: ',marker)
   TRUE
@@ -35,9 +36,9 @@ oai_storage_init <- function(root,stages) {
   existing<-if(dir.exists(root))list.files(root,all.files=TRUE,no..=TRUE)else character()
   # Existing unmarked results retain their original physical layout.
   if(length(existing))return(invisible(root))
-  dir.create(base::file.path(root,'_meta'),recursive=TRUE,showWarnings=FALSE)
+  dir.create(file.path(root,'_meta'),recursive=TRUE,showWarnings=FALSE)
   mixedgp_atomic_rds(list(schema='oai-flat-v1',stages=as.integer(stages)),
-    base::file.path(root,'_meta','storage-layout.rds'))
+    file.path(root,'_meta','storage-layout.rds'))
   invisible(root)
 }
 oai_flat_relative <- function(path,stages) {
@@ -66,16 +67,16 @@ oai_flat_relative <- function(path,stages) {
   path
 }
 oai_path <- function(...,fsep=.Platform$file.sep) {
-  paths<-base::file.path(...,fsep=fsep)
+  paths<-file.path(...,fsep=fsep)
   vapply(paths,function(path) {
     candidate<-path
     repeat {
-      marker<-base::file.path(candidate,'_meta','storage-layout.rds')
+      marker<-file.path(candidate,'_meta','storage-layout.rds')
       if(dir.exists(candidate)&&file.exists(marker)) {
         oai_storage_flat(candidate)
         if(identical(path,candidate))return(path)
         rel<-substring(path,nchar(candidate)+2L)
-        return(base::file.path(candidate,oai_flat_relative(rel,readRDS(marker)$stages)))
+        return(file.path(candidate,oai_flat_relative(rel,readRDS(marker)$stages)))
       }
       parent<-dirname(candidate)
       if(identical(parent,candidate)||candidate=='.')return(path)
@@ -83,15 +84,15 @@ oai_path <- function(...,fsep=.Platform$file.sep) {
     }
   },character(1),USE.NAMES=FALSE)
 }
-oai_workflow_root <- function(out)if(oai_storage_flat(out))out else base::file.path(out,'workflow')
+oai_workflow_root <- function(out)if(oai_storage_flat(out))out else file.path(out,'workflow')
 oai_default_output <- function(dataset,profile,repo) {
-  base::file.path(repo,'results',if(profile=='paper')dataset else paste(dataset,profile,sep='_'))
+  file.path(repo,'results',if(profile=='paper')dataset else paste(dataset,profile,sep='_'))
 }
 oai_snapshot_inputs <- function(input,out,files) {
-  dest<-oai_path(out,'data');meta<-base::file.path(input,'DATASET.json')
+  dest<-oai_path(out,'data');meta<-file.path(input,'DATASET.json')
   if(file.exists(meta))files<-c(files,meta)
   for(source in files) {
-    target<-base::file.path(dest,oai_input_basename(source))
+    target<-file.path(dest,oai_input_basename(source))
     if(file.exists(target)) {
       if(!identical(unname(tools::md5sum(source)),unname(tools::md5sum(target))))
         stop('Frozen input snapshot differs: ',target)
@@ -234,15 +235,15 @@ oai_input_basename <- function(path) {
 }
 oai_input_files <- function(root,fold,cell) {
     prefix <- sprintf('fold%02d_%s_',fold,cell)
-    flat <- base::file.path(root,paste0(prefix,c('PROTOCOL.json','train.csv','test.csv')))
+    flat <- file.path(root,paste0(prefix,c('PROTOCOL.json','train.csv','test.csv')))
     if (any(file.exists(flat))) return(flat)
-    base::file.path(root,sprintf('fold%02d',fold),cell,c('PROTOCOL.json','private/train.csv','private/test.csv'))
+    file.path(root,sprintf('fold%02d',fold),cell,c('PROTOCOL.json','private/train.csv','private/test.csv'))
 }
 oai_plan_input_root <- function(path) {
     path <- path.expand(path)
-    if (!file.exists(base::file.path(path,'fold01_O0_PROTOCOL.json'))) {
-        if (dir.exists(base::file.path(path,'MC'))) path <- base::file.path(path,'MC')
-        else if (dir.exists(base::file.path(path,'inputs','MC'))) path <- base::file.path(path,'inputs','MC')
+    if (!file.exists(file.path(path,'fold01_O0_PROTOCOL.json'))) {
+        if (dir.exists(file.path(path,'MC'))) path <- file.path(path,'MC')
+        else if (dir.exists(file.path(path,'inputs','MC'))) path <- file.path(path,'inputs','MC')
     }
     normalizePath(path, mustWork = TRUE)
 }
@@ -895,7 +896,7 @@ oai_with_lock <- function(path,FUN,wait=FALSE,timeout=60) {
   repeat {
     if(dir.create(path,showWarnings=FALSE))break
     if(!dir.exists(path))stop('OAI cannot create lock; check directory permissions and free space: ',path)
-    owner<-base::file.path(path,'owner.json')
+    owner<-file.path(path,'owner.json')
     info<-tryCatch(if(file.exists(owner))jsonlite::fromJSON(owner)else NULL,error=function(e)NULL)
     detail<-if(is.null(info))'owner record not yet available'else paste('PID',info$pid,'on',info$host)
     if(!wait||proc.time()[['elapsed']]-started>=timeout)
@@ -906,18 +907,18 @@ oai_with_lock <- function(path,FUN,wait=FALSE,timeout=60) {
   }
   token<-paste(Sys.getpid(),format(Sys.time(),'%Y%m%d%H%M%OS6'),sep='-')
   on.exit({
-    owner<-base::file.path(path,'owner.json')
+    owner<-file.path(path,'owner.json')
     saved<-tryCatch(jsonlite::fromJSON(owner),error=function(e)NULL)
     if(!is.null(saved)&&identical(saved$token,token))unlink(path,recursive=TRUE)
   },add=TRUE)
   atomic_json(list(pid=Sys.getpid(),host=Sys.info()[['nodename']],token=token,
-    started_at=format(Sys.time(),tz='UTC',usetz=TRUE)),base::file.path(path,'owner.json'))
+    started_at=format(Sys.time(),tz='UTC',usetz=TRUE)),file.path(path,'owner.json'))
   FUN()
 }
 
 oai_check_legacy_lock <- function(root) {
   old<-unlist(lapply(unique(c(root,oai_workflow_root(root))),function(path)
-    base::file.path(path,c('.application.lock','.adni-application.lock','.oai-application.lock'))),use.names=FALSE)
+    file.path(path,c('.application.lock','.adni-application.lock','.oai-application.lock'))),use.names=FALSE)
   if(any(dir.exists(old)))stop('OAI found a lock from the earlier exclusive executor: ',old[dir.exists(old)][1],
     '. Finish or stop that run before using the new executor; confirm all workers have stopped before removing a stale lock.')
   invisible(NULL)
@@ -927,7 +928,7 @@ oai_execution_lock <- function(root,group,FUN) {
   oai_check_legacy_lock(root)
   if(group=='report')return(oai_execution_lock(root,'eivGP',function()
     oai_execution_lock(root,'competitors',FUN)))
-  oai_with_lock(base::file.path(root,'_meta','locks',paste0(group,'.lock')),FUN)
+  oai_with_lock(file.path(root,'_meta','locks',paste0(group,'.lock')),FUN)
 }
 
 oai_publish_progress <- function(root,group,phase,status) {
@@ -935,12 +936,12 @@ oai_publish_progress <- function(root,group,phase,status) {
   record<-list(application='OAI',group=group,phase=phase,pid=Sys.getpid(),
     updated_at=format(Sys.time(),tz='UTC',usetz=TRUE),completed=sum(status$state%in%c('DONE','REUSED')),
     failed=sum(status$state=='FAILED'),total=nrow(status),active_jobs=active)
-  atomic_json(record,base::file.path(root,'_meta',paste0(group,'_status.json')))
+  atomic_json(record,file.path(root,'_meta',paste0(group,'_status.json')))
   lines<-c(paste('OAI |',group,'|',phase,'|',record$updated_at),
     sprintf('Completed %d/%d; failed %d; running %d',record$completed,record$total,record$failed,nrow(active)),
     if(nrow(active))apply(active[,c('fold','cell','method','state'),drop=FALSE],1,paste,collapse=' | ')else 'No job currently running.',
     'Detailed task logs and phase status CSVs are under logs/.')
-  path<-base::file.path(root,paste0('PROGRESS_',group,'.txt'))
+  path<-file.path(root,paste0('PROGRESS_',group,'.txt'))
   tmp<-tempfile(tmpdir=dirname(path));on.exit(unlink(tmp),add=TRUE);writeLines(lines,tmp)
   if(!file.rename(tmp,path))stop('OAI cannot publish progress: ',path)
 }
@@ -954,7 +955,7 @@ oai_workflow_identity <- function(path,id) {
     stop('OAI saved model settings, package modules or inputs differ; use a new output root: ',dirname(path))
   # Preserve the original fitting identity and receipts. Record only the new
   # execution source; sampler/package/input identities must match exactly.
-  dest<-base::file.path(dirname(path),'executor_updates',paste0(digest::digest(id$application),'.rds'))
+  dest<-file.path(dirname(path),'executor_updates',paste0(digest::digest(id$application),'.rds'))
   if(!file.exists(dest))atomic_rds(list(schema='oai-executor-update-v1',
     original_identity=saved,current_execution_source=id$application,
     package_and_statistical_identity_unchanged=TRUE),dest)
@@ -1175,7 +1176,7 @@ oai_screen_run <- function(repo,p,group) {
     baseline_profile=if(is.null(m$baseline_profile))if(isTRUE(m$smoke))'pilot'else'paper'else m$baseline_profile,
     draws_per_chain=if(is.null(m$draws_per_chain))if(isTRUE(m$smoke))5L else 250L else m$draws_per_chain)
   identities<-list()
-  oai_with_lock(base::file.path(dirname(root),paste0('.',basename(root),'.initialization.lock')),function(){
+  oai_with_lock(file.path(dirname(root),paste0('.',basename(root),'.initialization.lock')),function(){
     for(z in m$cases){
       id<-c(base_id,list(plan=z$id,inputs=unname(tools::md5sum(inputs[[z$id]]$files))))
       path<-oai_path(z$output,'workflow_identity.rds')
@@ -1962,7 +1963,7 @@ oai_method_run <- function(repo,params,group) {
   list(m=m,input=input,s=s,manifest=manifest)
   }
   prepared<-if(isTRUE(params$plan))initialize()else oai_with_lock(
-    base::file.path(dirname(out),paste0('.',basename(out),'.initialization.lock')),initialize,wait=TRUE)
+    file.path(dirname(out),paste0('.',basename(out),'.initialization.lock')),initialize,wait=TRUE)
   m<-prepared$m;input<-prepared$input;s<-prepared$s;manifest<-prepared$manifest
   if(isTRUE(params$plan)) {
     e<-oai_load_api(repo)
@@ -2075,7 +2076,7 @@ oai_prepare_folds <- function(cohort_file,metadata_file,output_dir) {
       stop('The frozen calibration vectors have insufficient affine rank; no outcome-guided mask reroll is performed')
     for(cell in c('O0','O20','O50')) {
       dir.create(output_dir,recursive=TRUE,showWarnings=FALSE)
-      paths<-base::file.path(output_dir,paste0(sprintf('fold%02d_%s_',f,cell),c('PROTOCOL.json','train.csv','test.csv')))
+      paths<-file.path(output_dir,paste0(sprintf('fold%02d_%s_',f,cell),c('PROTOCOL.json','train.csv','test.csv')))
       train<-tr;train$calibration<-as.integer(train$RID%in%cal[[cell]])
       write.csv(train,paths[2],row.names=FALSE);write.csv(te,paths[3],row.names=FALSE)
       seed_names<-c('production','posterior','prediction','mixed_prediction','prospective_U','UC_GP','LVGP','EzGP','EzGP_draws')
@@ -2117,11 +2118,11 @@ oai_prepare_folds <- function(cohort_file,metadata_file,output_dir) {
 oai_configure_api <- function(e,repo) {
   example<-file.path(repo,'data/oai/DATASET.example.json')
   e$oai_metadata<-if(file.exists(example))jsonlite::fromJSON(example,simplifyVector=FALSE)else list()
-  e$oai_default_input<-function(dataset,repo)base::file.path(repo,'data',if(dataset=='oai')'oai'else paste0('oai_',dataset))
+  e$oai_default_input<-function(dataset,repo)file.path(repo,'data',if(dataset=='oai')'oai'else paste0('oai_',dataset))
   source_files<-e$oai_source_files
-  e$oai_source_files<-function(repo)unique(c(source_files(repo),base::file.path(repo,'tools',
+  e$oai_source_files<-function(repo)unique(c(source_files(repo),file.path(repo,'tools',
     c('oai-tools.R','oai.R','oai-eivGP.R','oai-competitors.R','oai-report.R','oai-prepare-folds.R')),
-    base::file.path(repo,'paper/oai.Rmd')))
+    file.path(repo,'paper/oai.Rmd')))
   settings<-e$oai_settings
   e$oai_settings<-function(profile='pilot',cores=4L,...) {
     overrides<-list(...)
@@ -2138,7 +2139,7 @@ oai_configure_api <- function(e,repo) {
   read_inputs<-e$oai_plan_inputs
   e$oai_plan_inputs<-function(data_dir) {
     x<-read_inputs(data_dir)
-    candidates<-c(base::file.path(data_dir,'DATASET.json'),base::file.path(dirname(data_dir),'DATASET.json'))
+    candidates<-c(file.path(data_dir,'DATASET.json'),file.path(dirname(data_dir),'DATASET.json'))
     meta<-candidates[file.exists(candidates)]
     if(length(meta))e$oai_metadata<-jsonlite::fromJSON(meta[1],simplifyVector=FALSE)
     x
@@ -2234,26 +2235,26 @@ oai_configure_api <- function(e,repo) {
     m<-assets(a);folder<-e$oai_path(a$report_dir,'report-assets/paper')
     for(i in seq_len(nrow(m))) {
       old<-m$file[i];new<-gsub('_oai_','_oai_',old,fixed=TRUE)
-      if(old!=new&&file.exists(base::file.path(folder,old)))stopifnot(file.rename(base::file.path(folder,old),base::file.path(folder,new)))
+      if(old!=new&&file.exists(file.path(folder,old)))stopifnot(file.rename(file.path(folder,old),file.path(folder,new)))
       oh<-sub('[.]csv$','.html',old);nh<-sub('[.]csv$','.html',new)
-      if(oh!=nh&&file.exists(base::file.path(folder,oh)))stopifnot(file.rename(base::file.path(folder,oh),base::file.path(folder,nh)))
+      if(oh!=nh&&file.exists(file.path(folder,oh)))stopifnot(file.rename(file.path(folder,oh),file.path(folder,nh)))
       m$file[i]<-new;m$label[i]<-gsub('_oai_','_oai_',m$label[i],fixed=TRUE)
-      if(file.exists(base::file.path(folder,new)))m$MD5[i]<-unname(tools::md5sum(base::file.path(folder,new)))
+      if(file.exists(file.path(folder,new)))m$MD5[i]<-unname(tools::md5sum(file.path(folder,new)))
     }
-    utils::write.csv(m,base::file.path(folder,'artifact_manifest.csv'),row.names=FALSE);m
+    utils::write.csv(m,file.path(folder,'artifact_manifest.csv'),row.names=FALSE);m
   }
   e$oai_render_report<-function(repo,data_dir,output_dir,settings,report_source=NULL,
       report_dir=output_dir,group='report',rmd=NULL,filename='oai.html') {
     if(!requireNamespace('rmarkdown',quietly=TRUE)||!rmarkdown::pandoc_available())stop('HTML requires rmarkdown and Pandoc')
     a<-e$oai_report_prepare(repo,data_dir,output_dir,settings,report_source,report_dir,group)
     env<-new.env(parent=globalenv());env$.oai_precomputed_analysis<-a;env$.oai_repository_dir<-repo
-    if(is.null(rmd))rmd<-base::file.path(repo,'paper/oai.Rmd')
+    if(is.null(rmd))rmd<-file.path(repo,'paper/oai.Rmd')
     if(filename=='oai.html')filename<-'oai.html'
     rmarkdown::render(rmd,output_file=filename,output_dir=report_dir,intermediates_dir=report_dir,
       params=list(profile=settings$profile,action='report',cores=settings$cores,data_dir=data_dir,output_dir=output_dir,
         report_source=if(is.null(report_source))''else report_source,representative_fold=settings$representative_fold,appendix=settings$appendix),envir=env,quiet=TRUE)
-    cat('Saved OAI HTML: ',base::file.path(report_dir,filename),'\n',sep='')
-    invisible(list(html=base::file.path(report_dir,filename),analysis=a))
+    cat('Saved OAI HTML: ',file.path(report_dir,filename),'\n',sep='')
+    invisible(list(html=file.path(report_dir,filename),analysis=a))
   }
   e$oai_settings<-e$oai_settings;e$oai_prepare_folds<-e$oai_prepare_folds
   e$oai_method_run<-e$oai_method_run;e$oai_default_output<-e$oai_default_output

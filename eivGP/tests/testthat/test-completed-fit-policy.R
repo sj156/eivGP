@@ -44,6 +44,10 @@ test_that("default measurement policy saves timing but no partial-chain files", 
   expect_length(list.files(root,'^chain-[0-9]+[.]rds$',recursive=TRUE),0L)
   expect_length(list.files(root,'timing.csv$',recursive=TRUE),4L)
   options(eivGP.checkpoint_root=NULL)
+  ref<-attr(actual,"eivgp_cut_restart_storage",exact=TRUE)
+  expect_true(is.list(ref))
+  expect_identical(ref,mixedgp_checkpoint_reference(ref$directory))
+  attr(actual,"eivgp_cut_restart_storage")<-NULL
   expect_identical(actual,suppressWarnings(api$measurement_cut(C,U,cfg,123L)))
 })
 

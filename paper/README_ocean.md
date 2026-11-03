@@ -158,7 +158,7 @@ Rscript -e 'dir.create(".r-library",showWarnings=FALSE); install.packages("eivGP
 
 The CLI automatically finds `.r-library/`. For another installation directory,
 export `EIVGP_R_LIBRARY` in the Terminal that runs the commands.
-Dependencies: dplyr, tidyr, ggplot2, knitr, patchwork, posterior, TruncatedNormal,
+Dependencies: dplyr, ggplot2, knitr, patchwork, posterior, TruncatedNormal,
 digest, rmarkdown, kergp 0.5.8, LVGP 2.1.6 and EzGP 0.1.0. HTML requires Pandoc
 on PATH or `RSTUDIO_PANDOC`; the CLI checks this before starting computation.
 Restart R after updating an installed package.

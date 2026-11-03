@@ -23,13 +23,11 @@ eivGP/R/
   hmc.R         # joint HMC coordinates, warmup adaptation and transitions
 eivGP/src/      # analytic GP/ordinal gradients and leapfrog integration
   plotting.R    # summaries, comparison tables, figures, report generation
-data/ocean_silicate/
-  n200/         # frozen 200-profile data and five-fold inputs
-  n500/         # frozen 500-profile data and five-fold inputs
-  n1000/        # raw selected 1000-profile cohort
-data/adni/
-  inputs/       # local prepared ADNI folds; only .gitkeep is versioned
-data/oai/       # private flat fold files; only contract and example are versioned
+data/
+  ocean_silicate/     # frozen Ocean cohorts and fold collections
+    n200/, n500/, n1000/
+  adni/              # private prepared fold collection and data contract
+  oai/               # private prepared fold collection and data contract
 paper/
   numerical/    # study1 and study2: one .R, .Rmd, and .html each
   applications/ # Ocean, ADNI and OAI Rmd reports, data-free HTML and guides
@@ -53,13 +51,20 @@ Competitor adapters use `kergp`, `LVGP` and `EzGP`.
 
 ## 2. Install and configure
 
+Basic fitting, prediction, imputation and diagnostics require Rfast, Rcpp, posterior and TruncatedNormal,
+plus R's standard libraries. Compilation also needs RcppArmadillo.
+Full reports additionally use dplyr, ggplot2, knitr and patchwork as optional
+package dependencies. TruncatedNormal provides the exact conditional latent
+draws used by default multivariate prediction and diagnostics. Simple table binding, reshaping and calibration
+cross-products are implemented locally; tidyr is no longer required.
+
 Use R >= 4.1, a working package compiler and Pandoc. From the repository root,
 install dependencies, refresh source provenance and install this checkout:
 
 ```r
-install.packages(c("dplyr", "tidyr", "ggplot2", "knitr", "patchwork", "posterior",
+install.packages(c("dplyr", "ggplot2", "knitr", "patchwork", "posterior",
                    "jsonlite", "TruncatedNormal", "digest", "rmarkdown", "testthat",
-                   "Rcpp", "RcppArmadillo", "kergp", "LVGP", "EzGP"))
+                   "Rfast", "Rcpp", "RcppArmadillo", "kergp", "LVGP", "EzGP"))
 ```
 
 ```sh

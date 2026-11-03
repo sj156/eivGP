@@ -31,11 +31,6 @@ export(report_table)
 export(read_fit)
 export(save_fit)
 
-import(dplyr)
-import(tidyr)
-import(ggplot2)
-import(knitr)
-import(patchwork)
 
 export(summarize_diagnostics)
 

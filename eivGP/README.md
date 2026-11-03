@@ -22,3 +22,14 @@ Choose `sampler="ESS"` (default), `"HMC"`, or `"HYBRID"`. The hybrid adds
 a complete ESS sweep after every 20 HMC iterations; change that frequency
 with `sampler_control=list(hybrid_every=20L)`. Continuation preserves the
 selected kernel, frequency, frozen adaptation and RNG state.
+
+### Dependency scope
+
+The numerical API loads Rfast, Rcpp, posterior and TruncatedNormal (plus standard R libraries);
+RcppArmadillo is needed to build the native backend. Plotting and report packages
+are optional and loaded only when those operations are requested. Small internal
+helpers implement ordinary data-frame row binding, long/wide metric reshaping,
+and calibration-grid expansion. They use explicit column names and unique
+wide-table keys, rather than providing general replacements for a data toolkit.
+Scientific diagnostics, minimax-tilting sampling, native linear algebra, JSON
+parsing and provenance hashes retain their established package implementations.

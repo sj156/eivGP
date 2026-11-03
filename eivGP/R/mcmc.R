@@ -7493,35 +7493,17 @@ classify_parameter_block <- function(parameter) {
 
 
 summarise_rhat_block <- function(rhat_df) {
-  rhat_df |>
-    dplyr::filter(is.finite(rhat)) |>
-    dplyr::group_by(block) |>
-    dplyr::summarise(
-      n = dplyr::n(),
-      median = median(rhat),
-      q90 = quantile(rhat, 0.90),
-      q95 = quantile(rhat, 0.95),
-      max = max(rhat),
-      prop_gt_1.01 = mean(rhat > 1.01),
-      prop_gt_1.05 = mean(rhat > 1.05),
-      prop_gt_1.10 = mean(rhat > 1.10),
-      .groups = "drop"
-    )
+  mixedgp_block_summary(rhat_df, "rhat", function(x) data.frame(
+    n = length(x), median = median(x), q90 = unname(quantile(x, .90)),
+    q95 = unname(quantile(x, .95)), max = max(x),
+    prop_gt_1.01 = mean(x > 1.01), prop_gt_1.05 = mean(x > 1.05),
+    prop_gt_1.10 = mean(x > 1.10)))
 }
 
-
 summarise_ess_block <- function(ess_df) {
-  ess_df |>
-    dplyr::filter(is.finite(ess)) |>
-    dplyr::group_by(block) |>
-    dplyr::summarise(
-      n = dplyr::n(),
-      median = median(ess),
-      q10 = quantile(ess, 0.10),
-      q25 = quantile(ess, 0.25),
-      min = min(ess),
-      .groups = "drop"
-    )
+  mixedgp_block_summary(ess_df, "ess", function(x) data.frame(
+    n = length(x), median = median(x), q10 = unname(quantile(x, .10)),
+    q25 = unname(quantile(x, .25)), min = min(x)))
 }
 
 
@@ -7531,33 +7513,28 @@ make_mcmc_review_ordprobit <- function(fit,
                                        save_plots = TRUE,
                                        save_csvs = TRUE) {
   stopifnot(!is.null(fit$diagnostics))
-  required <- c("dplyr", "tidyr")
-  if (isTRUE(save_plots)) required <- c(required, "ggplot2")
+  required <- "ggplot2" # Review returns plot objects even when file export is disabled.
   require_study2_reporting_packages(required, "MCMC review")
   
   rhat_parts <- list()
   
   if (!is.null(fit$diagnostics$rhat_hyper)) {
-    rhat_parts$hyper <- fit$diagnostics$rhat_hyper |>
-      dplyr::mutate(block = "GP/noise")
+    rhat_parts$hyper <- mixedgp_tag_block(fit$diagnostics$rhat_hyper, "GP/noise")
   }
   
   if (!is.null(fit$diagnostics$rhat_A)) {
-    rhat_parts$A <- fit$diagnostics$rhat_A |>
-      dplyr::mutate(block = "loading A")
+    rhat_parts$A <- mixedgp_tag_block(fit$diagnostics$rhat_A, "loading A")
   }
   
   if (!is.null(fit$diagnostics$rhat_tau)) {
-    rhat_parts$tau <- fit$diagnostics$rhat_tau |>
-      dplyr::mutate(block = "cutpoints")
+    rhat_parts$tau <- mixedgp_tag_block(fit$diagnostics$rhat_tau, "cutpoints")
   }
   
   if (!is.null(fit$diagnostics$rhat_U)) {
-    rhat_parts$U <- fit$diagnostics$rhat_U |>
-      dplyr::mutate(block = "latent U")
+    rhat_parts$U <- mixedgp_tag_block(fit$diagnostics$rhat_U, "latent U")
   }
   
-  rhat_df <- dplyr::bind_rows(rhat_parts)
+  rhat_df <- mixedgp_bind_rows(rhat_parts)
   
   if (!"block" %in% names(rhat_df)) {
     rhat_df$block <- classify_parameter_block(rhat_df$parameter)
@@ -7577,8 +7554,7 @@ make_mcmc_review_ordprobit <- function(fit,
   chain_stats <- fit$mcmc$chain_stats
   
   if (!is.null(chain_stats) && nrow(chain_stats) > 0L) {
-    chain_stats <- chain_stats |>
-      dplyr::mutate(
+    chain_stats <- transform(chain_stats,
         u_ess_accept_rate = u_ess_accept_total / pmax(u_ess_total, 1),
         global_u_accept_rate = global_u_accept_total / pmax(global_u_total, 1),
         u_eval_per_update = u_ess_eval_total / pmax(u_ess_total, 1),
@@ -7631,8 +7607,7 @@ make_mcmc_review_ordprobit <- function(fit,
   
   if (nrow(rhat_df) > 0L) {
     if (nrow(rhat_df) > 0L) {
-      rhat_plot_df <- rhat_df |>
-        dplyr::filter(is.finite(rhat))
+      rhat_plot_df <- rhat_df[is.finite(rhat_df$rhat), , drop = FALSE]
       
       rhat_ref <- data.frame(
         xintercept = c(1.01, 1.05, 1.10),
@@ -7691,7 +7666,7 @@ make_mcmc_review_ordprobit <- function(fit,
   
   if (!is.null(ess_df) && nrow(ess_df) > 0L) {
     plots$ess_box <- ggplot2::ggplot(
-      ess_df |> dplyr::filter(is.finite(ess), ess > 0),
+      ess_df[is.finite(ess_df$ess) & ess_df$ess > 0, , drop = FALSE],
       ggplot2::aes(x = block, y = ess, fill = block)
     ) +
       ggplot2::geom_boxplot(alpha = 0.80, outlier.alpha = 0.45) +
@@ -7716,12 +7691,9 @@ make_mcmc_review_ordprobit <- function(fit,
     
     chain_stat_cols <- intersect(chain_stat_cols, names(chain_stats))
     
-    chain_long <- chain_stats |>
-      dplyr::select(
-        dplyr::all_of(c("chain", chain_stat_cols))
-      ) |>
-      tidyr::pivot_longer(
-        cols = -chain,
+    chain_long <- chain_stats[, c("chain", chain_stat_cols), drop = FALSE] |>
+      mixedgp_pivot_longer(
+        cols = chain_stat_cols,
         names_to = "statistic",
         values_to = "value"
       )
@@ -8184,12 +8156,36 @@ mixedgp_v030_decode <- function(state, ctx) {
 }
 
 
-mixedgp_v030_corr <- function(state, dec, ctx) {
+mixedgp_v030_corr <- function(state, dec, ctx, rows = NULL) {
   weights <- c(exp(state$logtheta_x), dec$theta_u)
   if (any(!is.finite(weights))) stop("Kernel coefficients exceeded floating-point resolution.")
-  Z <- cbind(ctx$X, state$U)
-  D <- matrix(0, ctx$n, ctx$n)
-  for (j in seq_along(weights)) D <- D + weights[j] * outer(Z[, j], Z[, j], "-")^2
+  # These caches are disposable, chain-local, and never part of the checkpoint.
+  # Key every state-dependent entry explicitly, including rejected proposals.
+  if (is.null(ctx$distances)) ctx$distances <- new.env(parent = emptyenv())
+  cache <- ctx$distances
+  if (is.null(cache$X)) cache$X <- lapply(seq_len(ctx$p), function(j)
+    mixedgp_squared_differences(ctx$X[, j]))
+  if (!identical(cache$logtheta_x, state$logtheta_x)) {
+    D <- matrix(0, ctx$n, ctx$n)
+    for (j in seq_len(ctx$p)) D <- D + weights[j] * cache$X[[j]]
+    cache$weighted_X <- D
+    cache$logtheta_x <- state$logtheta_x
+  }
+  D <- if (is.null(rows)) cache$weighted_X else cache$weighted_X[rows, , drop = FALSE]
+  if (is.null(rows)) {
+    if (!identical(cache$U, state$U)) {
+      cache$U_distances <- lapply(seq_len(ctx$d), function(j)
+        mixedgp_squared_differences(state$U[, j]))
+      cache$U <- state$U
+    }
+    for (j in seq_len(ctx$d)) D <- D + weights[ctx$p + j] * cache$U_distances[[j]]
+  } else {
+    for (j in seq_len(ctx$d)) D <- D + weights[ctx$p + j] *
+      mixedgp_squared_differences(state$U[rows, j], state$U[, j])
+  }
+  rn <- rownames(ctx$X)
+  if (is.null(rn)) rn <- rownames(state$U)
+  if (!is.null(rn)) dimnames(D) <- list(if (is.null(rows)) rn else rn[rows], rn)
   kernel_from_weighted_sqdist(D, ctx$kernel, ctx$matern_nu)
 }
 
@@ -8231,15 +8227,19 @@ mixedgp_v030_gp <- function(state, ctx, prepared = NULL) {
   dec <- mixedgp_v030_decode(state, ctx)
   key <- list(U = state$U, logtheta_x = state$logtheta_x, J = state$J, r = dec$r)
   if (!is.null(ctx$cache$key) && identical(ctx$cache$key, key)) return(ctx$cache$value)
-  R <- mixedgp_v030_corr(state, dec, ctx)
   value <- NULL
   if (!is.null(prepared) && !identical(prepared$key, list(
       U = state$U[prepared$J, , drop = FALSE], logtheta_x = state$logtheta_x,
       J = state$J, r = dec$r))) prepared <- NULL
   if (!is.null(prepared)) {
     value <- tryCatch({
-      B <- dec$r * R; diag(B) <- diag(B) + 1 - dec$r
       I <- prepared$I; J <- prepared$J
+      B <- prepared$B
+      changed <- dec$r * mixedgp_v030_corr(state, dec, ctx, rows = I)
+      diagonal <- cbind(seq_along(I), I)
+      changed[diagonal] <- changed[diagonal] + 1 - dec$r
+      B[I, ] <- changed
+      B[, I] <- t(changed)
       cross <- B[I, J, drop = FALSE]
       z <- forwardsolve(t(prepared$chol), t(cross))
       S <- B[I, I, drop = FALSE] - crossprod(z)
@@ -8259,6 +8259,7 @@ mixedgp_v030_gp <- function(state, ctx, prepared = NULL) {
   }
   if (is.null(value)) {
     ctx$counts$gp_full_factorizations <- ctx$counts$gp_full_factorizations + 1L
+    R <- mixedgp_v030_corr(state, dec, ctx)
     value <- mixedgp_v030_collapsed(ctx$y, R, dec$r,
                                     ctx$priors$variance_shape, ctx$priors$variance_rate)
   }
@@ -8276,7 +8277,7 @@ mixedgp_v030_prepare_block <- function(state, ctx, rows) {
   tryCatch({
     ch <- chol(base$B[J, J, drop = FALSE])
     v <- forwardsolve(t(ch), ctx$y[J])
-    list(I = rows, J = J, chol = ch, solve_y = backsolve(ch, v),
+    list(I = rows, J = J, B = base$B, chol = ch, solve_y = backsolve(ch, v),
          Q = sum(v * v), logdet = 2 * sum(log(diag(ch))),
          key = list(U = state$U[J, , drop = FALSE], logtheta_x = state$logtheta_x,
                     J = state$J, r = mixedgp_v030_decode(state, ctx)$r))

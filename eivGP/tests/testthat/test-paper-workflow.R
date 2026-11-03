@@ -13,7 +13,7 @@ test_that("paper workflows route both studies and reject misleading selections",
   x<-run("study2",list(action="run",output=tempdir(),"data-root"=tempdir()))
   expect_identical(calls,c("core:run","mechanism:run"))
   expect_named(x,c("core","mechanism"))
-  expect_equal(x$mechanism$output,file.path(tempdir(),"mechanism"))
+  expect_equal(x$mechanism$output,file.path(normalizePath(tempdir(),winslash="/"),"mechanism"))
   calls<-character();run("study1",list(action="report",output=tempdir(),"data-root"=tempdir()))
   expect_identical(calls,c("core:report","complete-case:report"))
   calls<-character();run("study1",list(component="complete-case",profile="pilot",action="report",output=tempdir(),"data-root"=tempdir()))

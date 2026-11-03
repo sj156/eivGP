@@ -5185,7 +5185,7 @@ mixedgp_config_fingerprint <- function(config) {
   payload$stages <- NULL
   payload$source_identity <- eivgp_module_identity()
   package_names <- c(
-    ggplot2 = "ggplot2", dplyr = "dplyr", tidyr = "tidyr",
+    ggplot2 = "ggplot2", dplyr = "dplyr",
     knitr = "knitr", posterior = "posterior"
   )
   if (identical(config$study, "study2")) {
@@ -5699,7 +5699,7 @@ mixedgp_cell_summary <- function(config) {
 }
 
 mixedgp_runtime_preflight <- function(config) {
-  packages <- c("ggplot2", "dplyr", "tidyr", "knitr", "posterior")
+  packages <- c("ggplot2", "dplyr", "knitr", "posterior")
   if (config$study == "study2") packages <- c(packages, "TruncatedNormal")
   available <- vapply(packages, requireNamespace, logical(1L), quietly = TRUE)
   version <- vapply(seq_along(packages), function(ii) {
@@ -5712,7 +5712,7 @@ mixedgp_runtime_preflight <- function(config) {
   data.frame(
     package = packages,
     role = c(
-      "figures", "summaries and diagnostics", "summary reshaping",
+      "figures", "summaries and diagnostics",
       "LaTeX tables", "rank-normalized MCMC diagnostics",
       if (config$study == "study2") "exact minimax-tilting sampler"
     ),
@@ -7478,7 +7478,7 @@ eivgp_study1_setup <- function() {
 if (!exists("STUDY1_RUN_ABLATIONS")) STUDY1_RUN_ABLATIONS <- TRUE
 if (!exists("STUDY1_EVALUATE_F")) STUDY1_EVALUATE_F <- TRUE
 if (!exists("STUDY1_EVALUATE_U")) STUDY1_EVALUATE_U <- TRUE
-needed_pkgs <- c("ggplot2", "dplyr", "tidyr", "knitr")
+needed_pkgs <- c("ggplot2", "dplyr", "knitr")
 missing_pkgs <- needed_pkgs[
   !vapply(needed_pkgs, requireNamespace, logical(1), quietly = TRUE)
 ]
@@ -8168,7 +8168,7 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
         file.path(RES_DIR, sprintf("target_traces_rep%03d_cal%03d.rds",rep_id,n_calib)))
       parameter_diag$diagnostic_role <- "raw"
       target_diag$diagnostic_role <- "target"
-      parameter_diag <- bind_rows(parameter_diag, target_diag)
+      parameter_diag <- mixedgp_bind_rows(parameter_diag, target_diag)
       scientific_ess_pass <- mixedgp_scientific_ess_pass(target_diag,STUDY1_TARGET_ESS)
       gate_pass <- scientific_ess_pass
       max_rhat <- if (nrow(parameter_diag)) max(parameter_diag$rhat) else NA_real_
@@ -8220,24 +8220,24 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
   }
 
   status <- data.frame(method=character(),status=character(),rep=integer(),scenario=character())
-  ablation_status_df <- bind_rows(ablation_status)
+  ablation_status_df <- mixedgp_bind_rows(ablation_status)
   if (nrow(ablation_status_df) > 0L) {
     ablation_status_df$rep <- rep_id
     ablation_status_df$scenario <- STUDY1_SCENARIO
   }
   list(
     dataset_identity = data.frame(rep=rep_id, dataset_md5=mixedgp_dataset_identity(frozen$data)),
-    metrics = bind_rows(metrics),
+    metrics = mixedgp_bind_rows(metrics),
     competitor_status = status,
-    ablation_metrics = bind_rows(ablation_metrics),
+    ablation_metrics = mixedgp_bind_rows(ablation_metrics),
     ablation_status = ablation_status_df,
-    mcmc_diagnostics = bind_rows(mcmc_diagnostics),
-    mcmc_parameter_diagnostics = bind_rows(mcmc_parameter_diagnostics),
-    sampler_control_manifest = bind_rows(sampler_control_manifest),
-    mean_recovery = bind_rows(mean_metrics),
-    latent_imputation = bind_rows(latent_imputation_metrics),
-    surface_recovery = bind_rows(surface_recovery_metrics),
-    ablation_surface_recovery = bind_rows(ablation_surface_metrics),
+    mcmc_diagnostics = mixedgp_bind_rows(mcmc_diagnostics),
+    mcmc_parameter_diagnostics = mixedgp_bind_rows(mcmc_parameter_diagnostics),
+    sampler_control_manifest = mixedgp_bind_rows(sampler_control_manifest),
+    mean_recovery = mixedgp_bind_rows(mean_metrics),
+    latent_imputation = mixedgp_bind_rows(latent_imputation_metrics),
+    surface_recovery = mixedgp_bind_rows(surface_recovery_metrics),
+    ablation_surface_recovery = mixedgp_bind_rows(ablation_surface_metrics),
     metadata = list(
       rep = rep_id,
       design_tag = STUDY1_DESIGN_TAG,
@@ -8296,26 +8296,26 @@ rep_objects <- mixedgp_run_replications(
   mc.preschedule = FALSE
 )
 
-dataset_identity <- bind_rows(lapply(rep_objects, `[[`, "dataset_identity"))
+dataset_identity <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "dataset_identity"))
 write.csv(dataset_identity, file.path(STUDY1_OUT_PREFIX, "dataset_identity.csv"), row.names=FALSE)
 
-new_results <- bind_rows(lapply(rep_objects, `[[`, "metrics"))
-competitor_status <- bind_rows(
+new_results <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "metrics"))
+competitor_status <- mixedgp_bind_rows(
   lapply(rep_objects, `[[`, "competitor_status")
 )
-ablation_results <- bind_rows(lapply(rep_objects, `[[`, "ablation_metrics"))
-ablation_status <- bind_rows(lapply(rep_objects, `[[`, "ablation_status"))
-mcmc_diagnostics <- bind_rows(lapply(rep_objects, `[[`, "mcmc_diagnostics"))
-mcmc_parameter_diagnostics <- bind_rows(
+ablation_results <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "ablation_metrics"))
+ablation_status <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "ablation_status"))
+mcmc_diagnostics <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "mcmc_diagnostics"))
+mcmc_parameter_diagnostics <- mixedgp_bind_rows(
   lapply(rep_objects, `[[`, "mcmc_parameter_diagnostics")
 )
-sampler_control_manifest <- bind_rows(
+sampler_control_manifest <- mixedgp_bind_rows(
   lapply(rep_objects, `[[`, "sampler_control_manifest")
 )
-mean_recovery <- bind_rows(lapply(rep_objects, `[[`, "mean_recovery"))
-latent_imputation <- bind_rows(lapply(rep_objects, `[[`, "latent_imputation"))
-surface_recovery <- bind_rows(lapply(rep_objects, `[[`, "surface_recovery"))
-ablation_surface_recovery <- bind_rows(
+mean_recovery <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "mean_recovery"))
+latent_imputation <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "latent_imputation"))
+surface_recovery <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "surface_recovery"))
+ablation_surface_recovery <- mixedgp_bind_rows(
   lapply(rep_objects, `[[`, "ablation_surface_recovery")
 )
 mixedgp_write_diagnostic_tables(mcmc_diagnostics, mcmc_parameter_diagnostics,
@@ -8335,7 +8335,7 @@ if (isTRUE(STUDY1_REUSE_LOCKED_EIV)) {
   }
   locked <- read.csv(locked_file, stringsAsFactors = FALSE)
   locked_eiv <- locked |>
-    filter(method == "EIV-GP", rep %in% seq_len(n_rep))
+    dplyr::filter(method == "EIV-GP", rep %in% seq_len(n_rep))
   expected_rows <- n_rep * length(calib_grid)
   if (nrow(locked_eiv) != expected_rows ||
       !setequal(unique(locked_eiv$n_calib), calib_grid)) {
@@ -8344,15 +8344,15 @@ if (isTRUE(STUDY1_REUSE_LOCKED_EIV)) {
   ## Oracle values in the archived file are duplicated over calibration sizes.
   ## Keep one copy per replication for the revised table and curves.
   locked_oracle <- locked |>
-    filter(method == "Oracle", rep %in% seq_len(n_rep)) |>
-    group_by(rep, scenario, method) |>
-    slice(1L) |>
-    ungroup() |>
-    mutate(n_calib = NA_integer_)
-  mc_results <- bind_rows(
+    dplyr::filter(method == "Oracle", rep %in% seq_len(n_rep)) |>
+    dplyr::group_by(rep, scenario, method) |>
+    dplyr::slice(1L) |>
+    dplyr::ungroup() |>
+    dplyr::mutate(n_calib = NA_integer_)
+  mc_results <- mixedgp_bind_rows(
     locked_eiv,
     locked_oracle,
-    new_results |> filter(!method %in% c("EIV-GP", "Oracle"))
+    new_results |> dplyr::filter(!method %in% c("EIV-GP", "Oracle"))
   )
 } else {
   mc_results <- new_results
@@ -8381,7 +8381,7 @@ mixedgp_atomic_save_rds(list(schema = 1L, study = "study1", context = report_con
 # ---- simulations/study2/setup_study2_experiment.R ----
 eivgp_study2_setup <- function() {
 if (!exists("STUDY2_RUN_ABLATIONS")) STUDY2_RUN_ABLATIONS <- TRUE
-needed_pkgs <- c("ggplot2", "dplyr", "tidyr", "knitr", "posterior", "TruncatedNormal")
+needed_pkgs <- c("ggplot2", "dplyr", "knitr", "posterior", "TruncatedNormal")
 if ((exists("STUDY2_CONFIG") && !identical(STUDY2_CONFIG, "quick")) ||
     isTRUE(STUDY2_RUN_ABLATIONS)) {
   needed_pkgs <- c(needed_pkgs, "posterior")
@@ -9054,7 +9054,7 @@ run_one_study2_replication <- function(rep_id, scenario) {
   }
   mean_truth_rejection <- tag_truth(mean_truth_rejection)
   mean_truth_diagnostics <- tag_truth(mean_truth_diagnostics)
-  reference_status <- tag_truth(bind_rows(reference_status))
+  reference_status <- tag_truth(mixedgp_bind_rows(reference_status))
   write.csv(reference_status, file.path(TAB_DIR, sprintf("reference_status_%s_rep%03d.csv",scenario,rep_id)),row.names=FALSE)
   mean_recovery <- list()
 
@@ -9261,7 +9261,7 @@ run_one_study2_replication <- function(rep_id, scenario) {
     functional_diag$used_for_gate <- TRUE
     invariant_diag$used_for_gate <- is.null(STUDY2_ESS_MIN)
     raw_diag$used_for_gate <- is.null(STUDY2_ESS_MIN) && n_calib > 0L
-    target_diag <- bind_rows(functional_diag, invariant_diag, raw_diag)
+    target_diag <- mixedgp_bind_rows(functional_diag, invariant_diag, raw_diag)
     target_diag$rep <- rep_id
     target_diag$scenario <- scenario
     target_diag$n_calib <- n_calib
@@ -9548,7 +9548,7 @@ run_one_study2_replication <- function(rep_id, scenario) {
       if (nrow(latent_parameter_diag) > 0L) {
         latent_parameter_diag$block <- "latent"
       }
-      parameter_diag <- bind_rows(
+      parameter_diag <- mixedgp_bind_rows(
         key_parameter_diag[, c(
           "parameter", "block", "rhat", "ess_bulk", "ess_tail"
         )],
@@ -9812,7 +9812,7 @@ run_one_study2_replication <- function(rep_id, scenario) {
     }
   }
 
-  ablation_status_df <- bind_rows(ablation_status)
+  ablation_status_df <- mixedgp_bind_rows(ablation_status)
   if (nrow(ablation_status_df) > 0L) {
     ablation_status_df$rep <- rep_id
     ablation_status_df$scenario <- scenario
@@ -9820,7 +9820,7 @@ run_one_study2_replication <- function(rep_id, scenario) {
     ablation_status_df$rep <- integer(0)
     ablation_status_df$scenario <- character(0)
   }
-  ablation_optimizer_attempts_df <- bind_rows(ablation_optimizer_attempts)
+  ablation_optimizer_attempts_df <- mixedgp_bind_rows(ablation_optimizer_attempts)
   if (nrow(ablation_optimizer_attempts_df) > 0L) {
     ablation_optimizer_attempts_df$rep <- rep_id
     ablation_optimizer_attempts_df$scenario <- scenario
@@ -9831,27 +9831,27 @@ run_one_study2_replication <- function(rep_id, scenario) {
 
   list(
     dataset_identity = data.frame(rep=rep_id, dataset_md5=mixedgp_dataset_identity(frozen$data)),
-    metrics = bind_rows(metrics),
-    mean_recovery = bind_rows(mean_recovery),
+    metrics = mixedgp_bind_rows(metrics),
+    mean_recovery = mixedgp_bind_rows(mean_recovery),
     reference_status = reference_status,
     mean_truth_rejection = mean_truth_rejection,
     mean_truth_diagnostics = mean_truth_diagnostics,
-    diagnostics = bind_rows(diagnostics),
-    target_diagnostics = bind_rows(target_diagnostics),
-    imputation = bind_rows(c(imputation, ablation_imputation)),
-    imputation_status = bind_rows(imputation_status),
-    surface = bind_rows(surface),
-    ablation_metrics = bind_rows(ablation_metrics),
-    ablation_surface = bind_rows(ablation_surface),
-    measurement_diagnostics = bind_rows(measurement_diagnostics),
-    measurement_parameter_diagnostics = bind_rows(
+    diagnostics = mixedgp_bind_rows(diagnostics),
+    target_diagnostics = mixedgp_bind_rows(target_diagnostics),
+    imputation = mixedgp_bind_rows(c(imputation, ablation_imputation)),
+    imputation_status = mixedgp_bind_rows(imputation_status),
+    surface = mixedgp_bind_rows(surface),
+    ablation_metrics = mixedgp_bind_rows(ablation_metrics),
+    ablation_surface = mixedgp_bind_rows(ablation_surface),
+    measurement_diagnostics = mixedgp_bind_rows(measurement_diagnostics),
+    measurement_parameter_diagnostics = mixedgp_bind_rows(
       measurement_parameter_diagnostics
     ),
     ablation_optimizer_attempts = ablation_optimizer_attempts_df,
     ablation_status = ablation_status_df,
     competitor_status = competitor_status,
     pattern_counts = pattern_counts,
-    sampler_control_manifest = bind_rows(sampler_control_manifest),
+    sampler_control_manifest = mixedgp_bind_rows(sampler_control_manifest),
     metadata = list(
       rep = rep_id,
       scenario = scenario,
@@ -9966,42 +9966,42 @@ rep_objects <- mixedgp_run_replications(
   mc.preschedule = FALSE
 )
 
-dataset_identity <- bind_rows(lapply(rep_objects, `[[`, "dataset_identity"))
+dataset_identity <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "dataset_identity"))
 write.csv(dataset_identity, file.path(STUDY2_OUT_PREFIX, "dataset_identity.csv"), row.names=FALSE)
 
-mc_results <- bind_rows(lapply(rep_objects, `[[`, "metrics"))
-mc_mean_recovery <- bind_rows(lapply(rep_objects, `[[`, "mean_recovery"))
-mc_reference_status <- bind_rows(lapply(rep_objects, `[[`, "reference_status"))
-mc_mean_truth_rejection <- bind_rows(
+mc_results <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "metrics"))
+mc_mean_recovery <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "mean_recovery"))
+mc_reference_status <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "reference_status"))
+mc_mean_truth_rejection <- mixedgp_bind_rows(
   lapply(rep_objects, `[[`, "mean_truth_rejection")
 )
-mc_mean_truth_diagnostics <- bind_rows(
+mc_mean_truth_diagnostics <- mixedgp_bind_rows(
   lapply(rep_objects, `[[`, "mean_truth_diagnostics")
 )
-mc_diagnostics <- bind_rows(lapply(rep_objects, `[[`, "diagnostics"))
-mc_target_diagnostics <- bind_rows(
+mc_diagnostics <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "diagnostics"))
+mc_target_diagnostics <- mixedgp_bind_rows(
   lapply(rep_objects, `[[`, "target_diagnostics")
 )
-mc_imputation <- bind_rows(lapply(rep_objects, `[[`, "imputation"))
-mc_imputation_status <- bind_rows(
+mc_imputation <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "imputation"))
+mc_imputation_status <- mixedgp_bind_rows(
   lapply(rep_objects, `[[`, "imputation_status")
 )
-mc_surface <- bind_rows(lapply(rep_objects, `[[`, "surface"))
-mc_ablation_results <- bind_rows(lapply(rep_objects, `[[`, "ablation_metrics"))
-mc_ablation_surface <- bind_rows(lapply(rep_objects, `[[`, "ablation_surface"))
-measurement_diagnostics <- bind_rows(
+mc_surface <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "surface"))
+mc_ablation_results <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "ablation_metrics"))
+mc_ablation_surface <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "ablation_surface"))
+measurement_diagnostics <- mixedgp_bind_rows(
   lapply(rep_objects, `[[`, "measurement_diagnostics")
 )
-measurement_parameter_diagnostics <- bind_rows(
+measurement_parameter_diagnostics <- mixedgp_bind_rows(
   lapply(rep_objects, `[[`, "measurement_parameter_diagnostics")
 )
-ablation_optimizer_attempts <- bind_rows(
+ablation_optimizer_attempts <- mixedgp_bind_rows(
   lapply(rep_objects, `[[`, "ablation_optimizer_attempts")
 )
-ablation_status <- bind_rows(lapply(rep_objects, `[[`, "ablation_status"))
-competitor_status <- bind_rows(lapply(rep_objects, `[[`, "competitor_status"))
-pattern_counts <- bind_rows(lapply(rep_objects, `[[`, "pattern_counts"))
-sampler_control_manifest <- bind_rows(
+ablation_status <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "ablation_status"))
+competitor_status <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "competitor_status"))
+pattern_counts <- mixedgp_bind_rows(lapply(rep_objects, `[[`, "pattern_counts"))
+sampler_control_manifest <- mixedgp_bind_rows(
   lapply(rep_objects, `[[`, "sampler_control_manifest")
 )
 replication_metadata <- lapply(rep_objects, `[[`, "metadata")
@@ -12237,8 +12237,8 @@ mixedgp_score_study1_fit <- function(fit_eiv, frozen, cache_spec, rep_id, n_cali
             seed = 380000L + 1000L * rep_id + n_calib
           )
       }
-  list(metrics=bind_rows(metrics),mean_recovery=bind_rows(mean_metrics),
-    latent_imputation=bind_rows(latent_imputation_metrics),surface_recovery=bind_rows(surface_recovery_metrics))
+  list(metrics=mixedgp_bind_rows(metrics),mean_recovery=mixedgp_bind_rows(mean_metrics),
+    latent_imputation=mixedgp_bind_rows(latent_imputation_metrics),surface_recovery=mixedgp_bind_rows(surface_recovery_metrics))
 }
 # Refresh a single saved replication after exact continuation; never fit baselines.
 mixedgp_refresh_study1_continuation <- function(run_dir,cell_id,rep_id,n_calib,extended,data_root,ess_min=100) {
@@ -12282,7 +12282,7 @@ mixedgp_refresh_study1_continuation <- function(run_dir,cell_id,rep_id,n_calib,e
     bulk_ess_limit=spec$mcmc$ess_limit,tail_ess_limit=spec$mcmc$ess_limit)
   targets<-extended$diagnostics
   raw$diagnostic_role<-"raw";targets$diagnostic_role<-"target"
-  tab<-bind_rows(raw,targets);tab$rep<-rep_id;tab$n_calib<-n_calib
+  tab<-mixedgp_bind_rows(raw,targets);tab$rep<-rep_id;tab$n_calib<-n_calib
   row<-fit$diagnostics$summary;row$rep<-rep_id;row$n_calib<-n_calib
   row$gate_max_rhat<-max(tab$rhat);row$gate_min_ess<-min(tab$ess_bulk,tab$ess_tail)
   row$raw_gate_pass<-mixedgp_diagnostic_table_pass(raw)
@@ -12293,7 +12293,7 @@ mixedgp_refresh_study1_continuation <- function(run_dir,cell_id,rep_id,n_calib,e
     if(!is.data.frame(y)||!nrow(y))return(x)
     hit<-x$rep==rep_id & x$n_calib==n_calib;hit[is.na(hit)]<-FALSE
     if(method)hit<-hit & x$method=="EIV-GP"
-    out<-bind_rows(x[!hit,,drop=FALSE],y)
+    out<-mixedgp_bind_rows(x[!hit,,drop=FALSE],y)
     out[order(out$rep,out$n_calib,na.last=TRUE),,drop=FALSE]
   }
   rep_path<-list.files(file.path(res,"competitor_replications"),
@@ -12737,6 +12737,19 @@ mixedgp_cleanup_cut_cache <- function(folder,retain_draws=FALSE) {
   invisible(NULL)
 }
 
+
+# Only finite completed inputs reach this internal distance kernel. Rfast's
+# serial one-column distances retain the subtraction/square arithmetic while
+# avoiding outer() dispatch and nested numerical-library thread pools.
+# Rfast::Outer returns the transposed shape of base::outer: swap arguments;
+# the squared difference is invariant to the resulting sign reversal.
+mixedgp_squared_differences <- function(x, y = NULL) {
+  x <- matrix(x, ncol = 1L)
+  if (is.null(y)) return(Rfast::Dist(x, square = TRUE, parallel = FALSE))
+  Rfast::Outer(as.numeric(y), as.numeric(x), oper = "-")^2
+}
+
+
 # Normalize the common method-lane CLI while preserving historical flags.
 mixedgp_workflow_cli <- function(args,group=NULL) {
   ix<-grep("^--action=",args)
@@ -12748,6 +12761,158 @@ mixedgp_workflow_cli <- function(args,group=NULL) {
   if(identical(group,"report") && action=="run")stop("Report scripts accept action=plan or report; use a method script to run fits")
   args<-args[-ix]
   c(args,switch(action,plan="--plan=true",report="--reuse-only=true",run=character()))
+}
+
+# Small table operations used internally. These deliberately accept ordinary
+# data-frame columns and explicit column names rather than a tidy-selection DSL.
+mixedgp_bind_rows <- function(...) {
+  flatten <- function(x) {
+    if (is.null(x)) return(list())
+    if (is.data.frame(x)) return(list(as.data.frame(x)))
+    if (is.list(x)) return(unlist(lapply(x, flatten), recursive = FALSE))
+    stop("Row binding requires data frames or lists of data frames.")
+  }
+  rows <- flatten(list(...))
+  if (!length(rows)) return(data.frame())
+  size <- sum(vapply(rows, nrow, integer(1)))
+  columns <- unique(unlist(lapply(rows, names), use.names = FALSE))
+  if (!length(columns)) return(data.frame(row.names = seq_len(size)))
+  # Include empty frames in common column prototypes, including factor levels.
+  # All-NA logical columns are placeholders and adopt a declared column type.
+  for (name in columns) {
+    present <- which(vapply(rows, function(x) name %in% names(x), logical(1)))
+    values <- lapply(rows[present], `[[`, name)
+    unspecified <- vapply(values, function(x) is.logical(x) && all(is.na(x)), logical(1))
+    typed <- values[!unspecified]
+    if (!length(typed)) typed <- values
+    factor_col <- vapply(typed, is.factor, logical(1))
+    if (any(factor_col)) {
+      if (all(factor_col)) {
+        ordered <- vapply(typed, is.ordered, logical(1))
+        if (any(ordered) && (!all(ordered) ||
+            !all(vapply(typed, function(x) identical(levels(x), levels(typed[[1L]])), logical(1)))))
+          stop("Ordered factor columns require identical levels.")
+        prototype <- factor(character(), levels = unique(unlist(lapply(typed, levels), use.names = FALSE)),
+                            ordered = all(ordered))
+        for (i in present) {
+          value <- rows[[i]][[name]]
+          rows[[i]][[name]] <- factor(if (is.factor(value)) as.character(value) else value,
+            levels = levels(prototype), ordered = is.ordered(prototype))
+        }
+      } else if (all(factor_col | vapply(typed, is.character, logical(1)))) {
+        prototype <- character()
+        for (i in present) rows[[i]][[name]] <- as.character(rows[[i]][[name]])
+      } else stop("Factor columns can only be combined with factors or characters.")
+    } else {
+      # Zero-length values participate in coercion, so an empty double column
+      # still promotes integer rows to doubles. c() preserves Date/POSIX classes.
+      prototype <- do.call(c, lapply(typed, function(x) x[FALSE]))
+      for (j in seq_along(present)) {
+        i <- present[j]; value <- rows[[i]][[name]]
+        if (unspecified[j]) rows[[i]][[name]] <- prototype[rep(NA_integer_, length(value))]
+        else if (is.object(prototype)) {
+          if (!identical(class(value), class(prototype))) stop("Incompatible column classes.")
+        } else if (is.atomic(prototype)) rows[[i]][[name]] <- as.vector(value, mode = typeof(prototype))
+      }
+    }
+    for (i in setdiff(seq_along(rows), present))
+      rows[[i]][[name]] <- prototype[rep(NA_integer_, nrow(rows[[i]]))]
+  }
+  rows <- lapply(rows, function(x) x[, columns, drop = FALSE])
+  if (!size) return(rows[[1L]])
+  out <- do.call(rbind, rows)
+  rownames(out) <- NULL
+  out
+}
+
+mixedgp_pivot_longer <- function(data, cols, names_to = "name", values_to = "value") {
+  data <- as.data.frame(data)
+  if (!is.character(cols) || !length(cols) || anyDuplicated(cols) ||
+      any(!cols %in% names(data))) stop("Select distinct existing columns by name.")
+  ids <- setdiff(names(data), cols)
+  if (names_to == values_to || any(c(names_to, values_to) %in% ids))
+    stop("Long-table output names must be distinct from identifier columns.")
+  n <- nrow(data); k <- length(cols)
+  out <- data[rep(seq_len(n), each = k), ids, drop = FALSE]
+  out[[names_to]] <- rep(cols, times = n)
+  values <- do.call(c, unname(data[cols]))
+  out[[values_to]] <- values[rep(seq_len(n), each = k) + rep(seq_len(k) - 1L, times = n) * n]
+  rownames(out) <- NULL
+  out
+}
+
+mixedgp_pivot_wider <- function(data, names_from, values_from) {
+  data <- as.data.frame(data)
+  if (length(names_from) != 1L || !is.character(names_from) ||
+      !is.character(values_from) || !length(values_from) ||
+      any(!c(names_from, values_from) %in% names(data)))
+    stop("Supply existing names/value columns by name.")
+  ids <- setdiff(names(data), c(names_from, values_from))
+  if (anyDuplicated(data[c(ids, names_from)]))
+    stop("Wide-table keys must be unique; summarize repeated observations first.")
+  labels <- unique(as.character(data[[names_from]]))
+  if (length(ids)) {
+    out <- unique(data[ids]); rownames(out) <- NULL
+    # Merge only keys and temporary indices; restore the original row order.
+    left <- data[ids]; left[["..row"]] <- seq_len(nrow(data))
+    right <- out; right[["..key"]] <- seq_len(nrow(out))
+    if (any(c("..row", "..key") %in% ids)) stop("Reserved internal key column.")
+    joined <- merge(left, right, by = ids, sort = FALSE)
+    row <- joined[["..key"]][order(joined[["..row"]])]
+  } else {
+    out <- data.frame(row.names = seq_len(as.integer(nrow(data) > 0L)))
+    row <- rep(1L, nrow(data))
+  }
+  label_index <- match(as.character(data[[names_from]]), labels)
+  for (value in values_from) for (j in seq_along(labels)) {
+    name <- if (length(values_from) == 1L) labels[j] else paste(value, labels[j], sep = "_")
+    if (is.na(name)) name <- "NA"
+    if (name %in% names(out)) stop("Wide-table output names must be unique.")
+    column <- data[[value]][rep(NA_integer_, nrow(out))]
+    take <- which(label_index == j)
+    column[row[take]] <- data[[value]][take]
+    out[[name]] <- column
+  }
+  out
+}
+
+mixedgp_cross_calibration <- function(data, n_calib) {
+  data <- unique(as.data.frame(data))
+  if ("n_calib" %in% names(data)) stop("Calibration column already exists.")
+  if (nrow(data) && ncol(data))
+    data <- data[do.call(order, c(unname(data), list(na.last = TRUE, method = "radix"))), , drop = FALSE]
+  n_calib <- sort(unique(n_calib), na.last = TRUE)
+  out <- data[rep(seq_len(nrow(data)), each = length(n_calib)), , drop = FALSE]
+  out$n_calib <- rep(n_calib, times = nrow(data))
+  rownames(out) <- NULL
+  out
+}
+
+# Saved-report environments override ggsave to suppress writes in summarize
+# mode. Keep this local dispatch point instead of importing the plotting stack.
+ggsave <- function(...) ggplot2::ggsave(...)
+
+mixedgp_block_summary <- function(data, column, summary) {
+  data <- as.data.frame(data)
+  data <- data[is.finite(data[[column]]), , drop = FALSE]
+  keys <- sort(unique(data$block), na.last = TRUE, method = "radix")
+  if (!length(keys)) {
+    prototype <- suppressWarnings(summary(numeric()))
+    return(data.frame(block = data$block[FALSE], prototype[FALSE, , drop = FALSE]))
+  }
+  rows <- lapply(seq_along(keys), function(i) {
+    key <- keys[i]
+    take <- if (is.na(key)) is.na(data$block) else !is.na(data$block) & data$block == key
+    data.frame(block = key, summary(data[[column]][take]))
+  })
+  out <- do.call(rbind, rows); rownames(out) <- NULL
+  out
+}
+
+mixedgp_tag_block <- function(data, block) {
+  data <- as.data.frame(data)
+  data$block <- rep(block, nrow(data))
+  data
 }
 
 # Resolve against the launch directory even when the destination does not exist.

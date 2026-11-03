@@ -7,6 +7,7 @@
   path<-if(length(files))tail(files,1L)else sub('^--file=','',grep('^--file=',commandArgs(FALSE),value=TRUE)[1])
   normalizePath(file.path(dirname(normalizePath(path)),'..'))
 })
+
 adni_load_api <- function(repo=.adni_repository) {
   repo<-normalizePath(repo)
   lib<-Sys.getenv('EIVGP_R_LIBRARY',file.path(repo,'.r-library'))
@@ -17,7 +18,7 @@ adni_load_api <- function(repo=.adni_repository) {
   evalq({
 # Task folders and shared directories mirror the Ocean flat result layout.
 adni_storage_flat <- function(root) {
-  marker<-base::file.path(root,'_meta','storage-layout.rds')
+  marker<-file.path(root,'_meta','storage-layout.rds')
   if(!file.exists(marker))return(FALSE)
   if(!identical(readRDS(marker)$schema,'adni-flat-v1'))stop('Unknown ADNI storage schema: ',marker)
   TRUE
@@ -27,9 +28,9 @@ adni_storage_init <- function(root,stages) {
   existing<-if(dir.exists(root))list.files(root,all.files=TRUE,no..=TRUE)else character()
   # Existing unmarked results retain their original physical layout.
   if(length(existing))return(invisible(root))
-  dir.create(base::file.path(root,'_meta'),recursive=TRUE,showWarnings=FALSE)
+  dir.create(file.path(root,'_meta'),recursive=TRUE,showWarnings=FALSE)
   mixedgp_atomic_rds(list(schema='adni-flat-v1',stages=as.integer(stages)),
-    base::file.path(root,'_meta','storage-layout.rds'))
+    file.path(root,'_meta','storage-layout.rds'))
   invisible(root)
 }
 adni_flat_relative <- function(path,stages) {
@@ -58,16 +59,16 @@ adni_flat_relative <- function(path,stages) {
   path
 }
 adni_path <- function(...,fsep=.Platform$file.sep) {
-  paths<-base::file.path(...,fsep=fsep)
+  paths<-file.path(...,fsep=fsep)
   vapply(paths,function(path) {
     candidate<-path
     repeat {
-      marker<-base::file.path(candidate,'_meta','storage-layout.rds')
+      marker<-file.path(candidate,'_meta','storage-layout.rds')
       if(dir.exists(candidate)&&file.exists(marker)) {
         adni_storage_flat(candidate)
         if(identical(path,candidate))return(path)
         rel<-substring(path,nchar(candidate)+2L)
-        return(base::file.path(candidate,adni_flat_relative(rel,readRDS(marker)$stages)))
+        return(file.path(candidate,adni_flat_relative(rel,readRDS(marker)$stages)))
       }
       parent<-dirname(candidate)
       if(identical(parent,candidate)||candidate=='.')return(path)
@@ -75,15 +76,15 @@ adni_path <- function(...,fsep=.Platform$file.sep) {
     }
   },character(1),USE.NAMES=FALSE)
 }
-adni_workflow_root <- function(out)if(adni_storage_flat(out))out else base::file.path(out,'workflow')
+adni_workflow_root <- function(out)if(adni_storage_flat(out))out else file.path(out,'workflow')
 adni_default_output <- function(dataset,profile,repo) {
-  base::file.path(repo,'results',if(profile=='paper')dataset else paste(dataset,profile,sep='_'))
+  file.path(repo,'results',if(profile=='paper')dataset else paste(dataset,profile,sep='_'))
 }
 adni_snapshot_inputs <- function(input,out,files) {
-  dest<-adni_path(out,'data');meta<-base::file.path(input,'DATASET.json')
+  dest<-adni_path(out,'data');meta<-file.path(input,'DATASET.json')
   if(file.exists(meta))files<-c(files,meta)
   for(source in files) {
-    target<-base::file.path(dest,adni_input_basename(source))
+    target<-file.path(dest,adni_input_basename(source))
     if(file.exists(target)) {
       if(!identical(unname(tools::md5sum(source)),unname(tools::md5sum(target))))
         stop('Frozen input snapshot differs: ',target)
@@ -225,19 +226,19 @@ adni_input_basename <- function(path) {
     name
 }
 adni_default_input <- function(dataset,repo) {
-    base::file.path(repo,'data',if(dataset=='adni')'adni'else paste0('adni_',dataset))
+    file.path(repo,'data',if(dataset=='adni')'adni'else paste0('adni_',dataset))
 }
 adni_input_files <- function(root,fold,cell) {
     prefix <- sprintf('fold%02d_%s_',fold,cell)
-    flat <- base::file.path(root,paste0(prefix,c('PROTOCOL.json','train.csv','test.csv')))
+    flat <- file.path(root,paste0(prefix,c('PROTOCOL.json','train.csv','test.csv')))
     if (any(file.exists(flat))) return(flat)
-    base::file.path(root,sprintf('fold%02d',fold),cell,c('PROTOCOL.json','private/train.csv','private/test.csv'))
+    file.path(root,sprintf('fold%02d',fold),cell,c('PROTOCOL.json','private/train.csv','private/test.csv'))
 }
 adni_plan_input_root <- function(path) {
     path <- path.expand(path)
-    if (!file.exists(base::file.path(path,'fold01_O0_PROTOCOL.json'))) {
-        if (dir.exists(base::file.path(path,'MC'))) path <- base::file.path(path,'MC')
-        else if (dir.exists(base::file.path(path,'inputs','MC'))) path <- base::file.path(path,'inputs','MC')
+    if (!file.exists(file.path(path,'fold01_O0_PROTOCOL.json'))) {
+        if (dir.exists(file.path(path,'MC'))) path <- file.path(path,'MC')
+        else if (dir.exists(file.path(path,'inputs','MC'))) path <- file.path(path,'inputs','MC')
     }
     normalizePath(path, mustWork = TRUE)
 }
@@ -902,7 +903,7 @@ adni_with_lock <- function(path,FUN,wait=FALSE,timeout=60) {
   repeat {
     if(dir.create(path,showWarnings=FALSE))break
     if(!dir.exists(path))stop('ADNI cannot create lock; check directory permissions and free space: ',path)
-    owner<-base::file.path(path,'owner.json')
+    owner<-file.path(path,'owner.json')
     info<-tryCatch(if(file.exists(owner))jsonlite::fromJSON(owner)else NULL,error=function(e)NULL)
     detail<-if(is.null(info))'owner record not yet available'else paste('PID',info$pid,'on',info$host)
     if(!wait||proc.time()[['elapsed']]-started>=timeout)
@@ -913,18 +914,18 @@ adni_with_lock <- function(path,FUN,wait=FALSE,timeout=60) {
   }
   token<-paste(Sys.getpid(),format(Sys.time(),'%Y%m%d%H%M%OS6'),sep='-')
   on.exit({
-    owner<-base::file.path(path,'owner.json')
+    owner<-file.path(path,'owner.json')
     saved<-tryCatch(jsonlite::fromJSON(owner),error=function(e)NULL)
     if(!is.null(saved)&&identical(saved$token,token))unlink(path,recursive=TRUE)
   },add=TRUE)
   atomic_json(list(pid=Sys.getpid(),host=Sys.info()[['nodename']],token=token,
-    started_at=format(Sys.time(),tz='UTC',usetz=TRUE)),base::file.path(path,'owner.json'))
+    started_at=format(Sys.time(),tz='UTC',usetz=TRUE)),file.path(path,'owner.json'))
   FUN()
 }
 
 adni_check_legacy_lock <- function(root) {
   old<-unlist(lapply(unique(c(root,adni_workflow_root(root))),function(path)
-    base::file.path(path,c('.application.lock','.adni-application.lock'))),use.names=FALSE)
+    file.path(path,c('.application.lock','.adni-application.lock'))),use.names=FALSE)
   if(any(dir.exists(old)))stop('ADNI found a lock from the earlier exclusive executor: ',old[dir.exists(old)][1],
     '. Finish or stop that run before using the new executor; confirm all workers have stopped before removing a stale lock.')
   invisible(NULL)
@@ -934,7 +935,7 @@ adni_execution_lock <- function(root,group,FUN) {
   adni_check_legacy_lock(root)
   if(group=='report')return(adni_execution_lock(root,'eivGP',function()
     adni_execution_lock(root,'competitors',FUN)))
-  adni_with_lock(base::file.path(root,'_meta','locks',paste0(group,'.lock')),FUN)
+  adni_with_lock(file.path(root,'_meta','locks',paste0(group,'.lock')),FUN)
 }
 
 adni_publish_progress <- function(root,group,phase,status) {
@@ -942,12 +943,12 @@ adni_publish_progress <- function(root,group,phase,status) {
   record<-list(application='ADNI',group=group,phase=phase,pid=Sys.getpid(),
     updated_at=format(Sys.time(),tz='UTC',usetz=TRUE),completed=sum(status$state%in%c('DONE','REUSED')),
     failed=sum(status$state=='FAILED'),total=nrow(status),active_jobs=active)
-  atomic_json(record,base::file.path(root,'_meta',paste0(group,'_status.json')))
+  atomic_json(record,file.path(root,'_meta',paste0(group,'_status.json')))
   lines<-c(paste('ADNI |',group,'|',phase,'|',record$updated_at),
     sprintf('Completed %d/%d; failed %d; running %d',record$completed,record$total,record$failed,nrow(active)),
     if(nrow(active))apply(active[,c('fold','cell','method','state'),drop=FALSE],1,paste,collapse=' | ')else 'No job currently running.',
     'Detailed task logs and phase status CSVs are under logs/.')
-  path<-base::file.path(root,paste0('PROGRESS_',group,'.txt'))
+  path<-file.path(root,paste0('PROGRESS_',group,'.txt'))
   tmp<-tempfile(tmpdir=dirname(path));on.exit(unlink(tmp),add=TRUE);writeLines(lines,tmp)
   if(!file.rename(tmp,path))stop('ADNI cannot publish progress: ',path)
 }
@@ -961,7 +962,7 @@ adni_workflow_identity <- function(path,id) {
     stop('ADNI saved model settings, package modules or inputs differ; use a new output root: ',dirname(path))
   # Preserve the original fitting identity and receipts. Record only the new
   # execution source; sampler/package/input identities must match exactly.
-  dest<-base::file.path(dirname(path),'executor_updates',paste0(digest::digest(id$application),'.rds'))
+  dest<-file.path(dirname(path),'executor_updates',paste0(digest::digest(id$application),'.rds'))
   if(!file.exists(dest))atomic_rds(list(schema='adni-executor-update-v1',
     original_identity=saved,current_execution_source=id$application,
     package_and_statistical_identity_unchanged=TRUE),dest)
@@ -1141,7 +1142,7 @@ adni_screen_run <- function(repo,p,group) {
     baseline_profile=if(is.null(m$baseline_profile))if(isTRUE(m$smoke))'pilot'else'paper'else m$baseline_profile,
     draws_per_chain=if(is.null(m$draws_per_chain))if(isTRUE(m$smoke))5L else 250L else m$draws_per_chain)
   identities<-list()
-  adni_with_lock(base::file.path(dirname(root),paste0('.',basename(root),'.initialization.lock')),function(){
+  adni_with_lock(file.path(dirname(root),paste0('.',basename(root),'.initialization.lock')),function(){
     for(z in m$cases){
       id<-c(base_id,list(plan=z$id,inputs=unname(tools::md5sum(inputs[[z$id]]$files))))
       path<-adni_path(z$output,'workflow_identity.rds')
@@ -2976,7 +2977,7 @@ adni_method_run <- function(repo,params,group) {
   list(m=m,input=input,s=s,manifest=manifest)
   }
   prepared<-if(isTRUE(params$plan))initialize()else adni_with_lock(
-    base::file.path(dirname(out),paste0('.',basename(out),'.initialization.lock')),initialize,wait=TRUE)
+    file.path(dirname(out),paste0('.',basename(out),'.initialization.lock')),initialize,wait=TRUE)
   m<-prepared$m;input<-prepared$input;s<-prepared$s;manifest<-prepared$manifest
   if(isTRUE(params$plan)) {
     e<-adni_load_api(repo)
@@ -3098,7 +3099,7 @@ adni_prepare_folds <- function(cohort_file,metadata_file,output_dir) {
       stop('The frozen calibration vectors have insufficient affine rank; no outcome-guided mask reroll is performed')
     for(cell in c('O0','O20','O50')) {
       dir.create(output_dir,recursive=TRUE,showWarnings=FALSE)
-      paths<-base::file.path(output_dir,paste0(sprintf('fold%02d_%s_',f,cell),c('PROTOCOL.json','train.csv','test.csv')))
+      paths<-file.path(output_dir,paste0(sprintf('fold%02d_%s_',f,cell),c('PROTOCOL.json','train.csv','test.csv')))
       train<-tr;train$calibration<-as.integer(train$RID%in%cal[[cell]])
       write.csv(train,paths[2],row.names=FALSE);write.csv(te,paths[3],row.names=FALSE)
       seed_names<-c('production','posterior','prediction','mixed_prediction','prospective_U','UC_GP','LVGP','EzGP','EzGP_draws')

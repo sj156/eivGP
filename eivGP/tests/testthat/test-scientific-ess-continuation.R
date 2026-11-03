@@ -28,13 +28,20 @@ test_that("scientific ESS is strict and requires a complete four-chain window", 
 
 test_that("an operational limit preserves unsuccessful states without claiming success", {
   tab<-data.frame(ess_bulk=80,ess_tail=90,n_chains=4L,draw_window_complete=TRUE,rhat=1.1)
-  local_mocked_bindings(mixedgp_study1_target_series=function(...)list(a=rep(list(1:20),4)),
+  binding_names<-c("mixedgp_study1_target_series","mixedgp_summarize_diagnostic_series","mixedgp_fit_engine")
+  original<-mget(binding_names,asNamespace("eivGP"))
+  object<-list(mcmc=list(samples_by_chain=list(logtheta=rep(list(matrix(0,20,1)),4))),checkpoint=list(iteration=30L))
+  p<-tempfile(fileext=".rds");on.exit(unlink(p),add=TRUE)
+  with_mocked_bindings({
+    r<-continue_eivgp_until_ess(object,matrix(0,1,1),1,max_extensions=0,checkpoint_file=p)
+    expect_false(r$success);expect_identical(read_fit(p)$fit,object)
+  }, mixedgp_study1_target_series=function(...)list(a=rep(list(1:20),4)),
     mixedgp_summarize_diagnostic_series=function(...)tab,
     mixedgp_fit_engine=function(...)"univariate",.package="eivGP")
-  object<-list(mcmc=list(samples_by_chain=list(logtheta=rep(list(matrix(0,20,1)),4))),checkpoint=list(iteration=30L))
-  p<-tempfile(fileext=".rds");on.exit(unlink(p))
-  r<-continue_eivgp_until_ess(object,matrix(0,1,1),1,max_extensions=0,checkpoint_file=p)
-  expect_false(r$success);expect_identical(read_fit(p)$fit,object)
+  # Do not let this mock classify later multivariate fits as Study I, or replace
+  # their real diagnostic tables with the one-row operational-limit fixture.
+  for(name in binding_names)expect_identical(get(name,asNamespace("eivGP")),original[[name]])
+  expect_identical(eivGP:::mixedgp_fit_engine(list(interface=list(engine="multivariate"))),"multivariate")
 })
 
 test_that("cleanup retains checkpoint files when any target is deficient", {

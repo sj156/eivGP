@@ -23,7 +23,8 @@ test_that("nested stages lend slots, respect the total budget and preserve seeds
   active<-cumsum(ifelse(records$V3=="acquire",1L,-1L))
   expect_true(all(active>=0L & active<=4L))
   expect_equal(tail(active,1),0)
-  if(.Platform$OS.type=="unix")expect_equal(max(active),4L)
+  capacity<-if(.Platform$OS.type=="unix")min(4L,mixedgp_available_cores())else 1L
+  expect_equal(max(active),capacity)
   expect_null(mixedgp_budget())
   expect_false(mixedgp_budget_owned())
 })

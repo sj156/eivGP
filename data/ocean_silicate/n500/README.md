@@ -13,5 +13,5 @@ O20 is nested in O50. `calibration_X_coverage.csv` records occupied quantile bin
 and exact-margin status. The same 200 hidden training profiles per fold support
 the O20/O50 imputation comparison.
 
-Use `dataset="ocean500"` in [ocean.Rmd](../../../paper/applications/ocean.Rmd).
+Use `dataset="ocean500"` in [ocean.Rmd](../../../paper/ocean.Rmd).
 See the [data guide](../README.md) for the fold method and regeneration command.

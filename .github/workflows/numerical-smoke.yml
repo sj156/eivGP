@@ -24,6 +24,6 @@ jobs:
       - name: Validate locked environment and generated data
         run: |
           Rscript tools/setup_numerical.R --check
-          Rscript paper/numerical/check-portability.R
+          Rscript tools/check-portability.R
       - name: Exercise model and prediction interfaces
-        run: Rscript paper/numerical/check-numerical.R
+        run: Rscript tools/check-numerical.R

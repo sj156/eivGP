@@ -15,7 +15,7 @@ no separate Ocean implementation scripts are installed.
 
 See the [repository guide](../README.md) for installation,
 the [paper guide](../paper/README.md) for the four analysis workflows,
-and the [Ocean guide](../paper/applications/README_ocean.md) for all three cohort sizes.
+and the [Ocean guide](../paper/README_ocean.md) for all three cohort sizes.
 Use `help(package="eivGP")` for function documentation.
 
 Choose `sampler="ESS"` (default), `"HMC"`, or `"HYBRID"`. The hybrid adds

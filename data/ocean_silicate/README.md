@@ -49,7 +49,7 @@ log pressure and salinity moments. Training-calibration selection uses recorded
 C/X only. Test masks use seed `202609260 + fold` and nested class-balanced
 20%/50% quotas; the 500 O50 design alternates 12/13 profiles per class.
 
-See [Ocean instructions](../../paper/applications/README_ocean.md) for installation
+See [Ocean instructions](../../paper/README_ocean.md) for installation
 and fitting/report commands.
 
 ## Data attribution

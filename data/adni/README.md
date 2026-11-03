@@ -68,7 +68,7 @@ the preparation algorithm creates a different frozen partition.
 
 ## 3. Run and keep outputs local
 
-Use the three commands in [the application guide](../../paper/applications/README_adni.md).
+Use the three commands in [the application guide](../../paper/README_adni.md).
 `--data-root=/external/adni` reads files outside the checkout. New result roots
 keep a verified flat copy in `results/adni/data/`. Fits and empirical reports
 remain ignored. Share participant inputs and derived reports through an

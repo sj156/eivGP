@@ -21,7 +21,7 @@ O0 has an unanchored model coordinate and no physical-scale U recovery score. Ma
 
 ## Run
 
-Use `dataset="ocean200"` in [the executable Ocean report](../../../paper/applications/ocean.Rmd). See [Ocean instructions](../../../paper/applications/README_ocean.md). The package validates frozen rows, class counts, calibration masks, nested test masks and train/test separation. Regenerate masks reproducibly in a separate directory with `Rscript tools/ocean-prepare-folds.R ocean200 /external/ocean200-inputs`.
+Use `dataset="ocean200"` in [the executable Ocean report](../../../paper/ocean.Rmd). See [Ocean instructions](../../../paper/README_ocean.md). The package validates frozen rows, class counts, calibration masks, nested test masks and train/test separation. Regenerate masks reproducibly in a separate directory with `Rscript tools/ocean-prepare-folds.R ocean200 /external/ocean200-inputs`.
 
 ## Data attribution
 

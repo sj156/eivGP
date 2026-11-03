@@ -15,4 +15,4 @@ Run from the repository root. Prepared files are written to
 `reproduction/ocean/prepared/ocean1000`. Each fold has 800 training and 200 test
 profiles, training calibration sizes 0/160/400 and measured test-u sizes 40/100.
 See the [data guide](../README.md) for the method and the
-[Ocean instructions](../../../paper/applications/README_ocean.md) for fitting.
+[Ocean instructions](../../../paper/README_ocean.md) for fitting.

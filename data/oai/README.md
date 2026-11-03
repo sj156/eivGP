@@ -68,6 +68,6 @@ the same training-calibration and test-U masks directly from its protocols.
 
 ## 3. Keep execution records local
 
-Follow [the OAI guide](../../paper/applications/README_oai.md). The default paper
+Follow [the OAI guide](../../paper/README_oai.md). The default paper
 root is `results/oai/`; it retains verified input snapshots and saved reports.
 Participant inputs, masks, raw downloads and derived fits are not committed.

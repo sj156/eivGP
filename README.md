@@ -1,436 +1,258 @@
 # eivGP
 
 Gaussian process regression with ordinal proxies and partially observed continuous
-inputs. This repository provides the package and the paper's numerical studies,
-Ocean, ADNI and OAI applications.
+inputs. Use the R package for your own data, or the scripts to reproduce Studies I
+and II and the Ocean, ADNI and OAI applications.
 
-Follow the numbered sections to locate the code, set up the environment, review
-model settings, reproduce an experiment and check its results. Experiment groups
-in Section 4 use letters A–D; each application has numbered preparation, fitting and reporting steps.
+The workflow is **install → prepare inputs → plan → run → inspect results**.
+Run the commands below from the repository root. Use absolute input/output paths
+when launching scripts from another directory.
 
-1. [Repository structure](#1-repository-structure)
-2. [Install and configure](#2-install-and-configure)
-3. [Model interfaces and samplers](#3-model-interfaces-and-samplers)
-4. [Reproduce the paper experiments](#4-reproduce-the-paper-experiments)
-5. [Check and interpret results](#5-check-and-interpret-results)
+## 1. Install and verify
 
-## 1. Repository structure
+Use a working R package compiler. The locked paper environment uses R 4.6.0;
+the package supports R >= 4.1. HTML reports also require Pandoc.
 
-```
-eivGP/R/
-  helpers.R     # data preparation, kernels, prediction, storage, workflow helpers
-  mcmc.R        # posterior sampling, fitting, continuation, sampler diagnostics
-  hmc.R         # joint HMC coordinates, warmup adaptation and transitions
-eivGP/src/      # analytic GP/ordinal gradients and leapfrog integration
-  plotting.R    # summaries, comparison tables, figures, report generation
-data/
-  ocean_silicate/     # frozen Ocean cohorts and fold collections
-    n200/, n500/, n1000/
-  adni/              # private prepared fold collection and data contract
-  oai/               # private prepared fold collection and data contract
-paper/
-  numerical/    # study1 and study2: one .R, .Rmd, and .html each
-  applications/ # Ocean, ADNI and OAI Rmd reports, data-free HTML and guides
-  manifests/    # selected numerical runs and frozen Ocean input identities
-tools/          # flat application scripts; no application subdirectories
-  adni-tools.R  # all ADNI application functions
-  ocean-tools.R # all Ocean application functions
-  oai-tools.R   # all OAI application functions
-  adni-eivGP.R, adni-competitors.R, adni-report.R
-  ocean-eivGP.R, ocean-competitors.R, ocean-report.R
-  oai-eivGP.R, oai-competitors.R, oai-report.R
-  adni-prepare-folds.R, ocean-prepare-folds.R, oai-prepare-folds.R
-  build_package.R
-  render_reports.R
-```
-
-The package contains reusable model and numerical implementations. Each
-`tools/*-tools.R` contains its application's preparation, orchestration,
-evaluation and reporting. Entry scripts load that file and select a workload.
-Competitor adapters use `kergp`, `LVGP` and `EzGP`.
-
-## 2. Install and configure
-
-Basic fitting, prediction, imputation and diagnostics require Rfast, Rcpp, posterior and TruncatedNormal,
-plus R's standard libraries. Compilation also needs RcppArmadillo.
-Full reports additionally use dplyr, ggplot2, knitr and patchwork as optional
-package dependencies. TruncatedNormal provides the exact conditional latent
-draws used by default multivariate prediction and diagnostics. Simple table binding, reshaping and calibration
-cross-products are implemented locally; tidyr is no longer required.
-
-Use R >= 4.1, a working package compiler and Pandoc. From the repository root,
-install dependencies, refresh source provenance and install this checkout:
-
-```r
-install.packages(c("dplyr", "ggplot2", "knitr", "patchwork", "posterior",
-                   "jsonlite", "TruncatedNormal", "digest", "rmarkdown", "testthat",
-                   "Rfast", "Rcpp", "RcppArmadillo", "kergp", "LVGP", "EzGP"))
-```
-
-```sh
-Rscript tools/build_package.R
-R CMD INSTALL eivGP
-```
-
-For numerical paper replication, use `Rscript tools/setup_numerical.R` to restore
-`renv.lock` and install the matching checkout into `.r-library/`. Application
-scripts also find `.r-library/`; set `EIVGP_R_LIBRARY` for a custom library.
-Restart R after updating a package. Do not replace a library used by active jobs.
-
-Set numerical-library threads to one **before starting R**:
+Set numerical-library threads to one, then restore the locked dependencies and
+install this checkout into `.r-library/`:
 
 ```sh
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1
+Rscript tools/setup_numerical.R
+Rscript tools/setup_numerical.R --check
 ```
 
-`--cores=N` is a shared CPU budget for chains, prediction, diagnostics and figure
-export, capped at detected CPU capacity. For ADNI/Ocean/OAI, new EIV fits use min(N,4) chains; it does not alter seeds or
-numerical settings. Waiting coordinators release slots; resident fits have a
-separate memory limit. macOS/Linux use forked workers; Windows uses the serial
-fallback. HTML assembly remains serial.
+The first command restores `renv.lock` and installs the package. `--check`
+verifies dependency versions and that the installed package matches the source.
+The study and application scripts find `.r-library/` automatically. Set
+`EIVGP_R_LIBRARY` if you use a different library.
 
-## 3. Model interfaces and samplers
+After editing package sources, refresh their identities and reinstall using the
+already-restored dependencies:
 
-Both engines support ESS, HMC and the HMC–ESS hybrid:
+```sh
+Rscript tools/build_package.R
+Rscript tools/setup_numerical.R --install-local
+```
+
+Restart existing R sessions after reinstalling. Update the library when no active
+jobs are using it.
+
+Basic inference uses Rfast, Rcpp, posterior and TruncatedNormal; compilation also
+uses RcppArmadillo. Plotting/report dependencies are optional for the package.
+The setup script installs the full environment needed for paper reproduction.
+
+## 2. Walk through the R API
+
+`X` is an `n × p` numeric matrix, `y` is a length-`n` response, and `C` is an
+`n × q` matrix of ordinal codes starting at 1. `U_obs` is an `n × d` matrix:
+observed calibration rows contain measured inputs; missing rows contain `NA`.
+Each latent-input row must be either fully observed or fully missing.
+
+### Fit a small example
+
+Start R in the repository root and load the installed checkout:
 
 ```r
-fit <- fit_eivgp(X, y, C, U_obs=U_obs, engine="univariate", sampler="ESS")
-fit_hmc <- fit_eivgp(X, y, C, U_obs=U_obs, engine="univariate", sampler="HMC")
-fit_hybrid <- fit_eivgp(X, y, C, U_obs=U_obs, engine="univariate",
-  sampler="HYBRID", sampler_control=list(hybrid_every=20L))
-continued <- continue_eivgp(fit_hmc, n_iter=1000L)
-# Multivariate inputs: engine="multivariate", latent_dim=2L.
+.libPaths(c(normalizePath(".r-library"), .libPaths()))
+library(eivGP)
+
+set.seed(1)
+n <- 40L
+X <- cbind(x = runif(n))
+U <- cbind(u = rnorm(n))
+C <- cbind(proxy = findInterval(U[, 1], c(-Inf, -0.5, 0.5, Inf)))
+y <- sin(2 * pi * X[, 1]) + U[, 1] + rnorm(n, sd = 0.2)
+U_obs <- U
+U_obs[11:n, ] <- NA_real_  # Only the first ten inputs are measured.
+
+fit <- fit_eivgp(
+  X, y, C, U_obs = U_obs, engine = "univariate", m_vec = 3L,
+  sampler = "ESS", n_iter = 2000L, burn = 500L,
+  n_chains = 4L, n_cores = 12L
+)
+summary(fit)
 ```
 
-ESS is the package default. HMC jointly updates missing inputs, observed-input
-kernel coefficients and signal fraction; auxiliary ESS updates remain in the
-algorithm. HMC supports conditional dictionary updates and SE or Matérn 3/2 and
-5/2 kernels. Use ESS for other smoothness or marginal dictionary updates;
-unsupported HMC/HYBRID requests raise an error. HYBRID adds an ESS sweep after
-every 20 HMC iterations by default and retains one draw per combined transition.
+`fit_eivgp()` fits the response surface and latent-input model together. This
+example demonstrates the interface; its iteration budget does not establish
+convergence. For several latent inputs, use `engine="multivariate"` and set
+`latent_dim=d`; specify the category counts in `m_vec`.
 
-Supply tuning through `sampler_control=list(hmc=list(step=.05,
-leapfrog=c(8L,24L),target_accept=.8))`. Adaptation occurs during warmup only.
-Continuation preserves the sampler, metric, step size and RNG state; it does not
-repeat warmup or switch samplers. Check scientific-target R-hat, bulk/tail ESS,
-MCSE and traces. ESS efficiency alone does not establish posterior mixing.
-See the [package guide](eivGP/README.md) and function documentation for details.
+### Diagnose, predict and impute
 
-## 4. Reproduce the paper experiments
+```r
+checks <- diagnose_eivgp(fit)
 
-Choose an experiment below, then follow its numbered preparation, fitting and
-reporting steps. Commands run from the repository root and use 12 cores as an
-example; choose a budget appropriate for your machine. New runs require matching
-source, dependencies and frozen inputs. Existing fits keep their original
-provenance; use new output roots for incompatible sources or numerical settings.
-
-- [A. Synthetic experiments: Studies I and II](#a-synthetic-experiments-studies-i-and-ii)
-- [B. Ocean application](#b-ocean-application)
-- [C. ADNI application](#c-adni-application)
-- [D. OAI application](#d-oai-application)
-
-### A. Synthetic experiments: Studies I and II
-
-**A1. Prepare the environment and inputs.** Run `Rscript tools/setup_numerical.R`.
-The study scripts generate fixed-seed datasets and masks locally. EIV-GP and
-competitor lanes can run on separate machines with the same source and data
-protocol. Inspect work with `--action=plan` before replacing it with `run`. All method launchers accept `--action=plan|run|report`, `--cores`, `--data-root`, and `--output`. Application `--plan=true` and `--reuse-only=true` remain compatible aliases; do not combine them with `--action`. Combined report scripts accept `plan` or `report` only.
-
-**A2. Fit and analyze EIV-GP.** These commands include each study's complete
-paper workload and calibrated comparisons:
-
-```sh
-Rscript tools/study1-eivGP.R --action=run --cores=12 --output=results/study1-eivGP --data-root=results/data/study1
-Rscript tools/study2-eivGP.R --action=run --cores=12 --output=results/study2-eivGP --data-root=results/data/study2
+new_X <- cbind(x = c(0.25, 0.75))
+new_C <- cbind(proxy = c(1L, 3L))
+response_draws <- predict_eivgp(
+  fit, new_X = new_X, new_C = new_C, target = "response", seed = 2L
+)
+imputed_inputs <- impute_eivgp(fit, rows = 11:15)
 ```
 
-Study II reuses calibrated four-proxy fits for independent-test FULL scoring and
-includes the CUT feedback comparison. FULL is rescored, not fitted twice.
+| Function | What to use it for |
+| --- | --- |
+| `fit_eivgp()` | Fit the model and retain chain histories and terminal states. |
+| `diagnose_eivgp()` | Review R-hat, bulk/tail effective sample size, MCSE and diagnostic status. Supply `X`, `C` and, when available, `U` to monitor a scientific target panel. |
+| `predict_eivgp()` | Draw responses (`target="response"`), observable conditional means (`"mean"`), or the latent-input surface (`"surface"`; supply `new_U`). |
+| `impute_eivgp()` | Recover missing training inputs; supply `new_C` instead of `rows` for prospective inputs. |
+| `save_fit()` / `read_fit()` | Save and restore a fit with its continuation state. |
+| `continue_eivgp()` | Explicitly add iterations from saved states without repeating warmup. |
 
-**A3. Fit and analyze competitors.** Each lane includes original UC-GP, LVGP and
-EzGP and their calibration-aware complete-case versions:
+Inspect diagnostics for the quantities you intend to report. Predictive accuracy,
+parameter mixing and physical-input recovery are different assessments.
 
-```sh
-Rscript tools/study1-competitors.R --action=run --cores=12 --output=results/study1-competitors --data-root=results/data/study1
-Rscript tools/study2-competitors.R --action=run --cores=12 --output=results/study2-competitors --data-root=results/data/study2
+### Save and, when justified, continue
+
+```r
+dir.create("results", showWarnings = FALSE)
+save_fit(fit, "results/example-fit.rds")
+restored <- read_fit("results/example-fit.rds")
+
+# Optional: extend after reviewing diagnostics.
+# extended <- continue_eivgp(restored, n_iter = 1000L, n_cores = 12L)
 ```
 
-The competitor machine does not require EIV-GP response fits. Numerical scripts
-default to planning; fitting requires `--action=run`. Repeat compatible commands
-to resume saved work. Original grids and calibrated comparisons retain their
-separate paper protocols and budgets.
+ESS means **elliptical slice sampling** when selecting a sampler; in diagnostic
+reports, ESS means **effective sample size**. ESS is the package's default
+sampler. HMC and the HMC–ESS hybrid are also available. The application scripts
+choose their own documented samplers by calibration setting. See the
+[package guide](eivGP/README.md) for sampler restrictions, tuning, scales and
+prediction targets.
 
-**A4. Read saved reports.** Study I EIV-GP runs automatically generate
-`core/study1-report/study1.html`. Repeat a lane's command with `--action=report`
-to read its saved results; the guides describe explicit run selection when
-several runs exist. The `study1.Rmd` and `study2.Rmd` notebooks are report-only.
-When collecting lanes from different machines, validate matching settings/data
-and pair raw scores by replication; do not average machine-level summaries.
+## 3. Reproduce Studies I and II
 
-See [Study I reproduction](paper/study1-README.md),
-[Study II reproduction](paper/study2-README.md), and the
-[convergence/failure report](paper/convergence-report.Rmd).
+The paper workflows have separate EIV-GP and competitor scripts. They share
+frozen inputs and fixed seeds, and can run on different machines. Choose one
+study and use the same input path for its two method groups.
 
-### B. Ocean application
-
-**B1. Select the inputs.** `ocean500` is the main paper cohort and the default.
-The supplied five-fold inputs in `data/ocean_silicate/n500/` are ready to run;
-`ocean200` is also included. Prepare the raw `ocean1000` cohort once with
-`Rscript tools/ocean-prepare-folds.R ocean1000`. See the
-[Ocean guide](paper/README_ocean.md) for data preparation and sampling details.
-
-**B2. Fit and analyze EIV-GP.** Preview the workload, then run it:
+For Study I, work through these steps:
 
 ```sh
+# 1. Inspect the complete EIV-GP workload; nothing is fitted.
+Rscript tools/study1-eivGP.R --action=plan --cores=12 --data-root=results/data/study1 --output=results/study1-eivGP
+
+# 2. Generate/verify the fixed-seed inputs; no MCMC is run.
+Rscript tools/study1-eivGP.R --action=data --cores=12 --data-root=results/data/study1 --output=results/study1-eivGP
+
+# 3. Fit EIV-GP, then fit the original and complete-case competitors.
+Rscript tools/study1-eivGP.R --action=run --cores=12 --data-root=results/data/study1 --output=results/study1-eivGP
+Rscript tools/study1-competitors.R --action=run --cores=12 --data-root=results/data/study1 --output=results/study1-competitors
+
+# 4. Rebuild the EIV-GP report from saved results.
+Rscript tools/study1-eivGP.R --action=report --cores=12 --data-root=results/data/study1 --output=results/study1-eivGP
+```
+
+For Study II, replace `study1` with `study2` in these commands and paths. Its EIV-GP
+script includes the FULL/CUT feedback comparison; calibrated FULL scoring reuses
+saved response fits. The detailed guides explain the separate original-grid and
+calibrated-comparison budgets, appendix subsets and saved-run selection.
+
+| Action | Effect |
+| --- | --- |
+| `plan` | List the requested workload and settings. This is the study-script default. |
+| `data` | Prepare or verify frozen synthetic inputs. |
+| `run` | Fit/evaluate the selected workflow, reusing compatible completed work. |
+| `report` | Read saved results and regenerate reports without fitting. |
+
+Keep compatible inputs/settings when resuming work. Changed sources or settings
+need a separate output root; archived results retain their original provenance.
+The notebooks in `paper/` read saved results.
+
+Start with [Study I reproduction](paper/study1-README.md) or
+[Study II reproduction](paper/study2-README.md). For custom experiments, the
+lower-level package functions are `study_config()` and `run_numerical_study()`;
+`read_study_results()` and `summarize_comparison()` load and summarize saved scores.
+
+## 4. Run an application
+
+Each application uses the same three scripts: `APP-eivGP.R` fits/evaluates EIV-GP,
+`APP-competitors.R` fits/evaluates UC-GP, LVGP and EzGP comparisons, and
+`APP-report.R` combines their saved results.
+
+### Choose and prepare the inputs
+
+| Application / script prefix | Prepared inputs | Example output root | Guide |
+| --- | --- | --- | --- |
+| Ocean / `ocean` | `data/ocean_silicate/n500/` | `results/ocean500/` | [Ocean](paper/README_ocean.md) |
+| ADNI / `adni` | `data/adni/` | `results/adni/` | [ADNI](paper/README_adni.md) |
+| OAI / `oai` | `data/oai/` | `results/oai/` | [OAI](paper/README_oai.md) |
+
+Ocean500 is the default paper cohort; its frozen folds are supplied. Ocean200 is
+also supplied. Prepare the raw Ocean1000 cohort separately with
+`Rscript tools/ocean-prepare-folds.R ocean1000`.
+
+ADNI and OAI require privately supplied prepared folds, metadata and observation
+masks. Follow the [ADNI data contract](data/adni/README.md) or
+[OAI data contract](data/oai/README.md). Participant records are not distributed
+in Git. Keep participant inputs, fits and empirical reports local. The
+`*-prepare-folds.R` scripts prepare new cohorts under those contracts;
+existing frozen folds should be reused.
+
+### Walk through Ocean
+
+```sh
+# 1. Confirm the workload and resource allocation.
 Rscript tools/ocean-eivGP.R --action=plan --profile=paper --cores=12 --data-root=data/ocean_silicate/n500 --output=results/ocean500
+
+# 2. Fit/evaluate EIV-GP and its comparisons, using the same inputs/output root.
 Rscript tools/ocean-eivGP.R --action=run --profile=paper --cores=12 --data-root=data/ocean_silicate/n500 --output=results/ocean500
-```
-
-Paper sampling uses min(cores,4) chains, initially 50,000 iterations per chain
-including 5,000 burn-in. Optional `--ess-min=100` continues saved states until all
-monitored scientific bulk and tail ESS exceed 100; its default is `NULL`.
-For a separate explicit fixed-length extension, use
-`tools/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=12`.
-Neither operation repeats warmup. Reporting never starts continuation.
-The EIV-GP command summarizes its own predictions, oxygen imputation and
-scientific-target diagnostics without requiring completed competitors.
-
-**B3. Fit and analyze competitors.** Run against the same input/output root:
-
-```sh
 Rscript tools/ocean-competitors.R --action=run --profile=paper --cores=12 --data-root=data/ocean_silicate/n500 --output=results/ocean500
-```
 
-This includes original categorical UC-GP/LVGP/EzGP and complete-case comparisons.
-The competitor command summarizes its own results without requiring completed
-EIV-GP fits. The two method commands may run concurrently against the same result
-directory; either method group may be started first. `--cores` is a budget per
-command, so two commands requesting 12 cores request 24 workers in total.
-Rerunning a compatible command reuses successful tasks; failures and optimizer
-nonconvergence remain visible.
-
-**B4. Assemble and inspect the paper report.**
-
-```sh
+# 3. Assemble the combined report after both method groups finish.
 Rscript tools/ocean-report.R --action=report --profile=paper --cores=12 --data-root=data/ocean_silicate/n500 --output=results/ocean500
 ```
 
-After both method groups finish, the combined report reads saved fits and scores
-and assembles their comparisons. `reports/paper/` contains the
-manuscript figures, tables and `artifact_manifest.csv`; method reports are
-`reports/eivGP/index.html` and `reports/competitors/index.html`. To rebuild method
-reports without fitting, set `--action=report` on the corresponding method
-command. Direct saved-result rendering through `paper/ocean.Rmd`
-is also available.
+For ADNI or OAI, use the same commands with the script prefix and input/output
+paths from the table. Each method group produces its own report before the
+combined report. Use `--action=report` on a method script to rebuild that group's
+report from saved results. Combined report scripts accept `plan` or `report`.
 
-**B5. Short workflow check.** Use the supplied `ocean200` cohort and a separate
-output root. These commands run the same fitting, analysis and reporting
-entrypoints with short chains:
+`--cores` is a budget **per command**, capped by detected capacity. Run the two
+method groups sequentially to
+keep this example within 12 cores. Concurrent commands need budgets whose sum
+fits the machine. Use at least four cores for paper workflows to retain four
+chains; Windows executes serially. Thread counts should remain one per worker.
 
-```sh
-Rscript tools/ocean-eivGP.R --action=run --profile=quick --dataset=ocean200 --cores=12 --output=results/ocean200_check --data-root=data/ocean_silicate/n200
-Rscript tools/ocean-competitors.R --action=run --profile=quick --dataset=ocean200 --cores=12 --output=results/ocean200_check --data-root=data/ocean_silicate/n200
-Rscript tools/ocean-report.R --action=report --profile=quick --dataset=ocean200 --cores=12 --output=results/ocean200_check --data-root=data/ocean_silicate/n200
-```
+For a short Ocean check, use `--profile=quick`, a separate output root,
+and Ocean200 with `--dataset=ocean200 --data-root=data/ocean_silicate/n200`.
+A quick check exercises the workflow; it is not a convergence assessment.
+Continuation is an explicit operation documented in each application guide;
+reporting does not start it.
 
-Quick checks cover one fold. Use `--profile=pilot` with a separate output root
-for five short-chain folds and the m/f diagnostic plots.
+## 5. Find outputs and inspect results
 
-| Path | Contents |
+Applications place group reports in `reports/eivGP/index.html` and
+`reports/competitors/index.html` beneath the output root. Combined paper exports
+are under `reports/paper/`; inspect `artifact_manifest.csv` for their identities.
+Study I's EIV-GP workflow writes `core/study1-report/study1.html`. Study II report
+locations and selections are described in its reproduction guide. The versioned
+application HTML pages in `paper/` are data-free plans; empirical application
+reports come from your output root.
+
+Before reporting results, check completion/failure status, scientific-target
+R-hat, bulk/tail ESS, MCSE and traces. A completed command or an ESS threshold
+alone does not establish convergence. Use replication-level scores for
+comparisons, preserving failed fits and diagnostic warnings.
+
+| Location | What it contains |
 | --- | --- |
-| `data/ocean_silicate/n500/` | Frozen main cohort, five-fold inputs and masks |
-| `results/ocean500/` | Fits, predictions, diagnostics and `ocean.html` |
-| `results/ocean500_pilot/` | Separate short-chain workflow check |
-| `paper/ocean.html` | Analysis-plan HTML for the supplied calibration design |
+| `eivGP/R/` | Model fitting, numerical helpers, prediction, diagnostics and plotting. |
+| `eivGP/src/` | Native HMC target, gradient and leapfrog calculations. |
+| `tools/` | Executable workflows; `APP-tools.R` holds application-specific functions. |
+| `data/` | Related input collections grouped by dataset/cohort. |
+| `paper/` | Report sources, readable HTML, manuscript assets and provenance manifests. |
+| `results/` | Ignored local computation outputs; use external stores for large runs. |
 
-Ocean results use `ocean-flat-v1`: `eiv_foldNN_O*/`, `baseline_foldNN/` and
-`cc_foldNN_O*_METHOD/` are siblings, with `data/`, `logs/`, `reports/` and `_meta/`
-for shared material. See the
-[Ocean reproduction and storage guide](paper/README_ocean.md).
-
-### C. ADNI application
-
-**C1. Supply the private prepared inputs.** Place the flat fold files and `DATASET.json` in
-`data/adni/` using the [data contract](data/adni/README.md). No ADNI
-participant records are distributed in Git.
-
-The default design uses ADNI composite memory, FDG-PET SUVR and hippocampal volume
-normalized by intracranial volume; nine native study-partner ECog items
-(MEMORY1–8 and DIVATT3); and continuous age/education within women. Coordinate
-labels, dimensions, masks and seeds come from the supplied protocols. For the
-three-item cohort, use `data/adni_3C/` and add `--dataset=3C` to all three
-ADNI commands; its paper root is `results/3C/`.
-
-**C2. Fit and analyze EIV-GP.**
-
-```sh
-Rscript tools/adni-eivGP.R --action=plan --profile=paper --cores=12 --data-root=data/adni --output=results/adni
-Rscript tools/adni-eivGP.R --action=run --profile=paper --cores=12 --data-root=data/adni --output=results/adni
-```
-
-Paper runs use five folds, min(cores,4) chains and initially 50,000 iterations per chain
-including 5,000 burn-in. Defaults are HMC at O0/O20, ESS at O50, 250 prediction
-states per chain and full competitor controls. Explicit numerical overrides are
-recorded in the run identity. Optional `--ess-min=100` enables scientific-target
-continuation after the final planned stage. O20 calibration is nested in O50
-under the supplied C-stratified design.
-
-**C3. Fit and analyze competitors.** This command may run in a second Terminal
-while C2 is running, using the same result root:
-
-```sh
-Rscript tools/adni-competitors.R --action=run --profile=paper --cores=12 --data-root=data/adni --output=results/adni
-```
-
-This covers original ordinal-input UC-GP/LVGP/EzGP and matched complete-case
-comparisons. Specify only `--cores` for resource allocation. Fitting and evaluation
-use complete chain-sized groups for eivGP and one core per competitor job; lower the budget if memory pressure is
-high. Each command summarizes its own results independently. The CPU budget is
-per command: two commands requesting 12 cores request 24 workers in total.
-See the ADNI guide.
-
-**C4. Assemble and inspect the paper report.** After both fitting commands finish:
-
-```sh
-Rscript tools/adni-report.R --action=report --profile=paper --cores=12 --data-root=data/adni --output=results/adni
-```
-
-The report includes settings and C definitions, Y/U/X and C/U illustrations,
-prediction, complete-case comparisons, scientific diagnostics, response functions
-and U imputation. Method reports and paper exports use the same relative paths
-as Ocean. `--action=report` rebuilds a method's saved report without fitting;
-`adni-report.R` always reads saved results. The report source is
-`paper/adni.Rmd`.
-
-| Path | Contents |
-| --- | --- |
-| `data/adni/` | Privately supplied metadata, five-fold inputs and masks |
-| `results/adni/` | Paper fits, predictions, diagnostics and `adni.html` |
-| `paper/adni.html` | Versioned data-free plan page |
-
-ADNI results use `adni-flat-v1`, with task folders and `data/`, `logs/`,
-`reports/`, `_meta/` directories. Intermediate sampling stages stay inside their
-EIV task; final fit, prediction and diagnostic files sit together. `--output`
-selects the result root.
-All participant inputs, frozen snapshots, fits and empirical reports stay local.
-See the [ADNI reproduction and storage guide](paper/README_adni.md).
-
-### D. OAI application
-
-**D1. Supply the private prepared inputs.** Place `DATASET.json` and the 45 flat
-fold/protocol files directly in `data/oai/`, following the
-[data contract](data/oai/README.md). Participant data are not distributed in Git.
-The default application relates baseline MRI medial cartilage thickness to
-baseline fixed-location radiographic joint-space width, using continuous age,
-BMI and height and eight native osteophyte/sclerosis grades within women.
-Dimensions, grade mappings, folds and observation masks come from supplied
-protocols. Another prepared cohort can use `data/oai_NAME/` with `--dataset=NAME`.
-
-**D2. Fit and analyze EIV-GP.**
-
-```sh
-Rscript tools/oai-eivGP.R --action=plan --profile=paper --cores=12 --data-root=data/oai --output=results/oai
-Rscript tools/oai-eivGP.R --action=run --profile=paper --cores=12 --data-root=data/oai --output=results/oai
-```
-
-Paper sampling uses five folds, min(cores,4) chains and initially 50,000
-iterations including 5,000 burn-in. OAI defaults are HMC at O0/O20 and ESS at O50. Optional
-`--ess-min=100` enables scientific-target continuation. Explicit numerical
-overrides are recorded in the fitting identity.
-
-**D3. Fit and analyze competitors.** This command may run in a second Terminal
-while D2 is running, using the same result root:
-
-```sh
-Rscript tools/oai-competitors.R --action=run --profile=paper --cores=12 --data-root=data/oai --output=results/oai
-```
-
-This fits UC-GP, LVGP and EzGP with ordinal inputs and matched complete-case
-inputs. Use only `--cores` for resources: EIV jobs use complete chain-sized groups
-and competitor jobs use one core each. The two commands have separate CPU
-budgets: 12 + 12 requests 24 workers in total, so choose their sum to fit the
-machine and available memory. Each prints job starts, completions and failures;
-`results/oai/PROGRESS_eivGP.txt` and `PROGRESS_competitors.txt` retain the latest
-group status. OAI application functions are self-contained in `tools/oai-tools.R`.
-Each method report summarizes its own results without requiring the other group
-to be complete.
-
-**D4. Assemble and inspect the paper report.** After both fitting commands finish:
-
-```sh
-Rscript tools/oai-report.R --action=report --profile=paper --cores=12 --data-root=data/oai --output=results/oai
-```
-
-The report covers settings, data/C definitions and illustrations, numerical
-diagnostics, OI/CC prediction, response functions,
-training-U imputation and reproducibility. `oai-report.R` reads saved fits only;
-`--reuse-only=true` also makes either method script saved-only. All methods read
-the fixed observation masks supplied with the prepared inputs.
-
-#### Where OAI results are saved
-
-| Path | Contents |
-| --- | --- |
-| `data/oai/` | Privately supplied metadata, five-fold inputs and masks |
-| `results/oai/` | Paper fits, predictions, diagnostics and `oai.html` |
-| `paper/oai.html` | Versioned data-free plan page |
-
-OAI results use flat task folders and `data/`, `logs/`, `reports/` and `_meta/`
-directories. Participant inputs, fits and empirical reports
-stay local. See the [OAI reproduction and storage guide](paper/README_oai.md).
-
-## 5. Check and interpret results
-
-For all three applications, `--output` overrides the result root and `--data-root`
-overrides prepared inputs. Use the same dataset, profile and path flags for
-fitting and reporting. Completion, optimizer status, scientific-target ESS,
-R-hat, MCSE and traces are separate checks. ESS thresholds and a completed
-workflow do not establish convergence. Exact numerical reproduction requires
-matching seeds, settings, package versions and numerical environment. Saved fits
-preserve the posterior histories used for reporting.
-
-A synthetic ADNI check exercises the actual three CLI entrypoints, six comparator
-scores, HTML, flat storage and saved-fit reuse without participant data:
-
-```sh
-Rscript tests/application/check-adni.R --cores=2
-```
-
-Additional application tests are under `tests/application/`. Run package tests
-after installation:
+For development checks, run `Rscript tools/check-portability.R` after installation.
+Run the package tests from an R session that has loaded this checkout:
 
 ```r
-library(eivGP)
-testthat::test_dir("eivGP/tests/testthat",env=new.env(parent=asNamespace("eivGP")),
-                   stop_on_failure=TRUE)
+testthat::test_dir("eivGP/tests/testthat", package = "eivGP",
+                   stop_on_failure = TRUE)
 ```
 
-After package-source edits, run `Rscript tools/build_package.R` and reinstall.
-Keep application-specific functions in the corresponding `tools/*-tools.R` file;
-shared model/numerical functions belong in the package. The
-[paper overview](paper/README.md) links all entrypoints and report sources.
-
-## Repository layout
-
-- `eivGP/`: reusable model, prediction, diagnostic, storage and reporting functions.
-- `tools/`: executable study and application workflows, shared script helpers and developer checks.
-- `paper/`: report `.Rmd` sources and `.html` outputs, manuscript sources, figures and tables. Report documents live directly here; `manifests/` retains structured result provenance.
-- `data/` and ignored `results/`: inputs and computation outputs; use external stores for large runs.
-
-Rendering a report reads saved results. It does not start or resume an experiment.
-
-## Paths and working directories
-
-Run the documented commands from the checkout root. Study input/output paths,
-archive-map paths, maintenance paths, and convergence-manifest source roots are
-resolved from the directory where the command starts. Ocean, ADNI and OAI
-input/output/config/report paths are resolved from their checkout root; Ocean
-fold-preparation outputs follow the same rule. Absolute paths and `~` work in
-both cases. New destinations are made absolute before any fitting or rendering
-changes the working directory; resolving a path does not create it.
-
-From another directory, call scripts by absolute path and supply absolute input
-and output paths. Report rendering locates `paper/` from its script, not the shell's
-working directory. Relative roots inside a convergence CSV remain relative to the
-launch directory. Keep saved provenance intact; no path repair authorizes moving,
-relabeling, deleting, or refitting historical results. Plan checks do not run fits.
+Application checks are in `tests/application/`. The [paper overview](paper/README.md)
+links report sources and saved-result guides.

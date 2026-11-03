@@ -35,7 +35,7 @@ per chain**, with 50 datasets per setting (author-confirmed 2026-09-28).
 No automatic extension or new prior/sampler change is made by this design update.
 
 Designs are exposed by `eivGP::study_config()`. The two entrypoints in
-`paper/numerical/` select the design and call the installed package.
+`tools/` select the design and call the installed package.
 See `paper/README.md` for saved-paper reporting and new-run instructions.
 The selected historical runs are identified in `paper/manifests/`.
 
@@ -63,5 +63,5 @@ mechanism findings, numerical repairs and final displays are explicitly TBD.
 
 The fresh-checkout runner also fits FULL and categorical-only baselines so
 reproduction never depends on archived private outputs. Categorical-only fits
-are shared across calibration sizes. See [the numerical workflow](paper/numerical/README.md)
+are shared across calibration sizes. See [the numerical workflow](paper/numerical-README.md)
 for dependency restoration, generation, scoring, diagnostics and commands.

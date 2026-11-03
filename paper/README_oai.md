@@ -10,7 +10,7 @@ comparator implementations and shared CPU-pool utilities.
 
 Follow the repository installation instructions, reinstalling this checkout.
 Place the privately supplied 46 files directly in `data/oai/`; see
-[the data contract](../../data/oai/README.md). An external directory works with
+[the data contract](../data/oai/README.md). An external directory works with
 `--data-root=/local/oai`. Paths in the code are relative to the checkout; commands
 can be invoked from another working directory.
 
@@ -122,7 +122,7 @@ Rscript tools/oai-competitors.R --profile=paper --cores=4 --reuse-only=true
 The combined saved report is `results/oai/oai.html`. Method pages are
 `results/oai/reports/eivGP/index.html` and
 `results/oai/reports/competitors/index.html`. The editable source is
-`paper/applications/oai.Rmd`; `paper/applications/oai.html` is a data-free plan.
+`paper/oai.Rmd`; `paper/oai.html` is a data-free plan.
 
 | Result block | Contents |
 | --- | --- |

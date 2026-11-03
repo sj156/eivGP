@@ -27,7 +27,7 @@ study1_analysis <- function(results_root, action=c("report","plan","data","fit",
 # Notebook and batch commands share the same package orchestration.
 study1_workflow <- function(args=list(), repo_root=Sys.getenv("EIVGP_REPO_ROOT",getwd())) {
   env<-new.env(parent=globalenv())
-  sys.source(file.path(repo_root,"paper/numerical/common.R"),envir=env)
+  sys.source(file.path(repo_root,"tools/numerical-common.R"),envir=env)
   env$numerical_package_check()
   if(is.null(args$cores))args$cores<-"12"
   eivGP::run_paper_study("study1",args,repo_root)
@@ -37,7 +37,7 @@ if(sys.nframe()==0L) {
   if(!length(args)||all(grepl("^--",args))) {
     script<-sub("^--file=","",grep("^--file=",commandArgs(FALSE),value=TRUE)[1])
     env<-new.env(parent=globalenv())
-    sys.source(file.path(dirname(normalizePath(script)),"common.R"),envir=env)
+    sys.source(file.path(dirname(normalizePath(script)),"numerical-common.R"),envir=env)
     env$run_study_cli("study1",args)
   } else {
     root<-Sys.getenv("EIVGP_RESULTS_ROOT")

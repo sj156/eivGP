@@ -52,8 +52,8 @@ test_that("Study I cache hits do not depend on Study II globals", {
 
 test_that("paper lanes select the exact appendix pairs without truncating FULL or CC", {
   repo<-Sys.getenv("EIVGP_REPO_ROOT")
-  skip_if(!file.exists(file.path(repo,"paper/numerical/study2-common.R")))
-  env<-new.env();sys.source(file.path(repo,"paper/numerical/study2-common.R"),env)
+  skip_if(!file.exists(file.path(repo,"tools/study2-common.R")))
+  env<-new.env();sys.source(file.path(repo,"tools/study2-common.R"),env)
   seen<-list()
   runner<-function(study,args,repo_root) {seen[[length(seen)+1L]]<<-args;list()}
   env$study2_paper_workflow("eivGP",list(output=tempfile()),repo,runner)
@@ -77,7 +77,7 @@ test_that("paper lanes select the exact appendix pairs without truncating FULL o
   expect_error(env$study2_paper_workflow("eivGP",list(latent="256"),repo,runner),"Paper fixes")
   expect_error(env$study2_paper_workflow("eivGP",list(latnett="128"),repo,runner),"Unknown")
   expect_error(env$study2_paper_workflow("eivGP",list(cores="2"),repo,runner),"four chains")
-  sys.source(file.path(repo,"paper/numerical/study1-common.R"),env)
+  sys.source(file.path(repo,"tools/study1-common.R"),env)
   seen<-list()
   env$study1_paper_workflow("competitors",list(output=tempfile()),repo,runner)
   expect_length(seen,2L);expect_null(seen[[2]]$reps)

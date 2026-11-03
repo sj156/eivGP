@@ -21,17 +21,17 @@ merged core export once; the two lanes read their own complete paper workload.
 knitr::opts_chunk$set(echo=FALSE,message=FALSE,warning=TRUE)
 if(params$action!="report")stop("This notebook is report-only")
 here<-dirname(knitr::current_input(dir=TRUE))
-repo<-normalizePath(file.path(here,"../.."))
+repo<-normalizePath(file.path(here,".."))
 root<-if(nzchar(params$results_root))params$results_root else Sys.getenv("EIVGP_RESULTS_ROOT")
 if(!nzchar(root))stop("Set results_root or EIVGP_RESULTS_ROOT")
 if(params$lane=="historical") {
-  source(file.path(here,"study2.R"),local=TRUE)
+  source(file.path(here,"../tools/study2.R"),local=TRUE)
   result<-study2_analysis(root,tables_dir=if(nzchar(params$tables_dir))params$tables_dir else NULL,
     mixing_plots=params$mixing_plots,repo_root=repo)
 } else {
-  source(file.path(here,"common.R"),local=TRUE)
+  source(file.path(here,"../tools/numerical-common.R"),local=TRUE)
   numerical_package_check()
-  source(file.path(here,"study2-common.R"),local=TRUE)
+  source(file.path(here,"../tools/study2-common.R"),local=TRUE)
   controls<-modifyList(list(output=root,action="report"),params$options)
   if(!identical(controls$action,"report"))stop("options cannot enable fitting")
   result<-study2_paper_workflow(params$lane,controls,repo)

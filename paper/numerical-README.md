@@ -12,7 +12,7 @@ failure rates and matched diagnostic-screened accuracy; keep Study I regimes sep
 
 ## Shared conventions
 
-`common.R` checks installed source and locked dependencies. `--cores` is the
+`tools/numerical-common.R` checks installed source and locked dependencies. `--cores` is the
 total CPU budget; set BLAS libraries to one thread. Data and fits default to
 `~/eivGP-results`, with `--data-root` and `--output` overrides. Changes to source,
 priors, data or numerical budgets require compatible provenance or fresh roots;

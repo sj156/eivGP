@@ -15,8 +15,8 @@ Do not replace a library used by running jobs or change their output folders.
 
 ```sh
 Rscript tools/setup_numerical.R
-Rscript paper/numerical/study1-eivGP.R --action=plan --cores=12 --output="$HOME/eivGP-results/study1-eivGP" --data-root="$HOME/eivGP-results/data/study1"
-Rscript paper/numerical/study1-competitors.R --action=plan --cores=12 --output="$HOME/eivGP-results/study1-competitors" --data-root="$HOME/eivGP-results/data/study1"
+Rscript tools/study1-eivGP.R --action=plan --cores=12 --output="$HOME/eivGP-results/study1-eivGP" --data-root="$HOME/eivGP-results/data/study1"
+Rscript tools/study1-competitors.R --action=plan --cores=12 --output="$HOME/eivGP-results/study1-competitors" --data-root="$HOME/eivGP-results/data/study1"
 ```
 
 Replace `plan` with `run` on the respective machines. The scripts default to plan;
@@ -56,7 +56,7 @@ For running or historical jobs, use the independent reader, which avoids the
 experiment's fitting/resume gates and writes outside its input roots:
 
 ```sh
-EIVGP_R_LIBRARY=/path/to/separate/reporting-library Rscript paper/numerical/convergence-report.R sources.csv /path/to/separate/report-output
+EIVGP_R_LIBRARY=/path/to/separate/reporting-library Rscript tools/convergence-report.R sources.csv /path/to/separate/report-output
 ```
 
 Install the updated package in that **separate** reporting library. The CSV has
@@ -95,7 +95,7 @@ flags are preserved in the source but do not screen the reported accuracy.
 To repair reporting after a completed simulation, use `report`, not `run`:
 
 ```sh
-Rscript paper/numerical/study1-eivGP.R --action=report \
+Rscript tools/study1-eivGP.R --action=report \
   --run-dir=/path/to/core/study1-publication-v2-RUNID \
   --data-root=/path/to/data/study1 \
   --report-output=/path/to/local/study1-report

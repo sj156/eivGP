@@ -16,8 +16,8 @@ Install this checkout on each machine with `Rscript tools/setup_numerical.R`.
 Use matching source and locked dependencies. Plan first:
 
 ```sh
-Rscript paper/numerical/study2-eivGP.R --action=plan --cores=12 --output="$HOME/eivGP-results/study2-eivGP" --data-root="$HOME/eivGP-results/data/study2"
-Rscript paper/numerical/study2-competitors.R --action=plan --cores=12 --output="$HOME/eivGP-results/study2-competitors" --data-root="$HOME/eivGP-results/data/study2"
+Rscript tools/study2-eivGP.R --action=plan --cores=12 --output="$HOME/eivGP-results/study2-eivGP" --data-root="$HOME/eivGP-results/data/study2"
+Rscript tools/study2-competitors.R --action=plan --cores=12 --output="$HOME/eivGP-results/study2-competitors" --data-root="$HOME/eivGP-results/data/study2"
 ```
 
 Replace `plan` with `run` on the respective machines for complete reproduction.
@@ -90,7 +90,7 @@ No new fitting was used to validate this workflow.
 
 ## Study I
 
-`Rscript paper/numerical/study1.R --action=run --profile=paper` already runs its
+`Rscript tools/study1.R --action=run --profile=paper` already runs its
 original study and all three calibrated competitors together. Its complete-case
 paper defaults now match the reported study: 12000/4000 measurement iterations,
 16 outer states, 128 latent and 64 response draws. No temporary follow-up launcher
@@ -110,7 +110,7 @@ folder. For existing or running experiments, use the independent saved-artifact
 reporter instead of restarting the study or invoking its resume/provenance gates:
 
 ```sh
-EIVGP_R_LIBRARY=/path/to/separate/reporting-library Rscript paper/numerical/convergence-report.R sources.csv /path/to/separate/report-output
+EIVGP_R_LIBRARY=/path/to/separate/reporting-library Rscript tools/convergence-report.R sources.csv /path/to/separate/report-output
 ```
 
 Install the new package into that separate library; do not replace a library being

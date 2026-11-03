@@ -1576,7 +1576,7 @@ oai_report_exports <- function(a) {
   a$api$atomic_json(list(author='Xinye Chen',saved_only=TRUE,new_MCMC=FALSE,new_optimization=FALSE,
     fitting_source=a$source,stage=a$stage,saved_fitting_numerics=a$numerics,report_settings=a$settings,
     input_md5=as.list(tools::md5sum(a$input$files)),analysis_modules=a$api$eivgp_module_identity(),
-    reporting_source=as.list(tools::md5sum(c(oai_path(a$repo,'paper/applications/oai.Rmd'),oai_source_files(a$repo))))),
+    reporting_source=as.list(tools::md5sum(c(oai_path(a$repo,'paper/oai.Rmd'),oai_source_files(a$repo))))),
     oai_path(dest,'REPORT_PROVENANCE.json'))
 }
 
@@ -2127,7 +2127,7 @@ oai_configure_api <- function(e,repo) {
   source_files<-e$oai_source_files
   e$oai_source_files<-function(repo)unique(c(source_files(repo),base::file.path(repo,'tools',
     c('oai-tools.R','oai.R','oai-eivGP.R','oai-competitors.R','oai-report.R','oai-prepare-folds.R')),
-    base::file.path(repo,'paper/applications/oai.Rmd')))
+    base::file.path(repo,'paper/oai.Rmd')))
   settings<-e$oai_settings
   e$oai_settings<-function(profile='pilot',cores=4L,...) {
     overrides<-list(...)
@@ -2253,7 +2253,7 @@ oai_configure_api <- function(e,repo) {
     if(!requireNamespace('rmarkdown',quietly=TRUE)||!rmarkdown::pandoc_available())stop('HTML requires rmarkdown and Pandoc')
     a<-e$oai_report_prepare(repo,data_dir,output_dir,settings,report_source,report_dir,group)
     env<-new.env(parent=globalenv());env$.oai_precomputed_analysis<-a;env$.oai_repository_dir<-repo
-    if(is.null(rmd))rmd<-base::file.path(repo,'paper/applications/oai.Rmd')
+    if(is.null(rmd))rmd<-base::file.path(repo,'paper/oai.Rmd')
     if(filename=='oai.html')filename<-'oai.html'
     rmarkdown::render(rmd,output_file=filename,output_dir=report_dir,intermediates_dir=report_dir,
       params=list(profile=settings$profile,action='report',cores=settings$cores,data_dir=data_dir,output_dir=output_dir,

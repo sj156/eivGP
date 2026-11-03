@@ -8,7 +8,7 @@ params:
 
 ```{r setup, include=FALSE}
 lib<-Sys.getenv("EIVGP_R_LIBRARY");if(nzchar(lib)).libPaths(c(lib,.libPaths()))
-source("convergence-report.R")
+source(file.path(dirname(knitr::current_input(dir=TRUE)),"../tools/convergence-report.R"))
 report<-convergence_report(params$manifest,params$output)
 ```
 

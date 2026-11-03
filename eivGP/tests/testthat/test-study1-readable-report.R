@@ -43,7 +43,7 @@ test_that('summary graphics are serial even under a larger shared core budget', 
 
 test_that('the notebook does not discover its previous HTML output as an input resource', {
   skip_if_not_installed('rmarkdown')
-  notebook<-test_path('../../../paper/numerical/study1.Rmd')
+  notebook<-test_path('../../../paper/study1.Rmd')
   skip_if_not(file.exists(notebook))
   resources<-rmarkdown::find_external_resources(notebook)
   expect_false('study1.html' %in% basename(resources$path))

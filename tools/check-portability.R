@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 # Temporary generated inputs only: no Dropbox, archived results or manuscript.
 script<-sub("^--file=","",grep("^--file=",commandArgs(FALSE),value=TRUE)[1])
-source(file.path(dirname(normalizePath(script)),"common.R"))
+source(file.path(dirname(normalizePath(script)),"numerical-common.R"))
 numerical_package_check()
 api<-getFromNamespace("eivgp_numerical_api","eivGP")(NUMERICAL_REPO_ROOT)
 invisible(list2env(as.list(api),envir=environment()))

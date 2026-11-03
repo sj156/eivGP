@@ -2601,7 +2601,7 @@ adni_report_exports <- function(a) {
   a$api$atomic_json(list(author='Xinye Chen',saved_only=TRUE,new_MCMC=FALSE,new_optimization=FALSE,
     fitting_source=a$source,stage=a$stage,saved_fitting_numerics=a$numerics,report_settings=a$settings,
     input_md5=as.list(tools::md5sum(a$input$files)),analysis_modules=a$api$eivgp_module_identity(),
-    reporting_source=as.list(tools::md5sum(c(adni_path(a$repo,'paper/applications/adni.Rmd'),adni_source_files(a$repo))))),
+    reporting_source=as.list(tools::md5sum(c(adni_path(a$repo,'paper/adni.Rmd'),adni_source_files(a$repo))))),
     adni_path(dest,'REPORT_PROVENANCE.json'))
 }
 
@@ -3020,7 +3020,7 @@ adni_render_report <- function(repo,data_dir,output_dir,settings,report_source=N
   analysis<-env$adni_report_prepare(repo,data_dir,output_dir,settings,report_source,report_dir,group)
   render_env<-new.env(parent=globalenv());render_env$.adni_precomputed_analysis<-analysis
   render_env$.adni_repository_dir<-repo
-  if(is.null(rmd))rmd<-adni_path(repo,'paper/applications/adni.Rmd')
+  if(is.null(rmd))rmd<-adni_path(repo,'paper/adni.Rmd')
   rmarkdown::render(rmd,output_file=filename,output_dir=report_dir,intermediates_dir=report_dir,
     params=list(profile=settings$profile,action='report',cores=settings$cores,data_dir=data_dir,
       output_dir=output_dir,report_source=if(is.null(report_source))''else report_source,

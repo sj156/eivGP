@@ -12,7 +12,7 @@ matched independent test locations. Original study results remain unchanged.
 
 ## Study II paper replication
 
-Use [the separated Study II workflow](../study2-README.md) for current commands,
+Use [the separated Study II workflow](study2-README.md) for current commands,
 remaining-job selections, and reporting. The old combined temporary Study II
 launcher is retired. No pilot or integration variant is required to regenerate
 the existing paper displays. FULL is saved-fit evaluation, CUT is the secondary
@@ -22,7 +22,7 @@ adaptations independently. Keep their output roots separate across machines.
 Run Study I follow-up work through the permanent launcher:
 
 ```sh
-Rscript paper/numerical/study1.R --component=follow-up --action=plan --profile=paper --cores=4
+Rscript tools/study1.R --component=follow-up --action=plan --profile=paper --cores=4
 ```
 
 Use `--action=run` to execute, preserving the existing output, replication and

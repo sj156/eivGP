@@ -5,7 +5,7 @@ Use the same three method-oriented entrypoints as Ocean:
 All executable scripts are directly in `tools/`. The method entrypoints load
 `tools/adni-tools.R`, which contains all ADNI-specific functions, including
 fold preparation, fitting orchestration, evaluation, and reporting. The Rmd
-report, HTML, and this guide remain under `paper/applications/`.
+report, HTML, and this guide remain under `paper/`.
 The installed package supplies general numerical functions; it contains no ADNI
 workflow functions. Changes to ADNI scripts do not require reinstalling eivGP.
 
@@ -40,7 +40,7 @@ Fold CSVs and protocols sit directly in the dataset folder, with filenames such
 as `fold01_O20_train.csv`; no `inputs/` or per-fold subdirectories are needed.
 Both participant inputs and empirical outputs stay out of Git.
 A fresh checkout intentionally contains no ADNI records. See the
-[data contract](../../data/adni/README.md) before running.
+[data contract](../data/adni/README.md) before running.
 
 ## Where ADNI results are saved
 

@@ -89,7 +89,7 @@ study2_paper_workflow <- function(lane,args=list(),repo_root=getwd(),
 }
 study2_lane_cli <- function(lane,script) {
   env<-new.env(parent=globalenv())
-  sys.source(file.path(dirname(normalizePath(script)),"common.R"),envir=env)
+  sys.source(file.path(dirname(normalizePath(script)),"numerical-common.R"),envir=env)
   args<-list()
   for(x in commandArgs(TRUE)) {
     if(!grepl("^--[^=]+=.+$",x))stop("Use --name=value")

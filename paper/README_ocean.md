@@ -177,7 +177,7 @@ Use `--data-root` (CLI) or `data_dir` (Rmd) for a custom prepared directory.
 
 The 500-profile cohort is `seed_465000_joint_quintile_pressure`. The raw
 1000-profile cohort is `seed_144069_oxygen_interleaved`; its fold assignments,
-training/test files and masks are not versioned. See the [data guide](../../data/ocean_silicate/README.md).
+training/test files and masks are not versioned. See the [data guide](../data/ocean_silicate/README.md).
 
 ## Prepare calibration and folds separately
 
@@ -320,7 +320,7 @@ assembles the combined manuscript report from saved fits and scores. Use
 `--action=analyze` command is required. Direct Rmd rendering is also available:
 
 ```r
-rmarkdown::render("paper/applications/ocean.Rmd",
+rmarkdown::render("paper/ocean.Rmd",
   params=list(dataset="ocean500",profile="paper",action="report",
     data_dir="",
     output_dir="",

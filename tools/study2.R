@@ -27,6 +27,6 @@ if(sys.nframe()==0L) {
   if(!nzchar(root))stop("Set EIVGP_RESULTS_ROOT")
   tables<-Sys.getenv("EIVGP_STUDY2_TABLES")
   script<-sub("^--file=","",grep("^--file=",commandArgs(FALSE),value=TRUE)[1])
-  repo<-normalizePath(file.path(dirname(script),"../.."))
+  repo<-normalizePath(file.path(dirname(script),".."))
   print(study2_analysis(root,tables_dir=if(nzchar(tables))tables else NULL,repo_root=repo))
 }

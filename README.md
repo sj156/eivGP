@@ -135,8 +135,8 @@ protocol. Inspect work with `--action=plan` before replacing it with `run`.
 paper workload and calibrated comparisons:
 
 ```sh
-Rscript paper/numerical/study1-eivGP.R --action=run --cores=16 --output=results/study1-eivGP --data-root=results/data/study1
-Rscript paper/numerical/study2-eivGP.R --action=run --cores=16 --output=results/study2-eivGP --data-root=results/data/study2
+Rscript tools/study1-eivGP.R --action=run --cores=12 --output=results/study1-eivGP --data-root=results/data/study1
+Rscript tools/study2-eivGP.R --action=run --cores=12 --output=results/study2-eivGP --data-root=results/data/study2
 ```
 
 Study II reuses calibrated four-proxy fits for independent-test FULL scoring and
@@ -146,8 +146,8 @@ includes the CUT feedback comparison. FULL is rescored, not fitted twice.
 EzGP and their calibration-aware complete-case versions:
 
 ```sh
-Rscript paper/numerical/study1-competitors.R --action=run --cores=16 --output=results/study1-competitors --data-root=results/data/study1
-Rscript paper/numerical/study2-competitors.R --action=run --cores=16 --output=results/study2-competitors --data-root=results/data/study2
+Rscript tools/study1-competitors.R --action=run --cores=12 --output=results/study1-competitors --data-root=results/data/study1
+Rscript tools/study2-competitors.R --action=run --cores=12 --output=results/study2-competitors --data-root=results/data/study2
 ```
 
 The competitor machine does not require EIV-GP response fits. Numerical scripts
@@ -162,9 +162,9 @@ several runs exist. The `study1.Rmd` and `study2.Rmd` notebooks are report-only.
 When collecting lanes from different machines, validate matching settings/data
 and pair raw scores by replication; do not average machine-level summaries.
 
-See [Study I reproduction](paper/numerical/study1-README.md),
-[Study II reproduction](paper/numerical/study2-README.md), and the
-[convergence/failure report](paper/numerical/convergence-report.Rmd).
+See [Study I reproduction](paper/study1-README.md),
+[Study II reproduction](paper/study2-README.md), and the
+[convergence/failure report](paper/convergence-report.Rmd).
 
 ### B. Ocean application
 
@@ -172,20 +172,20 @@ See [Study I reproduction](paper/numerical/study1-README.md),
 The supplied five-fold inputs in `data/ocean_silicate/n500/` are ready to run;
 `ocean200` is also included. Prepare the raw `ocean1000` cohort once with
 `Rscript tools/ocean-prepare-folds.R ocean1000`. See the
-[Ocean guide](paper/applications/README_ocean.md) for data preparation and sampling details.
+[Ocean guide](paper/README_ocean.md) for data preparation and sampling details.
 
 **B2. Fit and analyze EIV-GP.** Preview the workload, then run it:
 
 ```sh
-Rscript tools/ocean-eivGP.R --plan=true --profile=paper --cores=16
-Rscript tools/ocean-eivGP.R --profile=paper --cores=16
+Rscript tools/ocean-eivGP.R --plan=true --profile=paper --cores=12
+Rscript tools/ocean-eivGP.R --profile=paper --cores=12
 ```
 
 Paper sampling uses min(cores,4) chains, initially 50,000 iterations per chain
 including 5,000 burn-in. Optional `--ess-min=100` continues saved states until all
 monitored scientific bulk and tail ESS exceed 100; its default is `NULL`.
 For a separate explicit fixed-length extension, use
-`tools/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=16`.
+`tools/ocean.R --action=continue --profile=paper --dataset=ocean500 --continuation-iter=20000 --cores=12`.
 Neither operation repeats warmup. Reporting never starts continuation.
 The EIV-GP command summarizes its own predictions, oxygen imputation and
 scientific-target diagnostics without requiring completed competitors.
@@ -193,7 +193,7 @@ scientific-target diagnostics without requiring completed competitors.
 **B3. Fit and analyze competitors.** Run against the same input/output root:
 
 ```sh
-Rscript tools/ocean-competitors.R --profile=paper --cores=16
+Rscript tools/ocean-competitors.R --profile=paper --cores=12
 ```
 
 This includes original categorical UC-GP/LVGP/EzGP and complete-case comparisons.
@@ -207,7 +207,7 @@ nonconvergence remain visible.
 **B4. Assemble and inspect the paper report.**
 
 ```sh
-Rscript tools/ocean-report.R --profile=paper --cores=16
+Rscript tools/ocean-report.R --profile=paper --cores=12
 ```
 
 After both method groups finish, the combined report reads saved fits and scores
@@ -215,7 +215,7 @@ and assembles their comparisons. `reports/paper/` contains the
 manuscript figures, tables and `artifact_manifest.csv`; method reports are
 `reports/eivGP/index.html` and `reports/competitors/index.html`. To rebuild method
 reports without fitting, add `--reuse-only=true` to the corresponding method
-command. Direct saved-result rendering through `paper/applications/ocean.Rmd`
+command. Direct saved-result rendering through `paper/ocean.Rmd`
 is also available.
 
 **B5. Short workflow check.** Use the supplied `ocean200` cohort and a separate
@@ -236,12 +236,12 @@ for five short-chain folds and the m/f diagnostic plots.
 | `data/ocean_silicate/n500/` | Frozen main cohort, five-fold inputs and masks |
 | `results/ocean500/` | Fits, predictions, diagnostics and `ocean.html` |
 | `results/ocean500_pilot/` | Separate short-chain workflow check |
-| `paper/applications/ocean.html` | Analysis-plan HTML for the supplied calibration design |
+| `paper/ocean.html` | Analysis-plan HTML for the supplied calibration design |
 
 Ocean results use `ocean-flat-v1`: `eiv_foldNN_O*/`, `baseline_foldNN/` and
 `cc_foldNN_O*_METHOD/` are siblings, with `data/`, `logs/`, `reports/` and `_meta/`
 for shared material. See the
-[Ocean reproduction and storage guide](paper/applications/README_ocean.md).
+[Ocean reproduction and storage guide](paper/README_ocean.md).
 
 ### C. ADNI application
 
@@ -259,8 +259,8 @@ ADNI commands; its paper root is `results/3C/`.
 **C2. Fit and analyze EIV-GP.**
 
 ```sh
-Rscript tools/adni-eivGP.R --plan=true --profile=paper --cores=16
-Rscript tools/adni-eivGP.R --profile=paper --cores=16
+Rscript tools/adni-eivGP.R --plan=true --profile=paper --cores=12
+Rscript tools/adni-eivGP.R --profile=paper --cores=12
 ```
 
 Paper runs use five folds, min(cores,4) chains and initially 50,000 iterations per chain
@@ -274,7 +274,7 @@ under the supplied C-stratified design.
 while C2 is running, using the same result root:
 
 ```sh
-Rscript tools/adni-competitors.R --profile=paper --cores=16
+Rscript tools/adni-competitors.R --profile=paper --cores=12
 ```
 
 This covers original ordinal-input UC-GP/LVGP/EzGP and matched complete-case
@@ -287,7 +287,7 @@ See the ADNI guide.
 **C4. Assemble and inspect the paper report.** After both fitting commands finish:
 
 ```sh
-Rscript tools/adni-report.R --profile=paper --cores=16
+Rscript tools/adni-report.R --profile=paper --cores=12
 ```
 
 The report includes settings and C definitions, Y/U/X and C/U illustrations,
@@ -295,20 +295,20 @@ prediction, complete-case comparisons, scientific diagnostics, response function
 and U imputation. Method reports and paper exports use the same relative paths
 as Ocean. `--reuse-only=true` rebuilds a method's saved report without fitting;
 `adni-report.R` always reads saved results. The report source is
-`paper/applications/adni.Rmd`.
+`paper/adni.Rmd`.
 
 | Path | Contents |
 | --- | --- |
 | `data/adni/` | Privately supplied metadata, five-fold inputs and masks |
 | `results/adni/` | Paper fits, predictions, diagnostics and `adni.html` |
-| `paper/applications/adni.html` | Versioned data-free plan page |
+| `paper/adni.html` | Versioned data-free plan page |
 
 ADNI results use `adni-flat-v1`, with task folders and `data/`, `logs/`,
 `reports/`, `_meta/` directories. Intermediate sampling stages stay inside their
 EIV task; final fit, prediction and diagnostic files sit together. `--output`
 selects the result root.
 All participant inputs, frozen snapshots, fits and empirical reports stay local.
-See the [ADNI reproduction and storage guide](paper/applications/README_adni.md).
+See the [ADNI reproduction and storage guide](paper/README_adni.md).
 
 ### D. OAI application
 
@@ -368,11 +368,11 @@ the fixed observation masks supplied with the prepared inputs.
 | --- | --- |
 | `data/oai/` | Privately supplied metadata, five-fold inputs and masks |
 | `results/oai/` | Paper fits, predictions, diagnostics and `oai.html` |
-| `paper/applications/oai.html` | Versioned data-free plan page |
+| `paper/oai.html` | Versioned data-free plan page |
 
 OAI results use flat task folders and `data/`, `logs/`, `reports/` and `_meta/`
 directories. Participant inputs, fits and empirical reports
-stay local. See the [OAI reproduction and storage guide](paper/applications/README_oai.md).
+stay local. See the [OAI reproduction and storage guide](paper/README_oai.md).
 
 ## 5. Check and interpret results
 
@@ -404,3 +404,12 @@ After package-source edits, run `Rscript tools/build_package.R` and reinstall.
 Keep application-specific functions in the corresponding `tools/*-tools.R` file;
 shared model/numerical functions belong in the package. The
 [paper overview](paper/README.md) links all entrypoints and report sources.
+
+## Repository layout
+
+- `eivGP/`: reusable model, prediction, diagnostic, storage and reporting functions.
+- `tools/`: executable study and application workflows, shared script helpers and developer checks.
+- `paper/`: report `.Rmd` sources and `.html` outputs, manuscript sources, figures and tables. Report documents live directly here; `manifests/` retains structured result provenance.
+- `data/` and ignored `results/`: inputs and computation outputs; use external stores for large runs.
+
+Rendering a report reads saved results. It does not start or resume an experiment.

@@ -1,5 +1,5 @@
 args<-commandArgs(FALSE);here<-dirname(normalizePath(sub("^--file=","",grep("^--file=",args,value=TRUE)[1])))
-source(file.path(here,"common.R"))
+source(file.path(here,"numerical-common.R"))
 numerical_package_check()
 api<-getFromNamespace("eivgp_numerical_api","eivGP")(NUMERICAL_REPO_ROOT)
 invisible(list2env(as.list(api),envir=environment()))

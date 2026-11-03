@@ -1,16 +1,16 @@
-# Paper replication
+# Paper reports and manuscript assets
 
-This folder contains the analyses needed for the paper. For Study II, use the
-[separate EIV-GP and competitor workflows](numerical/study2-README.md); their
+This folder holds report `.Rmd` sources, readable `.html` outputs, manuscript sources, figures and tables. Report files live directly in this folder. Executable experiment workflows and shared script helpers live directly in `tools/`; reusable implementations live in the R package. For Study II, use the
+[separate EIV-GP and competitor workflows](study2-README.md); their
 outputs can be produced on different machines and reporting reads saved results.
 Study I and application workflows are unchanged.
 
 | Analysis | Batch | Notebook | Read report |
 |---|---|---|---|
-| Study I | [R](numerical/study1.R) | [Rmd](numerical/study1.Rmd) | [HTML](numerical/study1.html) |
-| Study II | [EIV-GP](numerical/study2-eivGP.R), [competitors](numerical/study2-competitors.R), [report](numerical/study2.R) | [Rmd](numerical/study2.Rmd) | [HTML](numerical/study2.html) |
-| Ocean | [R](../tools/ocean.R) | [Rmd](applications/ocean.Rmd) | [HTML](applications/ocean.html) |
-| ADNI | [EIV-GP](../tools/adni-eivGP.R), [competitors](../tools/adni-competitors.R), [report](../tools/adni-report.R) | [Rmd](applications/adni.Rmd) | [HTML plan](applications/adni.html) |
+| Study I | [R](../tools/study1.R) | [Rmd](study1.Rmd) | [HTML](study1.html) |
+| Study II | [EIV-GP](../tools/study2-eivGP.R), [competitors](../tools/study2-competitors.R), [report](../tools/study2.R) | [Rmd](study2.Rmd) | [HTML](study2.html) |
+| Ocean | [R](../tools/ocean.R) | [Rmd](ocean.Rmd) | [HTML](ocean.html) |
+| ADNI | [EIV-GP](../tools/adni-eivGP.R), [competitors](../tools/adni-competitors.R), [report](../tools/adni-report.R) | [Rmd](adni.Rmd) | [HTML plan](adni.html) |
 
 ## Read the selected historical results (optional)
 
@@ -18,8 +18,8 @@ From the repository root, after installing the package:
 
 ```sh
 export EIVGP_RESULTS_ROOT="/path/to/ordinal_mixed_input_GP"
-Rscript paper/numerical/study1.R report
-Rscript paper/numerical/study2.R
+Rscript tools/study1.R report
+Rscript tools/study2.R
 Rscript tools/render_reports.R
 ```
 
@@ -41,8 +41,8 @@ different sources of uncertainty.
 
 ## Run numerical experiments from source
 
-See [the numerical guide](numerical/README.md) for Study I and
-[Study II reproduction](numerical/study2-README.md) for independent machine
+See [the numerical guide](numerical-README.md) for Study I and
+[Study II reproduction](study2-README.md) for independent machine
 execution, remaining follow-up jobs, output locations and reporting. Default
 launches plan the workload; execution requires `--action=run`.
 
@@ -50,7 +50,7 @@ launches plan the workload; execution requires `--action=run`.
 
 Ocean uses the same three package implementation modules as the numerical studies.
 Run experiments through its `.R` entrypoint, then render `.Rmd` to read saved
-results and generate HTML. See [Ocean instructions](applications/README_ocean.md)
+results and generate HTML. See [Ocean instructions](README_ocean.md)
 for installation, data preparation, execution and report parameters.
 
 ```sh
@@ -64,7 +64,7 @@ it. The Rmd defaults to `action="report"` and does not fit models. Prepare the
 Only `ocean.html` is versioned as the short-chain example report.
 
 ADNI uses the same three method-oriented entrypoints with separately supplied
-private prepared folds; see [ADNI instructions](applications/README_adni.md):
+private prepared folds; see [ADNI instructions](README_adni.md):
 
 ```sh
 Rscript tools/adni-eivGP.R --plan=true --profile=paper --cores=16
@@ -78,7 +78,7 @@ to ignored `results/adni/` for these commands. Participant data and empirical
 HTML are not versioned. The paper budget is four chains, 50,000 total iterations
 per chain including 5,000 burn-in, and permits recorded overrides. The separate
 pilot budget uses 1,000 then 1,500 total iterations per chain with burn 500.
-See [ADNI result locations](applications/README_adni.md#where-adni-results-are-saved) for fits,
+See [ADNI result locations](README_adni.md#where-adni-results-are-saved) for fits,
 scores, task logs and exported figures/tables.
 For the separately supplied three-item cohort, add `--dataset=3C` to all three
 entrypoints, place inputs in `data/adni_3C/`, and read paper results from
@@ -86,4 +86,4 @@ entrypoints, place inputs in `data/adni_3C/`, and read paper results from
 
 Use separate output roots for changed package/input identities. Fits retain chain histories and terminal states for diagnostics and continuation. Existing archives are not automatically migrated or deleted.
 
-Study II workflow selection and reporting are documented in [its reproduction guide](numerical/study2-README.md).
+Study II workflow selection and reporting are documented in [its reproduction guide](study2-README.md).

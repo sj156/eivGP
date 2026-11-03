@@ -127,7 +127,7 @@ test_that("Ocean CLI and Rmd defaults share a flat dataset root", {
   for(dataset in c("ocean200","ocean500","ocean1000")) {
     expected<-file.path(root,"results",dataset)
     expect_identical(env$ocean_output_dir(root,dataset,"paper"),expected)
-    configured<-rmarkdown::yaml_front_matter(file.path(root,"paper/applications/ocean.Rmd"))$params$output_dir
+    configured<-rmarkdown::yaml_front_matter(file.path(root,"paper/ocean.Rmd"))$params$output_dir
     expect_identical(env$ocean_output_dir(root,dataset,"paper",configured),expected)
   }
   expect_identical(env$ocean_output_dir(root,"ocean500","pilot"),

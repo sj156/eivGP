@@ -23,6 +23,6 @@ if(!check) {
   status<-system2(file.path(R.home("bin"),"R"),c("CMD","INSTALL","--preclean",paste0("--library=",shQuote(lib)),shQuote(file.path(root,"eivGP"))))
   if(status!=0)stop("Local package installation failed")
 }
-source(file.path(root,"paper/numerical/common.R"));numerical_package_check()
+source(file.path(root,"tools/numerical-common.R"));numerical_package_check()
 cat("Numerical dependency versions and installed source identity match.\n")
 capture.output(sessionInfo(),file=file.path(lib,"numerical-sessionInfo.txt"))

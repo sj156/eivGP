@@ -5,7 +5,7 @@ numerical_repo_root <- function() {
   if(length(args))candidates<-c(dirname(normalizePath(sub("^--file=","",args[1]),mustWork=FALSE)),candidates)
   for(fr in sys.frames())if(!is.null(fr$ofile))candidates<-c(dirname(normalizePath(fr$ofile,mustWork=FALSE)),candidates)
   for(p in unique(candidates[nzchar(candidates)]))for(i in 1:8) {
-    if(file.exists(file.path(p,"eivGP","DESCRIPTION")) && dir.exists(file.path(p,"paper","numerical")))return(normalizePath(p))
+    if(file.exists(file.path(p,"eivGP","DESCRIPTION")) && dir.exists(file.path(p,"tools")))return(normalizePath(p))
     parent<-dirname(p);if(identical(parent,p))break;p<-parent
   }
   stop("Cannot locate checkout; set EIVGP_REPO_ROOT to the repository root")

@@ -64,7 +64,7 @@ study1_paper_workflow <- function(lane,args=list(),repo_root=getwd(),
 }
 study1_lane_cli <- function(lane,script) {
   env<-new.env(parent=globalenv())
-  sys.source(file.path(dirname(normalizePath(script)),"common.R"),envir=env)
+  sys.source(file.path(dirname(normalizePath(script)),"numerical-common.R"),envir=env)
   args<-list()
   for(x in commandArgs(TRUE)) {
     if(!grepl("^--[^=]+=.+$",x))stop("Use --name=value")
@@ -79,7 +79,7 @@ study1_lane_cli <- function(lane,script) {
       stop("Report data saved; install rmarkdown/Pandoc to render study1.Rmd")
     render_tmp<-file.path(result$report$output_dir,".render")
     dir.create(render_tmp,recursive=TRUE,showWarnings=FALSE)
-    html<-rmarkdown::render(file.path(env$NUMERICAL_REPO_ROOT,"paper/numerical/study1.Rmd"),
+    html<-rmarkdown::render(file.path(env$NUMERICAL_REPO_ROOT,"paper/study1.Rmd"),
       # Avoid resource discovery treating a previous HTML output as an input.
       output_file=paste0("study1", ".html"),output_dir=result$report$output_dir,
       intermediates_dir=render_tmp,

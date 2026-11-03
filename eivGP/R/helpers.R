@@ -10966,7 +10966,7 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
   scientific<-cfg[setdiff(names(cfg),c("reps","methods","calib","output","data_root","cores","retain_draws"))]
   identity<-list(settings=scientific,versions=versions,R=as.character(getRversion()),
     code=c(mechanism=if(is.null(script_path))hash_object(paste(deparse(body(run_mechanism),width.cutoff=500L),collapse="\n")) else unname(tools::md5sum(script_path)),
-      common=unname(tools::md5sum(file.path(NUMERICAL_REPO_ROOT,"paper/numerical/common.R")))) ,
+      common=unname(tools::md5sum(file.path(NUMERICAL_REPO_ROOT,"tools/numerical-common.R")))) ,
     package_manifest=F("eivgp_module_identity")(),
     dependency_lock=unname(tools::md5sum(file.path(NUMERICAL_REPO_ROOT,"renv.lock"))),
     full_map_hash=if(nzchar(cfg$full_fit_map))unname(tools::md5sum(cfg$full_fit_map))else NULL)

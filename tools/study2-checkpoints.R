@@ -3,7 +3,7 @@
 script<-sub("^--file=","",grep("^--file=",commandArgs(FALSE),value=TRUE)[1])
 if(is.na(script))stop("Run with Rscript")
 root<-dirname(dirname(normalizePath(script)))
-source(file.path(root,"paper/numerical/common.R"))
+source(file.path(root,"tools/numerical-common.R"))
 numerical_package_check()
 a<-list()
 for(x in commandArgs(TRUE)) {

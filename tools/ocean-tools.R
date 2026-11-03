@@ -3345,7 +3345,7 @@ ocean_render_report <- function(repository_dir,output_dir,settings,dataset,data_
   if(!is.null(analysis))render_env$.ocean_precomputed_analysis<-list(
     output_dir=normalizePath(output_dir),data_dir=normalizePath(data_dir),
     profile=settings$profile,folds=settings$folds,cells=settings$cells,analysis=analysis)
-  rmarkdown::render(file.path(repository_dir,"paper/applications/ocean.Rmd"),
+  rmarkdown::render(file.path(repository_dir,"paper/ocean.Rmd"),
     output_file="ocean.html",output_dir=output_dir,intermediates_dir=output_dir,
     params=list(dataset=dataset,profile=settings$profile,action="report",folds=settings$folds,
       cells=settings$cells,modules=settings$modules,task_ids=settings$task_ids,

@@ -17,5 +17,5 @@ The `cores` argument is a shared CPU budget. Default paper outputs are under
 `results/<dataset>/`; `--output` selects a different run directory.
 
 Input/provenance validation, a completed workflow and MCMC convergence are
-separate checks. See the [Ocean guide](../../applications/README_ocean.md) for
+separate checks. See the [Ocean guide](../../README_ocean.md) for
 commands, sampling details and coverage checks.

@@ -12734,3 +12734,16 @@ mixedgp_cleanup_cut_cache <- function(folder,retain_draws=FALSE) {
   }
   invisible(NULL)
 }
+
+# Normalize the common method-lane CLI while preserving historical flags.
+mixedgp_workflow_cli <- function(args,group=NULL) {
+  ix<-grep("^--action=",args)
+  if(!length(ix))return(args)
+  if(length(ix)!=1L)stop("Repeated option: action")
+  action<-sub("^--action=","",args[ix])
+  if(!action%in%c("plan","run","report"))stop("action must be plan, run or report")
+  if(any(grepl("^--(plan|reuse-only)=",args)))stop("Use action or legacy plan/reuse-only flags, not both")
+  if(identical(group,"report") && action=="run")stop("Report scripts accept action=plan or report; use a method script to run fits")
+  args<-args[-ix]
+  c(args,switch(action,plan="--plan=true",report="--reuse-only=true",run=character()))
+}

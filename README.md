@@ -114,7 +114,7 @@ See the [package guide](eivGP/README.md) and function documentation for details.
 ## 4. Reproduce the paper experiments
 
 Choose an experiment below, then follow its numbered preparation, fitting and
-reporting steps. Commands run from the repository root and use 16 cores as an
+reporting steps. Commands run from the repository root and use 12 cores as an
 example; choose a budget appropriate for your machine. New runs require matching
 source, dependencies and frozen inputs. Existing fits keep their original
 provenance; use new output roots for incompatible sources or numerical settings.
@@ -129,7 +129,7 @@ provenance; use new output roots for incompatible sources or numerical settings.
 **A1. Prepare the environment and inputs.** Run `Rscript tools/setup_numerical.R`.
 The study scripts generate fixed-seed datasets and masks locally. EIV-GP and
 competitor lanes can run on separate machines with the same source and data
-protocol. Inspect work with `--action=plan` before replacing it with `run`.
+protocol. Inspect work with `--action=plan` before replacing it with `run`. All method launchers accept `--action=plan|run|report`, `--cores`, `--data-root`, and `--output`. Application `--plan=true` and `--reuse-only=true` remain compatible aliases; do not combine them with `--action`. Combined report scripts accept `plan` or `report` only.
 
 **A2. Fit and analyze EIV-GP.** These commands include each study's complete
 paper workload and calibrated comparisons:
@@ -177,8 +177,8 @@ The supplied five-fold inputs in `data/ocean_silicate/n500/` are ready to run;
 **B2. Fit and analyze EIV-GP.** Preview the workload, then run it:
 
 ```sh
-Rscript tools/ocean-eivGP.R --plan=true --profile=paper --cores=12
-Rscript tools/ocean-eivGP.R --profile=paper --cores=12
+Rscript tools/ocean-eivGP.R --action=plan --profile=paper --cores=12 --data-root=data/ocean_silicate/n500 --output=results/ocean500
+Rscript tools/ocean-eivGP.R --action=run --profile=paper --cores=12 --data-root=data/ocean_silicate/n500 --output=results/ocean500
 ```
 
 Paper sampling uses min(cores,4) chains, initially 50,000 iterations per chain
@@ -193,28 +193,28 @@ scientific-target diagnostics without requiring completed competitors.
 **B3. Fit and analyze competitors.** Run against the same input/output root:
 
 ```sh
-Rscript tools/ocean-competitors.R --profile=paper --cores=12
+Rscript tools/ocean-competitors.R --action=run --profile=paper --cores=12 --data-root=data/ocean_silicate/n500 --output=results/ocean500
 ```
 
 This includes original categorical UC-GP/LVGP/EzGP and complete-case comparisons.
 The competitor command summarizes its own results without requiring completed
 EIV-GP fits. The two method commands may run concurrently against the same result
 directory; either method group may be started first. `--cores` is a budget per
-command, so two commands requesting 16 cores request 32 workers in total.
+command, so two commands requesting 12 cores request 24 workers in total.
 Rerunning a compatible command reuses successful tasks; failures and optimizer
 nonconvergence remain visible.
 
 **B4. Assemble and inspect the paper report.**
 
 ```sh
-Rscript tools/ocean-report.R --profile=paper --cores=12
+Rscript tools/ocean-report.R --action=report --profile=paper --cores=12 --data-root=data/ocean_silicate/n500 --output=results/ocean500
 ```
 
 After both method groups finish, the combined report reads saved fits and scores
 and assembles their comparisons. `reports/paper/` contains the
 manuscript figures, tables and `artifact_manifest.csv`; method reports are
 `reports/eivGP/index.html` and `reports/competitors/index.html`. To rebuild method
-reports without fitting, add `--reuse-only=true` to the corresponding method
+reports without fitting, set `--action=report` on the corresponding method
 command. Direct saved-result rendering through `paper/ocean.Rmd`
 is also available.
 
@@ -223,9 +223,9 @@ output root. These commands run the same fitting, analysis and reporting
 entrypoints with short chains:
 
 ```sh
-Rscript tools/ocean-eivGP.R --profile=quick --dataset=ocean200 --cores=8 --output=results/ocean200_check
-Rscript tools/ocean-competitors.R --profile=quick --dataset=ocean200 --cores=12 --output=results/ocean200_check
-Rscript tools/ocean-report.R --profile=quick --dataset=ocean200 --cores=8 --output=results/ocean200_check
+Rscript tools/ocean-eivGP.R --action=run --profile=quick --dataset=ocean200 --cores=12 --output=results/ocean200_check --data-root=data/ocean_silicate/n200
+Rscript tools/ocean-competitors.R --action=run --profile=quick --dataset=ocean200 --cores=12 --output=results/ocean200_check --data-root=data/ocean_silicate/n200
+Rscript tools/ocean-report.R --action=report --profile=quick --dataset=ocean200 --cores=12 --output=results/ocean200_check --data-root=data/ocean_silicate/n200
 ```
 
 Quick checks cover one fold. Use `--profile=pilot` with a separate output root
@@ -259,8 +259,8 @@ ADNI commands; its paper root is `results/3C/`.
 **C2. Fit and analyze EIV-GP.**
 
 ```sh
-Rscript tools/adni-eivGP.R --plan=true --profile=paper --cores=12
-Rscript tools/adni-eivGP.R --profile=paper --cores=12
+Rscript tools/adni-eivGP.R --action=plan --profile=paper --cores=12 --data-root=data/adni --output=results/adni
+Rscript tools/adni-eivGP.R --action=run --profile=paper --cores=12 --data-root=data/adni --output=results/adni
 ```
 
 Paper runs use five folds, min(cores,4) chains and initially 50,000 iterations per chain
@@ -274,26 +274,26 @@ under the supplied C-stratified design.
 while C2 is running, using the same result root:
 
 ```sh
-Rscript tools/adni-competitors.R --profile=paper --cores=12
+Rscript tools/adni-competitors.R --action=run --profile=paper --cores=12 --data-root=data/adni --output=results/adni
 ```
 
 This covers original ordinal-input UC-GP/LVGP/EzGP and matched complete-case
 comparisons. Specify only `--cores` for resource allocation. Fitting and evaluation
 use complete chain-sized groups for eivGP and one core per competitor job; lower the budget if memory pressure is
 high. Each command summarizes its own results independently. The CPU budget is
-per command: two commands requesting 16 cores request 32 workers in total.
+per command: two commands requesting 12 cores request 24 workers in total.
 See the ADNI guide.
 
 **C4. Assemble and inspect the paper report.** After both fitting commands finish:
 
 ```sh
-Rscript tools/adni-report.R --profile=paper --cores=12
+Rscript tools/adni-report.R --action=report --profile=paper --cores=12 --data-root=data/adni --output=results/adni
 ```
 
 The report includes settings and C definitions, Y/U/X and C/U illustrations,
 prediction, complete-case comparisons, scientific diagnostics, response functions
 and U imputation. Method reports and paper exports use the same relative paths
-as Ocean. `--reuse-only=true` rebuilds a method's saved report without fitting;
+as Ocean. `--action=report` rebuilds a method's saved report without fitting;
 `adni-report.R` always reads saved results. The report source is
 `paper/adni.Rmd`.
 
@@ -324,8 +324,8 @@ protocols. Another prepared cohort can use `data/oai_NAME/` with `--dataset=NAME
 **D2. Fit and analyze EIV-GP.**
 
 ```sh
-Rscript tools/oai-eivGP.R --plan=true --profile=paper --cores=8
-Rscript tools/oai-eivGP.R --profile=paper --cores=8
+Rscript tools/oai-eivGP.R --action=plan --profile=paper --cores=12 --data-root=data/oai --output=results/oai
+Rscript tools/oai-eivGP.R --action=run --profile=paper --cores=12 --data-root=data/oai --output=results/oai
 ```
 
 Paper sampling uses five folds, min(cores,4) chains and initially 50,000
@@ -337,13 +337,13 @@ overrides are recorded in the fitting identity.
 while D2 is running, using the same result root:
 
 ```sh
-Rscript tools/oai-competitors.R --profile=paper --cores=8
+Rscript tools/oai-competitors.R --action=run --profile=paper --cores=12 --data-root=data/oai --output=results/oai
 ```
 
 This fits UC-GP, LVGP and EzGP with ordinal inputs and matched complete-case
 inputs. Use only `--cores` for resources: EIV jobs use complete chain-sized groups
 and competitor jobs use one core each. The two commands have separate CPU
-budgets: 8 + 8 requests 16 workers in total, so choose their sum to fit the
+budgets: 12 + 12 requests 24 workers in total, so choose their sum to fit the
 machine and available memory. Each prints job starts, completions and failures;
 `results/oai/PROGRESS_eivGP.txt` and `PROGRESS_competitors.txt` retain the latest
 group status. OAI application functions are self-contained in `tools/oai-tools.R`.
@@ -353,7 +353,7 @@ to be complete.
 **D4. Assemble and inspect the paper report.** After both fitting commands finish:
 
 ```sh
-Rscript tools/oai-report.R --profile=paper --cores=8
+Rscript tools/oai-report.R --action=report --profile=paper --cores=12 --data-root=data/oai --output=results/oai
 ```
 
 The report covers settings, data/C definitions and illustrations, numerical

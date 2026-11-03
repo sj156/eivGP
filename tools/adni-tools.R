@@ -2829,6 +2829,7 @@ adni_resolve_path <- function(path,repo) {
 }
 
 adni_cli_params <- function(args) {
+  args<-getFromNamespace("mixedgp_workflow_cli","eivGP")(args)
   allowed<-c('cores','profile','dataset','data_root','data_dir','output','output_dir','config','manifest',
     'chains','iter','burn','stages','folds','cells','draws_per_chain','first_checkpoint','checkpoint_step',
     'baseline_profile','sampler_o0','sampler_o20','sampler_o50','representative_fold','appendix',
@@ -3129,7 +3130,7 @@ adni_method_main <- function(group,args=commandArgs(TRUE)) {
   repo<-normalizePath(adni_path(dirname(normalizePath(script)),'..'))
   api<-adni_load_api(repo)
   if(identical(args,'--help')) {
-    cat('Rscript tools/adni-',group,'.R --profile=paper --cores=4\n',
+    cat('Rscript tools/adni-',group,'.R --action=plan --profile=paper --cores=12\n',
       '  --profile=pilot|paper|quick; --dataset=NAME; --data-root=PATH; --output=PATH\n',
       '  --cores=N: shared CPU budget; resident jobs are derived automatically in both phases.\n',
       '  --config=FILE; --iter=N --burn=N --stages=N,N\n',
@@ -3137,6 +3138,7 @@ adni_method_main <- function(group,args=commandArgs(TRUE)) {
       '  Run EIV-GP and competitors sequentially; report reads saved results.\n',sep='')
     return(invisible(NULL))
   }
+  args<-getFromNamespace("mixedgp_workflow_cli","eivGP")(args,group)
   Sys.setenv(OMP_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1',MKL_NUM_THREADS='1',VECLIB_MAXIMUM_THREADS='1')
   api$adni_method_run(repo,api$adni_cli_params(args),group)
 }

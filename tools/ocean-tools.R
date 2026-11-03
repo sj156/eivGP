@@ -3455,6 +3455,8 @@ ocean_run_cli <- function(repository_dir,params=list()) {
 
 # Shared CLI orchestration only. All fitting, scoring and plotting use eivGP.
 ocean_method_params <- function(args,group) {
+  args<-getFromNamespace("mixedgp_workflow_cli","eivGP")(args,group)
+  args<-sub("^--data-root=","--data-dir=",args)
   special<-c('reuse-only','plan');flags<-setNames(as.list(rep(FALSE,2)),special)
   for(key in special) {
     ix<-grep(paste0('^--',key,'='),args)
@@ -3582,7 +3584,7 @@ ocean_method_main <- function(group,args=commandArgs(TRUE)) {
   root<-normalizePath(file.path(dirname(normalizePath(script)),'..'))
   ocean_load_api(root,environment(ocean_method_main))
   if(identical(args,'--help')) {
-    cat('Rscript tools/ocean-',group,'.R --cores=16 --profile=paper --dataset=ocean500 --output=/path/to/results\n',
+    cat('Rscript tools/ocean-',group,'.R --action=plan --cores=12 --profile=paper --dataset=ocean500 --output=/path/to/results\n',
       '  --reuse-only=true: require saved fits and predictions; never fit or continue.\n',
       '  --cores=N: eivGP uses min(N,4) chains and complete groups; competitors use one core/job.\n',
       '  --plan=true: list selected tasks. --folds=1:5 --cells=O0,O20,O50 --diagnostics-dir=...\n',

@@ -1804,6 +1804,7 @@ oai_resolve_path <- function(path,repo) {
 }
 
 oai_cli_params <- function(args) {
+  args<-getFromNamespace("mixedgp_workflow_cli","eivGP")(args)
   allowed<-c('cores','profile','dataset','data_root','data_dir','output','output_dir','config','manifest',
     'chains','iter','burn','stages','folds','cells','draws_per_chain','first_checkpoint','checkpoint_step',
     'baseline_profile','sampler_o0','sampler_o20','sampler_o50','representative_fold','appendix',
@@ -2280,7 +2281,7 @@ oai_settings <- function(profile='pilot',cores=4L,...)oai_load_api()$oai_setting
 oai_prepare_folds <- function(cohort_file,metadata_file,output_dir)oai_load_api()$oai_prepare_folds(cohort_file,metadata_file,output_dir)
 oai_method_main <- function(group,args=commandArgs(TRUE)) {
   if(identical(args,'--help')) {
-    cat('Rscript tools/oai-',group,'.R --profile=paper --cores=4\n',
+    cat('Rscript tools/oai-',group,'.R --action=plan --profile=paper --cores=12\n',
       '  --profile=pilot|paper|quick; --dataset=NAME; --data-root=PATH; --output=PATH\n',
       '  --cores=N is the sole resource control; new fits use min(N,4) chains.\n',
       '  --plan=true; --reuse-only=true; --iter=N --burn=N --stages=N,N\n',
@@ -2291,6 +2292,7 @@ oai_method_main <- function(group,args=commandArgs(TRUE)) {
       '  Run the combined report after both fitting groups finish.\n',sep='')
     return(invisible(NULL))
   }
+  args<-getFromNamespace("mixedgp_workflow_cli","eivGP")(args,group)
   Sys.setenv(OMP_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1',MKL_NUM_THREADS='1',VECLIB_MAXIMUM_THREADS='1')
   cat('[OAI ',group,'] Initializing inputs and saved settings.\n',sep='');flush.console()
   api<-oai_load_api(.oai_repository)

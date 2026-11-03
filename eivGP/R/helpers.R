@@ -10535,6 +10535,8 @@ settings <- function(a) {
   if(!all(cfg$calib%in%c(20,50)))stop("Study II mechanism component uses calibration 20 and 50 only")
   if(!all(cfg$methods%in%c("CUT","FULL","UC-GP","LVGP","EzGP","UC-GP-CC","LVGP-CC","EzGP-CC")))stop("Unknown method")
   if(!nzchar(cfg$output)||!nzchar(cfg$data_root))stop("Supply --data-root and --output")
+  cfg$output<-mixedgp_absolute_path(cfg$output);cfg$data_root<-mixedgp_absolute_path(cfg$data_root)
+  if(nzchar(cfg$full_fit_map))cfg$full_fit_map<-mixedgp_absolute_path(cfg$full_fit_map)
   if(grepl("Dropbox|Overleaf",cfg$output,ignore.case=TRUE))stop("Keep output outside the synced manuscript tree")
   cfg
 }
@@ -11464,8 +11466,8 @@ mixedgp_publication_workflow <- function(study, args, repo_root) {
     sort(z)
   }
   reps<-parse_reps(get("reps",if(stage=="full")"1:50" else "1,25"))
-  root<-path.expand(get("output",Sys.getenv("EIVGP_RESULTS_ROOT",file.path(path.expand("~/eivGP-results"),study))))
-  data<-path.expand(get("data-root",Sys.getenv("EIVGP_DATA_ROOT",file.path(path.expand("~/eivGP-results"),"data",study))))
+  root<-mixedgp_absolute_path(get("output",Sys.getenv("EIVGP_RESULTS_ROOT",file.path(path.expand("~/eivGP-results"),study))))
+  data<-mixedgp_absolute_path(get("data-root",Sys.getenv("EIVGP_DATA_ROOT",file.path(path.expand("~/eivGP-results"),"data",study))))
   if(!nzchar(root)||!nzchar(data)||any(grepl("Dropbox|Overleaf",c(root,data),ignore.case=TRUE)))stop("Supply non-synced output and data-root")
   cores<-as.integer(get("cores","4"));if(length(cores)!=1L||is.na(cores)||cores<1L)stop("cores must be positive")
   defaults<-if(study=="study1")list(iter="12000",warmup="4000",outer="16",latent="128",`cc-response-latent`="64")else
@@ -11514,7 +11516,7 @@ mixedgp_publication_workflow <- function(study, args, repo_root) {
     fitroot<-get("full-fit-root","")
     if(nzchar(mapfile)&&nzchar(fitroot))stop("Choose full-fit-map or full-fit-root, not both")
     if(nzchar(fitroot)) {
-      fitroot<-path.expand(fitroot)
+      fitroot<-mixedgp_absolute_path(fitroot)
       if(!dir.exists(fitroot))stop("FULL archive directory does not exist: ",fitroot)
       candidates<-list.files(fitroot,recursive=TRUE,full.names=TRUE)
       map<-expand.grid(rep=reps,calib=calib)
@@ -12749,9 +12751,20 @@ mixedgp_workflow_cli <- function(args,group=NULL) {
 }
 
 # Resolve against the launch directory even when the destination does not exist.
-mixedgp_absolute_path <- function(path) {
+mixedgp_absolute_path <- function(path,base=getwd()) {
+  if(!is.character(path)||length(path)!=1L||is.na(path)||!nzchar(path))stop("Supply one nonempty path")
   path<-path.expand(path)
   if(!startsWith(path,"/") && !startsWith(path,"\\") && !grepl("^[A-Za-z]:",path))
-    path<-file.path(getwd(),path)
-  normalizePath(path,winslash="/",mustWork=FALSE)
+    path<-file.path(normalizePath(path.expand(base),winslash="/",mustWork=TRUE),path)
+  # Normalize the existing ancestor, then resolve missing suffix components.
+  ancestor<-path;suffix<-character()
+  while(!file.exists(ancestor)&&dirname(ancestor)!=ancestor) {
+    suffix<-c(basename(ancestor),suffix);ancestor<-dirname(ancestor)
+  }
+  resolved<-normalizePath(ancestor,winslash="/",mustWork=TRUE)
+  for(part in suffix) {
+    if(part=="..")resolved<-dirname(resolved)
+    else if(part!=".")resolved<-file.path(resolved,part)
+  }
+  resolved
 }

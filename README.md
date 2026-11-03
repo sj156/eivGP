@@ -413,3 +413,19 @@ shared model/numerical functions belong in the package. The
 - `data/` and ignored `results/`: inputs and computation outputs; use external stores for large runs.
 
 Rendering a report reads saved results. It does not start or resume an experiment.
+
+## Paths and working directories
+
+Run the documented commands from the checkout root. Study input/output paths,
+archive-map paths, maintenance paths, and convergence-manifest source roots are
+resolved from the directory where the command starts. Ocean, ADNI and OAI
+input/output/config/report paths are resolved from their checkout root; Ocean
+fold-preparation outputs follow the same rule. Absolute paths and `~` work in
+both cases. New destinations are made absolute before any fitting or rendering
+changes the working directory; resolving a path does not create it.
+
+From another directory, call scripts by absolute path and supply absolute input
+and output paths. Report rendering locates `paper/` from its script, not the shell's
+working directory. Relative roots inside a convergence CSV remain relative to the
+launch directory. Keep saved provenance intact; no path repair authorizes moving,
+relabeling, deleting, or refitting historical results. Plan checks do not run fits.

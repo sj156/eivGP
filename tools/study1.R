@@ -42,6 +42,8 @@ if(sys.nframe()==0L) {
   } else {
     root<-Sys.getenv("EIVGP_RESULTS_ROOT")
     if(!nzchar(root))stop("Set EIVGP_RESULTS_ROOT, or use --action=plan --data-root=... --output=...")
-    print(study1_analysis(root,action=if(length(args))args[1] else "report"))
+    script<-sub("^--file=","",grep("^--file=",commandArgs(FALSE),value=TRUE)[1])
+    print(study1_analysis(root,action=if(length(args))args[1] else "report",
+      repo_root=dirname(dirname(normalizePath(script)))))
   }
 }

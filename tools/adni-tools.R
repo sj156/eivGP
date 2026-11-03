@@ -2818,14 +2818,7 @@ adni_paper_assets <- function(a) {
 # ADNI application: settings. Reuses package model and sampler functions.
 
 adni_resolve_path <- function(path,repo) {
-  path<-path.expand(path)
-  if(!grepl('^(/|[A-Za-z]:[/\\\\])',path))path<-adni_path(repo,path)
-  base<-path;suffix<-character()
-  while(!file.exists(base)&&dirname(base)!=base) {
-    suffix<-c(basename(base),suffix);base<-dirname(base)
-  }
-  resolved<-normalizePath(base,mustWork=TRUE)
-  if(length(suffix))adni_path(resolved,paste(suffix,collapse='/'))else resolved
+  getFromNamespace("mixedgp_absolute_path","eivGP")(path,base=repo)
 }
 
 adni_cli_params <- function(args) {

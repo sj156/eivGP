@@ -189,10 +189,8 @@ ocean_atomic_lines <- function(x, path) {
 ocean_hashes <- function(paths) unname(tools::md5sum(paths))
 
 ocean_resolve_path <- function(path,repository_dir) {
-  path <- path.expand(as.character(path))
-  if(!length(path)) return(character())
-  absolute <- grepl("^(/|[A-Za-z]:[/\\\\]|\\\\\\\\)",path)
-  ifelse(absolute,path,ocean_path(repository_dir,path))
+  if(!length(path))return(character())
+  vapply(as.character(path),function(p)getFromNamespace("mixedgp_absolute_path","eivGP")(p,base=repository_dir),character(1),USE.NAMES=FALSE)
 }
 
 ocean_test_masks <- function(test,fold) {
@@ -1150,7 +1148,7 @@ ocean_storage_init <- function(root) {
 
 ocean_migrate_storage <- function(source,destination,dry_run=TRUE) {
   source <- normalizePath(source,mustWork=TRUE)
-  destination <- path.expand(destination)
+  destination <- getFromNamespace("mixedgp_absolute_path","eivGP")(destination)
   if(!dir.exists(dirname(destination)))stop("Destination parent must exist.")
   destination <- file.path(normalizePath(dirname(destination)),basename(destination))
   if(file.exists(destination)||dir.exists(destination))stop("Destination already exists: ",destination)
@@ -3798,7 +3796,7 @@ prepare_ocean_folds <- function(dataset="ocean1000",output_dir=NULL,repository_d
   root<-normalizePath(repository_dir,mustWork=TRUE)
   input<-file.path(root,"data/ocean_silicate",sub("ocean","n",dataset))
   if(is.null(output_dir))output_dir<-file.path(root,"reproduction/ocean/prepared",dataset)
-  output_dir<-normalizePath(path.expand(output_dir),mustWork=FALSE)
+  output_dir<-getFromNamespace("mixedgp_absolute_path","eivGP")(output_dir,base=repository_dir)
   if(identical(normalizePath(input),output_dir))stop("Choose an output directory separate from the source cohort.")
   if(dir.exists(output_dir)&&length(list.files(output_dir,all.files=TRUE,no..=TRUE)))
     stop("Prepared output already exists; use a new directory: ",output_dir)

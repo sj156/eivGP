@@ -6,6 +6,7 @@ script<-sub("^--file=","",grep("^--file=",commandArgs(FALSE),value=TRUE)[1])
 root<-dirname(dirname(normalizePath(script)))
 lib<-Sys.getenv("EIVGP_R_LIBRARY",file.path(root,".r-library"))
 dir.create(lib,recursive=TRUE,showWarnings=FALSE);.libPaths(c(normalizePath(lib),.libPaths()))
+lib<-normalizePath(lib,mustWork=TRUE)
 check<-"--check"%in%args
 if(!check && !"--install-local"%in%args) {
   options(repos=c(CRAN="https://cloud.r-project.org"))

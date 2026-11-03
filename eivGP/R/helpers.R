@@ -5314,8 +5314,8 @@ study1_simulation_config <- function(
     mode = mode,
     run_id = paste0("study1-", mode, "-v2"),
     code_dir = normalizePath(code_dir, winslash = "/"),
-    output_root = normalizePath(output_root, winslash = "/", mustWork = FALSE),
-    data_root = normalizePath(data_root, winslash = "/", mustWork = FALSE),
+    output_root = mixedgp_absolute_path(output_root),
+    data_root = mixedgp_absolute_path(data_root),
     stages = switch(
       mode,
       dry_run = character(0), data = "data",
@@ -5386,8 +5386,8 @@ study2_simulation_config <- function(
     mode = mode,
     run_id = paste0("study2-", mode, "-v2"),
     code_dir = normalizePath(code_dir, winslash = "/"),
-    output_root = normalizePath(output_root, winslash = "/", mustWork = FALSE),
-    data_root = normalizePath(data_root, winslash = "/", mustWork = FALSE),
+    output_root = mixedgp_absolute_path(output_root),
+    data_root = mixedgp_absolute_path(data_root),
     stages = switch(
       mode,
       dry_run = character(0), data = "data",
@@ -7838,7 +7838,7 @@ run_one_study1_replication <- function(rep_id, run_eiv = TRUE) {
   if (!file.exists(data_path)) {
     stop(
       "Missing frozen Study I dataset: ", data_path,
-      ". Run 12_generate_synthetic_datasets.R first."
+      ". Prepare frozen inputs with the study script and --action=data first."
     )
   }
   frozen <- load_mixedgp_synthetic_dataset_strict(
@@ -8985,7 +8985,7 @@ run_one_study2_replication <- function(rep_id, scenario) {
   if (!file.exists(data_path)) {
     stop(
       "Missing frozen Study II dataset: ", data_path,
-      ". Run 12_generate_synthetic_datasets.R first."
+      ". Prepare frozen inputs with the study script and --action=data first."
     )
   }
   frozen <- load_mixedgp_synthetic_dataset_strict(
@@ -11286,7 +11286,7 @@ run_paper_study <- function(study=c("study1","study2"), args=list(), repo_root=g
   data<-get("data-root",Sys.getenv("EIVGP_DATA_ROOT",api$numerical_default_data(study)))
   if(!nzchar(root)||!nzchar(data)||grepl("Dropbox|Overleaf",root,ignore.case=TRUE))stop("Supply a non-synced local output root and data root")
   if(action!="plan" && grepl("Dropbox|Overleaf",data,ignore.case=TRUE))stop("Copy frozen inputs to a local data-root before running")
-  root <- path.expand(root); data <- path.expand(data)
+  root <- mixedgp_absolute_path(root); data <- mixedgp_absolute_path(data)
   checkpoint_seconds <- as.numeric(get("checkpoint-seconds","10800"))
   checkpoint_iterations <- as.numeric(get("checkpoint-iterations","Inf"))
   if(length(checkpoint_seconds)!=1L || is.na(checkpoint_seconds) || checkpoint_seconds<=0 ||
@@ -12746,4 +12746,12 @@ mixedgp_workflow_cli <- function(args,group=NULL) {
   if(identical(group,"report") && action=="run")stop("Report scripts accept action=plan or report; use a method script to run fits")
   args<-args[-ix]
   c(args,switch(action,plan="--plan=true",report="--reuse-only=true",run=character()))
+}
+
+# Resolve against the launch directory even when the destination does not exist.
+mixedgp_absolute_path <- function(path) {
+  path<-path.expand(path)
+  if(!startsWith(path,"/") && !startsWith(path,"\\") && !grepl("^[A-Za-z]:",path))
+    path<-file.path(getwd(),path)
+  normalizePath(path,winslash="/",mustWork=FALSE)
 }

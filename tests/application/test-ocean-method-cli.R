@@ -26,7 +26,8 @@ test_that('method entrypoints isolate fitting groups and saved-only never select
     expect_identical(e$ocean_method_params(c('--cores=16','--reuse-only=true'),group)$action,'report')
     expect_identical(e$ocean_method_params('--plan=true',group)$action,'plan')
   }
-  expect_error(e$ocean_method_params('--action=fit','report'),'Choose the method')
+  expect_error(e$ocean_method_params('--action=fit','report'),'action must be plan, run or report')
+  expect_error(e$ocean_method_params('--action=run','report'),'Report scripts accept action=plan or report')
   expect_error(e$ocean_method_params('--modules=eiv','competitors'),'Choose the method')
   expect_error(e$ocean_method_params('--reuse-only=maybe','eivGP'),'true or false')
 })

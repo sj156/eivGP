@@ -8592,7 +8592,8 @@ mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
       .resume$burn != burn || start >= n_iter)) stop("Incompatible 0.3.1 continuation state.")
   seeds <- as.integer((as.double(seed) + 10000 * seq_len(n_chains)) %% .Machine$integer.max)
   backend <- mixedgp_parallel_backend(if (parallel_chains) n_cores else 1L)
-  workers <- min(n_chains, backend$cores)
+  # Effective per-fit ceiling; competing stages may temporarily use pool slots.
+  workers <- min(n_chains, backend$cores, mixedgp_budget_cores(backend$cores))
   use_fork <- parallel_chains && backend$backend == "fork" && workers > 1L
   if (!use_fork) workers <- 1L
   disk <- mixedgp_sampler_disk(list(X=X, y=y, C=C, U_obs=U_obs, m_vec=m_vec,
@@ -10145,7 +10146,8 @@ mixedgp_resolve_latent_scale <- function(object,
 #'   fitting. The default is `TRUE` when calibration is available.
 #' @param store_scores Whether to retain ordinal-probit score draws.
 #' @param parallel Whether to run independent MCMC chains in parallel.
-#' @param n_cores Number of forked workers; `NULL` uses package settings.
+#' @param n_cores Maximum chain workers; `NULL` uses package settings.
+#'   Capped by the chain count, host capacity and active shared CPU budget.
 #' @param priors Named list of 0.3.1 prior settings. These include
 #'   `variance_shape`, `variance_rate`, `signal_shape`, `log_theta_x_mean`,
 #'   `log_theta_x_sd`, `u_dictionary`, `u_weights`, `category_alpha`, and

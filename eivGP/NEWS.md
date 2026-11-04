@@ -1,5 +1,17 @@
 # Unreleased
 
+- Use the public EzGP covariance export. Register audited run-context and
+  report data-mask names for static analysis, preserving numerical behavior
+  and optional plotting dependencies.
+
+- Qualify ADNI/OAI imputation plot calls so fresh sessions can evaluate
+  completed fits without attaching ggplot2. Normalize missing absolute paths
+  below the filesystem root without introducing duplicate separators.
+
+- Report the effective chain-worker ceiling and backend after applying the
+  shared CPU budget, including continuation. Preserve chain counts, resident
+  fit grouping and the full pool for subsequent analysis.
+
 - Preserve empty factor prototypes, numeric column types and zero-column row
   counts in local row binding. Exercise checkpoint equality separately from
   location-specific storage metadata and scale scheduling tests to host capacity.

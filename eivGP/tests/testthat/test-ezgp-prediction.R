@@ -6,7 +6,7 @@ test_that('EzGP corrected covariance handles exact, rounded and distant inputs',
  Xt<-rbind(X[1,],X[1,]+c(1e-7,0,0,0),c(.3,.4,1,2))
  ans<-mixedgp_ezgp_predict(Xt,fit)
  # Independent direct conditioning using the joint latent covariance.
- Kall<-EzGP:::cov_m(rbind(X,Xt),p,q,m,7L,par,0)
+ Kall<-EzGP::cov_m(rbind(X,Xt),p,q,m,7L,par,0)
  K<-Kall[1:4,1:4]+diag(tau,4);cross<-Kall[5:7,1:4];ki<-solve(K);mu<-sum(ki%*%fit$data$Y)/sum(ki)
  expected_mean<-as.numeric(mu+cross%*%ki%*%(fit$data$Y-mu));expected_var<-diag(Kall[5:7,5:7]-cross%*%ki%*%t(cross))
  expect_equal(ans$Y_hat,expected_mean,tolerance=1e-12);expect_equal(ans$MSE,expected_var,tolerance=1e-12)

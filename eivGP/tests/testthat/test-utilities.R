@@ -133,3 +133,14 @@ testthat::test_that("duplicate-point GP predictions remain positive semidefinite
   testthat::expect_equal(draws[, 1L], draws[, 2L], tolerance = 1e-7)
 })
 
+
+testthat::test_that("missing absolute paths below the filesystem root stay canonical", {
+  testthat::skip_if(.Platform$OS.type == "windows", "Unix filesystem root")
+  leaf <- basename(tempfile("eivgp-missing-root-"))
+  path <- paste0("/", leaf, "/results")
+  testthat::expect_false(file.exists(paste0("/", leaf)))
+  testthat::expect_identical(mixedgp_absolute_path(path), path)
+  testthat::expect_identical(mixedgp_absolute_path(paste0("/./", leaf, "/results")), path)
+  testthat::expect_identical(mixedgp_absolute_path(paste0("/", leaf, "/../", leaf, "/results")), path)
+  testthat::expect_identical(mixedgp_absolute_path("/"), "/")
+})

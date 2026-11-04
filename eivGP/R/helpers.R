@@ -12041,7 +12041,7 @@ mixedgp_ezgp_predict <- function(X_new, model) {
     if (length(parv) == 0L || any(!is.finite(parv)) || !is.finite(tau) || tau < 0) {
         stop("EzGP fit has invalid parameters or nugget.")
     }
-    K <- EzGP:::cov_m(X_train, p, q, m, n, parv, tau)
+    K <- EzGP::cov_m(X_train, p, q, m, n, parv, tau)
     Tm <- try(chol(K), silent = TRUE)
     if (inherits(Tm, "try-error"))
         stop("EzGP training covariance is not Cholesky-factorable.")
@@ -12929,7 +12929,7 @@ mixedgp_absolute_path <- function(path,base=getwd()) {
   resolved<-normalizePath(ancestor,winslash="/",mustWork=TRUE)
   for(part in suffix) {
     if(part=="..")resolved<-dirname(resolved)
-    else if(part!=".")resolved<-file.path(resolved,part)
+    else if(part!=".")resolved<-paste0(sub("/+$","",resolved),"/",part)
   }
   resolved
 }

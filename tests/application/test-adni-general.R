@@ -67,7 +67,7 @@ testthat::test_that('arbitrary C dimensions prepare portable fivefold inputs wit
   testthat::expect_identical(adni_balanced_folds(d,paste0('C',seq_len(q)),c('X1','X2'),9L),
                            adni_balanced_folds(changed,paste0('C',seq_len(q)),c('X1','X2'),9L))
   testthat::expect_error(adni_prepare_folds(csv,json,out),'never overwrite')
-  s<-adni_screen_settings(list(profile='paper',chains=4L,burn=2000L,folds=1:5,cells=c('O0','O20','O50')),20000L,4L)
+  s<-adni_screen_settings(list(profile='paper',chains=4L,burn=2000L,stages=20000L,folds=1:5,cells=c('O0','O20','O50')),20000L,4L)
   args<-api$adni_plan_fit_args(inputs$cells[['1/O20']],s)
   testthat::expect_length(args$ordinal_levels,q);testthat::expect_true(all(is.na(args$U_obs[inputs$cells[['1/O20']]$train$calibration==0,,drop=FALSE])))
  }

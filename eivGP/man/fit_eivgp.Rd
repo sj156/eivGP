@@ -68,7 +68,8 @@ fitting. The default is \code{TRUE} when calibration is available.}
 
 \item{parallel}{Whether to run independent MCMC chains in parallel.}
 
-\item{n_cores}{Number of forked workers; \code{NULL} uses package settings.}
+\item{n_cores}{Maximum chain workers; \code{NULL} uses package settings.
+Capped by the chain count, host capacity and active shared CPU budget.}
 
 \item{priors}{Named list of 0.3.1 prior settings. These include
 \code{variance_shape}, \code{variance_rate}, \code{signal_shape}, \code{log_theta_x_mean},

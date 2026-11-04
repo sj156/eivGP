@@ -76,7 +76,7 @@ test_that("initial CLI fitting selects a new folder without changing old checkpo
   env$ocean_resolve_path<-get("ocean_resolve_path")
   saveRDS(new,paste0(old,".latest-run.rds"))
   expect_identical(env$ocean_output_dir(repo,"ocean500","paper"),new)
-  expect_identical(env$ocean_output_dir(repo,"ocean500","paper",old),old)
+  expect_identical(env$ocean_output_dir(repo,"ocean500","paper",old),normalizePath(old,winslash="/"))
   empty<-file.path(root,"empty")
   expect_identical(env$ocean_choose_fit_output(empty,id),empty)
   expect_false(dir.exists(empty))

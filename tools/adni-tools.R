@@ -792,11 +792,11 @@ adni_analyze_cell <- function(task, inputs, out, s, stage) {
         atomic_csv(do.call(rbind, pp), adni_path(dir, "PROSPECTIVE_U_predictions.csv"))
         ui$role <- factor(ifelse(ui$calibration == 1, "Observed calibration", "Masked training U"), levels = c("Masked training U",
             "Observed calibration"))
-        plot <- ggplot(ui, aes(true_std, mean_std, colour = factor(C1))) + geom_abline(slope = 1, intercept = 0,
-            linetype = 2, colour = "grey50") + geom_linerange(data = ui[ui$calibration == 0, ], aes(ymin = lo_std,
-            ymax = hi_std), alpha = 0.15, linewidth = 0.3) + geom_point(aes(shape = role), size = 1.2, alpha = 0.65) +
-            scale_shape_manual(values = c(16, 1)) + facet_wrap(~coordinate) + theme_bw(base_size = 11) + theme(legend.position = "bottom") +
-            labs(x = "Reference U (training SD units; evaluation only)", y = "Posterior mean (training SD units)",
+        plot <- ggplot2::ggplot(ui, ggplot2::aes(true_std, mean_std, colour = factor(C1))) + ggplot2::geom_abline(slope = 1, intercept = 0,
+            linetype = 2, colour = "grey50") + ggplot2::geom_linerange(data = ui[ui$calibration == 0, ], ggplot2::aes(ymin = lo_std,
+            ymax = hi_std), alpha = 0.15, linewidth = 0.3) + ggplot2::geom_point(ggplot2::aes(shape = role), size = 1.2, alpha = 0.65) +
+            ggplot2::scale_shape_manual(values = c(16, 1)) + ggplot2::facet_wrap(~coordinate) + ggplot2::theme_bw(base_size = 11) + ggplot2::theme(legend.position = "bottom") +
+            ggplot2::labs(x = "Reference U (training SD units; evaluation only)", y = "Posterior mean (training SD units)",
                 colour = "MEMORY3", shape = NULL, title = paste(p$plan_id, "fold", task$fold, task$cell, stage),
                 subtitle = paste(fit$control$sampler, "; CORE pass:", dg$core_pass))
         adni_save_plot(adni_path(dir, "training_U_imputation_std.png"), plot, width = 10, height = 5.3, dpi = 140,

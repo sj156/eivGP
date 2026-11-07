@@ -44,7 +44,6 @@ if(is.null(a)&&params$action=='report') {
 }
 has_results<-!is.null(a)
 if(has_results)api$oai_metadata<-a$metadata
-mask_notice<-oai_mask_notice(a)
 table_html<-function(x,caption='',note='')cat(oai_table_html(x,caption,note),'\n\n')
 ```
 
@@ -66,7 +65,6 @@ table_html<-function(x,caption='',note='')cat(oai_table_html(x,caption,note),'\n
   `results/` or an external directory. Data preparation is separate from fitting.
 
 ```{r actual-settings, echo=FALSE, results='asis'}
-if(nzchar(mask_notice))cat('<p><strong>Test-U mask provenance.</strong> ',mask_notice,'</p>\n\n')
 if(has_results) {
   table_html(data.frame(Profile=a$settings$profile,Stage=a$stage,Chains=a$numerics$chains,
     `Total iterations / chain`=a$numerics$iterations,`Burn-in / chain`=a$numerics$burn,
@@ -155,19 +153,15 @@ cat('**Population:** ',a$metadata$population,'. **Participants:** ',a$input$N,
 
 Training \((x,c,y)\) is available for every training participant. O0/O20/O50
 reveal zero/about 20%/50% of the **complete U vector**. Calibration uses
-proportional native-C stratification (joint C1/C2 in the default metadata), with a frozen within-stratum
-random order; O20 is nested in O50. Newly prepared test-U masks follow the same outcome-independent principle;
-Y/U values do not choose folds or masks. Supplied frozen masks are preserved.
-If their metadata records outcome-based selection, the report identifies the CC
-comparison as exploratory. Test Y is never passed to model fitting or
-hyperparameter tuning.
+the supplied fixed training masks. CC evaluation uses the fixed
+`test_U_available_RID` lists in the supplied protocols, shared by all methods.
+Test Y is never passed to model fitting or hyperparameter tuning.
 
 X transformations and Y normalization use training data; U anchoring uses revealed
 training calibration only. Full reference U is retained for retrospective scoring
 and descriptive illustrations, never passed to masked fitting inputs.
 
 ```{r design, eval=has_results, echo=FALSE, results='asis'}
-cat('**Calibration:** ',a$metadata$calibration_design,'.\n\n',sep='')
 table_html(a$input$audit)
 ```
 

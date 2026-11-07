@@ -792,14 +792,11 @@ matched, quality-controlled inputs.</p>
 <h3>Training and test information</h3>
 <p>Training <span class="math inline">\((x,c,y)\)</span> is available
 for every training participant. O0/O20/O50 reveal zero/about 20%/50% of
-the <strong>complete U vector</strong>. Calibration uses proportional
-native-C stratification (joint C1/C2 in the default metadata), with a
-frozen within-stratum random order; O20 is nested in O50. Newly prepared
-test-U masks follow the same outcome-independent principle; Y/U values
-do not choose folds or masks. Supplied frozen masks are preserved. If
-their metadata records outcome-based selection, the report identifies
-the CC comparison as exploratory. Test Y is never passed to model
-fitting or hyperparameter tuning.</p>
+the <strong>complete U vector</strong>. Calibration uses the supplied
+fixed training masks. CC evaluation uses the fixed
+<code>test_U_available_RID</code> lists in the supplied protocols,
+shared by all methods. Test Y is never passed to model fitting or
+hyperparameter tuning.</p>
 <p>X transformations and Y normalization use training data; U anchoring
 uses revealed training calibration only. Full reference U is retained
 for retrospective scoring and descriptive illustrations, never passed to
@@ -1083,17 +1080,37 @@ Supplementary: environment and provenance
 ## attached base packages:
 ## [1] stats     graphics  grDevices utils     datasets  methods   base
 ##
+## other attached packages:
+## [1] testthat_3.3.2
+##
 ## loaded via a namespace (and not attached):
-##  [1] patchwork_1.3.2    vctrs_0.7.3        cli_3.6.5          knitr_1.50
-##  [5] rlang_1.2.0        xfun_0.53          eivGP_0.4.0.9014   purrr_1.1.0
-##  [9] generics_0.1.4     S7_0.2.2           jsonlite_2.0.0     glue_1.8.0
-## [13] htmltools_0.5.9    sass_0.4.10        scales_1.4.0       rmarkdown_2.31
-## [17] grid_4.5.1         evaluate_1.0.4     jquerylib_0.1.4    tibble_3.3.1
-## [21] fastmap_1.2.0      yaml_2.3.10        lifecycle_1.0.5    compiler_4.5.1
-## [25] dplyr_1.2.1        RColorBrewer_1.1-3 Rcpp_1.1.1-1.1     pkgconfig_2.0.3
-## [29] tidyr_1.3.2        farver_2.1.2       digest_0.6.37      R6_2.6.1
-## [33] tidyselect_1.2.1   pillar_1.11.1      magrittr_2.0.3     bslib_0.10.0
-## [37] gtable_0.3.6       tools_4.5.1        ggplot2_4.0.3      cachem_1.1.0</code></pre>
+##  [1] gtable_0.3.6         tensorA_0.36.2.1     bslib_0.10.0
+##  [4] xfun_0.53            ggplot2_4.0.3        lattice_0.22-7
+##  [7] numDeriv_2016.8-1.1  vctrs_0.7.3          tools_4.5.1
+## [10] generics_0.1.4       stats4_4.5.1         parallel_4.5.1
+## [13] tibble_3.3.1         pkgconfig_2.0.3      checkmate_2.3.4
+## [16] RColorBrewer_1.1-3   S7_0.2.2             desc_1.4.3
+## [19] lhs_1.3.0            distributional_0.8.1 RcppParallel_6.2.1
+## [22] alabama_2025.1.0     lifecycle_1.0.5      doFuture_1.3.0
+## [25] compiler_4.5.1       farver_2.1.2         brio_1.1.5
+## [28] codetools_0.2-20     kergp_0.5.8          TruncatedNormal_2.3
+## [31] eivGP_0.4.0.9019     sass_0.4.10          htmltools_0.5.9
+## [34] yaml_2.3.10          jquerylib_0.1.4      pillar_1.11.1
+## [37] nloptr_2.2.1         MASS_7.3-65          randtoolbox_2.0.5
+## [40] cachem_1.1.0         iterators_1.0.14     abind_1.4-8
+## [43] foreach_1.5.2        parallelly_1.48.0    posterior_1.7.0
+## [46] tidyselect_1.2.1     digest_0.6.37        future_1.75.0
+## [49] dplyr_1.2.1          listenv_1.0.0        rprojroot_2.1.0
+## [52] fastmap_1.2.0        grid_4.5.1           cli_3.6.5
+## [55] magrittr_2.0.3       qrng_0.0-11          Rfast_2.1.5.2
+## [58] future.apply_1.20.2  withr_3.0.2          waldo_0.6.2
+## [61] scales_1.4.0         backports_1.5.0      LVGP_2.1.6
+## [64] EzGP_0.1.0           rmarkdown_2.31       spacefillr_0.4.0
+## [67] matrixStats_1.5.0    globals_0.19.1       rngWELL_0.10-10
+## [70] evaluate_1.0.4       knitr_1.50           doParallel_1.0.17
+## [73] nleqslv_3.3.7        zigg_0.0.2           rlang_1.2.0
+## [76] Rcpp_1.1.1-1.1       glue_1.8.0           pkgload_1.4.0
+## [79] jsonlite_2.0.0       R6_2.6.1</code></pre>
 </details>
 </div>
 

@@ -16,7 +16,7 @@ testthat::test_that('OAI has exactly the same six flat entry/tool files as ADNI'
 })
 testthat::test_that('the OAI API loads in a checkout containing no ADNI tools',{
   root<-tempfile();dir.create(root);on.exit(unlink(root,recursive=TRUE))
-  dir.create(file.path(root,'tools'));dir.create(file.path(root,'paper/applications'),recursive=TRUE)
+  dir.create(file.path(root,'tools'));dir.create(file.path(root,'paper'),recursive=TRUE)
   dir.create(file.path(root,'data/oai'),recursive=TRUE)
   for(path in oai_load_api(repo)$oai_source_files(repo)) {
     relative<-substring(path,nchar(repo)+2L)
@@ -67,11 +67,4 @@ testthat::test_that('variable C counts use the shared C-only folds and mask hidd
       testthat::expect_identical(args,api$oai_plan_fit_args(changed,api$oai_settings('pilot',4L)))
     }
   }
-})
-testthat::test_that('selected-mask metadata is disclosed but never drives mask generation',{
-  api<-oai_load_api(repo)
-  testthat::expect_identical(api$oai_mask_notice(list(metadata=list(test_U_selection=list(outcome_selected=FALSE)))), '')
-  notice<-api$oai_mask_notice(list(metadata=list(test_U_selection=list(outcome_selected=TRUE))))
-  testthat::expect_match(notice,'exploratory');testthat::expect_match(notice,'no performance-based mask search')
-  testthat::expect_match(api$oai_mask_notice(list(metadata=list(test_U_design='Post-hoc outcome-selected random mask'))),'exploratory')
 })

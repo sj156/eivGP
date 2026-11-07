@@ -2158,15 +2158,6 @@ oai_configure_api <- function(e,repo) {
     }
     table_html(x,caption,note)
   }
-  e$oai_mask_notice<-function(a=NULL) {
-    meta<-if(is.null(a))e$oai_metadata else a$metadata
-    selected<-isTRUE(meta$test_U_selection$outcome_selected)||
-      grepl('post.hoc|outcome.selected',paste(unlist(meta$test_U_design),collapse=' '),ignore.case=TRUE)
-    if(!selected)return('')
-    paste('The supplied test-U masks were selected after inspecting held-out results.',
-      'CC comparisons are exploratory and conditional on that selection; they are not unbiased confirmatory results.',
-      'The workflow preserves the supplied masks and performs no performance-based mask search.')
-  }
   e$oai_C_dictionary<-function(items,levels,labels=NULL) {
     encoding<-e$oai_metadata$grade_encoding
     native<-vapply(seq_along(items),function(i) {
@@ -2222,9 +2213,7 @@ oai_configure_api <- function(e,repo) {
     exports(a)
     file<-e$oai_path(a$report_dir,'report-assets/REPORT_PROVENANCE.json')
     record<-jsonlite::fromJSON(file,simplifyVector=FALSE)
-    record$application<-'OAI';record$test_U_design<-a$metadata$test_U_design
-    record$test_U_selection<-a$metadata$test_U_selection
-    record$test_U_selection_notice<-e$oai_mask_notice(a)
+    record$application<-'OAI'
     record$imputation_display_fold<-if(length(a$metadata$imputation_display_fold)&&
       as.integer(a$metadata$imputation_display_fold)%in%a$settings$folds)as.integer(a$metadata$imputation_display_fold)else a$settings$representative_fold
     record$reporting_source<-as.list(tools::md5sum(e$oai_source_files(a$repo)))

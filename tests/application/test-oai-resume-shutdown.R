@@ -50,6 +50,25 @@ testthat::test_that('cleanup refuses a changed session identity', {
   testthat::expect_identical(e$resume_oai_cleanup_session(paste0(path, '-absent')), integer())
 })
 
+testthat::test_that('isolated worker recognizes its own reparented resume launcher', {
+  testthat::skip_if_not(dir.exists('/proc'))
+  testthat::skip_if_not(nzchar(Sys.which('setsid')))
+  root <- tempfile(); dir.create(root)
+  on.exit(unlink(root, recursive = TRUE))
+  worker <- file.path(root, 'worker.R')
+  launcher <- file.path(root, 'resume-oai-eivGP.r')
+  helper <- file.path(repo, 'tools/resume-oai-tools.R')
+  writeLines(c('a <- commandArgs(TRUE); source(a[1])',
+    'resume_oai_record_session(Sys.getenv("EIVGP_OAI_SESSION_FILE"))',
+    'resume_oai_recover_locks(a[2], "eivGP")'), worker)
+  writeLines(c('a <- commandArgs(TRUE); source(a[1])',
+    'status <- resume_oai_launch_worker(a[2], c(a[1], a[3]))',
+    'quit(save = "no", status = status)'), launcher)
+  status <- suppressWarnings(system2(file.path(R.home('bin'), 'Rscript'),
+    shQuote(c('--vanilla', launcher, helper, worker, root))))
+  testthat::expect_identical(status, 0L)
+})
+
 testthat::test_that('interrupting the launcher also stops nested workers', {
   testthat::skip_if_not(dir.exists('/proc'))
   testthat::skip_if_not(nzchar(Sys.which('setsid')))

@@ -13,6 +13,8 @@ resume_oai_record_session <- function(path) {
   owner <- resume_oai_process(Sys.getpid())
   if (is.null(owner) || owner$group != owner$pid || owner$session != owner$pid)
     stop('Resume worker must start in its own process session.', call. = FALSE)
+  launcher_path <- paste0(path, '.launcher')
+  if (file.exists(launcher_path)) owner$launcher <- readRDS(launcher_path)
   tmp <- tempfile(tmpdir = dirname(path))
   on.exit(unlink(tmp), add = TRUE)
   saveRDS(owner, tmp)
@@ -58,12 +60,13 @@ resume_oai_launch_worker <- function(script, args) {
   if (!nzchar(setsid)) stop('Linux setsid is required for reliable worker cleanup.', call. = FALSE)
   path <- tempfile('oai-resume-session-', fileext = '.rds')
   status_path <- paste0(path, '.status'); pending_status <- paste0(status_path, '.tmp')
-  runner <- paste0(path, '.sh')
+  runner <- paste0(path, '.sh'); launcher_path <- paste0(path, '.launcher')
+  saveRDS(resume_oai_process(Sys.getpid()), launcher_path)
   previous <- Sys.getenv('EIVGP_OAI_SESSION_FILE', unset = NA_character_)
   Sys.setenv(EIVGP_OAI_SESSION_FILE = path)
   on.exit({
     resume_oai_cleanup_session(path)
-    unlink(c(path, status_path, pending_status, runner))
+    unlink(c(path, status_path, pending_status, runner, launcher_path))
     if (is.na(previous)) Sys.unsetenv('EIVGP_OAI_SESSION_FILE') else
       Sys.setenv(EIVGP_OAI_SESSION_FILE = previous)
   }, add = TRUE)
@@ -134,6 +137,17 @@ resume_oai_recover_locks <- function(out, group) {
     parent <- as.integer(sub('^PPid:\\s*', '', grep('^PPid:', status, value = TRUE)))
     if (length(parent) != 1L || is.na(parent) || parent <= 0L || parent %in% ancestors) break
     ancestors <- c(ancestors, parent)
+  }
+  # Asynchronous system2() reparents its shell, so the verified launcher need
+  # not be an ancestor of the isolated worker in Linux's current process tree.
+  session_file <- Sys.getenv('EIVGP_OAI_SESSION_FILE')
+  if (nzchar(session_file) && file.exists(session_file)) {
+    launcher <- readRDS(session_file)$launcher
+    if (!is.null(launcher)) {
+      current <- resume_oai_process(launcher$pid)
+      if (!is.null(current) && identical(current$start, launcher$start))
+        ancestors <- c(ancestors, launcher$pid)
+    }
   }
   processes <- system2('ps', c('-eo', 'pid=,comm=,args='), stdout = TRUE)
   pattern <- if (any(dir.exists(legacy))) 'oai' else

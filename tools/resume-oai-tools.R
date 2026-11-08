@@ -101,7 +101,14 @@ resume_oai_recover_locks <- function(out, group) {
   legacy <- file.path(out, c('.application.lock', '.adni-application.lock', '.oai-application.lock'))
   modern <- file.path(out, '_meta/locks', paste0(group, '.lock'))
   locks <- c(legacy[dir.exists(legacy)], modern[dir.exists(modern)])
-  live <- function(pid) is.finite(pid) && pid > 0 && dir.exists(file.path('/proc', as.character(pid)))
+  live <- function(pid) {
+    if (!is.finite(pid) || pid <= 0) return(FALSE)
+    process <- resume_oai_process(pid)
+    # A killed worker can remain in /proc until its parent reaps it. It can
+    # no longer execute or write checkpoints. Unreadable entries stay guarded.
+    if (is.null(process)) return(dir.exists(file.path('/proc', as.character(pid))))
+    !process$state %in% c('Z', 'X', 'x')
+  }
   recorded <- integer()
   owners <- list()
   for (lock in locks) {

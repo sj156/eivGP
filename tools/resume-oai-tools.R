@@ -95,6 +95,39 @@ resume_oai_launch_worker <- function(script, args) {
   status
 }
 
+resume_oai_process_output <- function(pid) {
+  # Resolve only our known resume entrypoints; unknown executors remain guarded.
+  bytes <- tryCatch(readBin(file.path('/proc', as.character(pid), 'cmdline'),
+                            'raw', n = 1048576L), error = function(e) raw())
+  ends <- which(bytes == as.raw(0))
+  if (!length(ends)) return(NULL)
+  starts <- c(1L, head(ends, -1L) + 1L)
+  args <- vapply(seq_along(ends), function(i) if (starts[i] < ends[i])
+    rawToChar(bytes[seq.int(starts[i], ends[i] - 1L)]) else '', character(1))
+  script <- sub('^--file=', '', grep('^--file=', args, value = TRUE))
+  if (length(script) != 1L || !basename(script) %in%
+      c('resume-oai-eivGP.r', 'resume-oai-competitors.r')) return(NULL)
+  cwd <- Sys.readlink(file.path('/proc', as.character(pid), 'cwd'))
+  absolute <- function(path) {
+    path <- path.expand(path)
+    if (!startsWith(path, '/')) {
+      if (is.na(cwd) || !nzchar(cwd)) return(NULL)
+      path <- file.path(cwd, path)
+    }
+    if (!dir.exists(path)) return(NULL)
+    normalizePath(path)
+  }
+  output <- sub('^--output=', '', grep('^--output=', args, value = TRUE))
+  if (length(output) > 1L) return(NULL)
+  if (length(output)) return(absolute(output))
+  if (!startsWith(script, '/')) {
+    if (is.na(cwd) || !nzchar(cwd)) return(NULL)
+    script <- file.path(cwd, script)
+  }
+  absolute(file.path(dirname(script), '..', 'results',
+    if (basename(script) == 'resume-oai-eivGP.r') 'oai' else 'oai_competitors'))
+}
+
 resume_oai_recover_locks <- function(out, group) {
   fail <- function(...) stop(..., call. = FALSE)
   if (!dir.exists('/proc')) fail('Stale-lock verification requires Linux /proc.')
@@ -161,7 +194,14 @@ resume_oai_recover_locks <- function(out, group) {
     paste0('(resume-oai-', group, '[.]r|oai-', group, '[.]R|/oai[.]R)')
   other <- processes[grepl('^ *[0-9]+ +R(script)? +', processes) & grepl(pattern, processes)]
   pids <- as.integer(sub('^ *([0-9]+).*$', '\\1', other))
-  other <- other[!pids %in% ancestors]
+  # A legacy lock excludes both method groups only within its own output root.
+  # A known resume process writing elsewhere is independent; unknown command
+  # lines still block recovery, as do all recorded live owners/workers above.
+  independent <- vapply(pids, function(pid) {
+    root <- resume_oai_process_output(pid)
+    !is.null(root) && !identical(root, normalizePath(out))
+  }, logical(1))
+  other <- other[!pids %in% ancestors & !independent]
   if (length(other)) fail('Other OAI R processes are present:\n', paste(other, collapse = '\n'))
   # Re-read every owner before moving anything, so a newly acquired lock cannot
   # be mistaken for the stale lock inspected above. Preserve the owner record.

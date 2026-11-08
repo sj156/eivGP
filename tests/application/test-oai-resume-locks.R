@@ -115,3 +115,65 @@ testthat::test_that('unreaped zombie workers do not block checkpoint recovery', 
   testthat::expect_false(dir.exists(lock))
   testthat::expect_identical(jsonlite::fromJSON(file.path(archived, 'owner.json')), owner)
 })
+
+testthat::test_that('legacy locks allow independent output roots but guard shared or unknown writers', {
+  testthat::skip_if_not(dir.exists('/proc'))
+  root <- tempfile(); dir.create(root)
+  jobs <- list()
+  on.exit({
+    for (job in jobs) {
+      current <- e$resume_oai_process(job$pid)
+      if (!is.null(current) && identical(current$start, job$start)) tools::pskill(job$pid)
+    }
+    unlink(root, recursive = TRUE)
+  })
+  scripts <- file.path(root, 'checkout/tools'); dir.create(scripts, recursive = TRUE)
+  eiv_out <- file.path(root, 'checkout/results/oai'); dir.create(eiv_out, recursive = TRUE)
+  comp_out <- file.path(root, 'checkout/results/oai_competitors'); dir.create(comp_out)
+  spawn <- function(name, extra = character()) {
+    script <- file.path(scripts, name)
+    writeLines(c('a <- commandArgs(TRUE)', 'writeLines(as.character(Sys.getpid()), a[1])',
+                 'Sys.sleep(30)'), script)
+    marker <- tempfile(tmpdir = root)
+    system2(file.path(R.home('bin'), 'Rscript'), shQuote(c('--vanilla', script, marker, extra)), wait = FALSE)
+    pid <- NA_integer_
+    for (i in 1:200) {
+      if (file.exists(marker)) {
+        value <- suppressWarnings(as.integer(readLines(marker, warn = FALSE)))
+        if (length(value) == 1L && !is.na(value)) { pid <- value; break }
+      }
+      Sys.sleep(.01)
+    }
+    stopifnot(!is.na(pid))
+    jobs[[length(jobs) + 1L]] <<- e$resume_oai_process(pid)
+    pid
+  }
+  lock <- file.path(comp_out, '.application.lock')
+  write_lock <- function() {
+    dir.create(lock)
+    writeLines('999999999', file.path(lock, 'pid'))
+  }
+  independent <- spawn('resume-oai-eivGP.r')
+  testthat::expect_identical(e$resume_oai_process_output(independent), normalizePath(eiv_out))
+  write_lock()
+  archived <- e$resume_oai_recover_locks(comp_out, 'competitors')
+  testthat::expect_length(archived, 1L)
+  testthat::expect_false(dir.exists(lock))
+  testthat::expect_false(is.null(e$resume_oai_process(independent)))
+  # An explicit output overrides the entrypoint's default, even for eivGP.
+  shared <- spawn('resume-oai-eivGP.r', paste0('--output=', comp_out))
+  testthat::expect_identical(e$resume_oai_process_output(shared), normalizePath(comp_out))
+  write_lock()
+  testthat::expect_error(e$resume_oai_recover_locks(comp_out, 'competitors'), 'Other OAI R processes')
+  testthat::expect_true(dir.exists(lock))
+  tools::pskill(shared)
+  for (i in 1:100) {
+    info <- e$resume_oai_process(shared)
+    if (is.null(info) || info$state %in% c('Z', 'X')) break
+    Sys.sleep(.01)
+  }
+  unknown <- spawn('oai.R')
+  testthat::expect_null(e$resume_oai_process_output(unknown))
+  testthat::expect_error(e$resume_oai_recover_locks(comp_out, 'competitors'), 'Other OAI R processes')
+  testthat::expect_true(dir.exists(lock))
+})

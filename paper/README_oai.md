@@ -85,6 +85,97 @@ continuation require matching package modules, numerical settings and input
 hashes. A lock records its owner's PID and host. After an interruption, confirm
 that the owner and its workers have stopped before clearing a residual lock.
 
+### Recover the October 2026 checkpoints
+
+The interrupted `results/oai` run used eivGP 0.4.0.9014. Its recovery script
+continues with the current, more efficient implementation of the same algorithm.
+It checks that the installed package matches this checkout and that statistical
+settings and input hashes match the original run. The frozen manifest retains
+its 50,000-iteration target, 5,000 burn-in and 1,000-iteration checkpoint spacing.
+The original fitting identity and receipts remain intact; the old and current
+code identities are recorded under `_meta/implementation_updates/`.
+
+As of eivGP 0.4.0.9020, the EIV resume command uses disk-backed continuation.
+It imports legacy fits in isolated worker processes, preserving the
+original fit in `fit.rds.draws/legacy-fit.rds`. This one-time format conversion
+generates no MCMC draws. Independent fits are imported concurrently, one core
+per fit, bounded by `--cores` and the number of remaining legacy fits. After
+all conversions finish, MCMC starts with four cores per fit and at most
+`floor(cores / 4)` simultaneous fits (12 with `--cores=48`). Conversion and
+sampling never overlap.
+An available-RAM check may reduce concurrency: at least 8 GiB estimated allowance per worker (increased
+for larger compressed fits) and 16 GiB system headroom. These allowances are
+heuristics, not hard memory limits. Import progress and worker PIDs are recorded
+in `logs/eivGP_migration_*/fit_status.csv`; all import workers exit before
+sampling begins. Sampling retains the current
+chain states, RNG states and frozen tuning, and writes new draw blocks to the
+adjacent `fit.rds.draws/` directory. The frozen checkpoint spacing bounds the
+in-memory buffer (1,000 draws per chain for this run); all earlier draws and
+HMC diagnostic traces stay on disk. `fit.rds` is a small index, and
+`eivGP::read_fit()` reconstructs full history when explicitly requested.
+
+Full-history analysis is a separate phase, limited to one resident fit. It
+omits auxiliary S arrays from diagnostic reads while using complete parameter
+histories. Complete scientific target series and diagnostic tables are saved
+separately in each task's `scientific-diagnostics.rds`. Reporting may explicitly
+read a full fit; it does not start MCMC.
+This bounds sampling memory without changing the transition algorithm, priors,
+warmup exclusion, update schedule, seeds, draw retention or target iterations.
+The existing `fit.rds` and its `.draws` directory must remain together.
+
+The revised package was installed separately in `results/oai-resume-library/`
+on the development machine, leaving the library of the active R job intact.
+Resume entrypoints prefer that library when present unless `EIVGP_R_LIBRARY`
+is explicitly set. On another checkout, install the revised package normally
+with `tools/build_package.R` and `tools/setup_numerical.R --install-local`.
+An already running R process adopts these changes only after it is restarted
+from its last saved checkpoint.
+
+```sh
+Rscript tools/resume-oai-eivGP.r --action=plan --profile=paper --cores=12 --data-root=data/oai --output=results/oai
+Rscript tools/resume-oai-eivGP.r --action=run --profile=paper --cores=12 --data-root=data/oai --output=results/oai
+Rscript tools/resume-oai-competitors.r --action=plan --profile=paper --cores=12 --data-root=data/oai --output=results/oai_competitors
+Rscript tools/resume-oai-competitors.r --action=run --profile=paper --cores=12 --data-root=data/oai --output=results/oai_competitors
+```
+
+As with the from-scratch entrypoint, `--cores=N` sets the shared CPU budget,
+capped at available CPU capacity. Each fit retains four chains; 4, 8 and 12
+cores permit one, two and three resident fits respectively. The default is
+four cores. Each competitor optimizer instead uses one core, with up to N
+resident jobs for `--cores=N`. Competitors default to `results/oai_competitors`,
+while EIV-GP defaults to `results/oai`. These commands use the same action,
+profile, resource and path syntax as the from-scratch scripts; profile and
+supplied inputs must match the saved run. `--plan=true` remains an alias for
+`--action=plan`.
+
+Existing EIV-GP fits continue from their published
+checkpoints; missing fits start normally. Competitor tasks reuse verified
+receipts or complete saved fit/prediction/score files, including OI fits from
+the older grouped executor. Missing optimizer fits start normally; optimizer
+iterations without a saved fit cannot be resumed. Saved optimizer flags remain
+visible. Run mode checks for active OAI
+processes before archiving a stale workflow lock, then fits and evaluates the
+EIV-GP tasks using the current executor. Checkpoint validation preserves the
+stored adaptation, random-number states and retained draws. Plan mode checks
+compatibility without sampling, writing update records or changing locks.
+Both legacy PID-file locks and current `_meta/locks/GROUP.lock/owner.json`
+locks are recoverable. Current lock recovery requires the recorded host to be
+this machine, the owner and workers to have stopped, and the owner token to
+remain unchanged during verification. Archived owner records remain under
+`_meta/stale-locks/`.
+Run it from a persistent terminal session, or use `nohup`:
+
+```sh
+nohup Rscript tools/resume-oai-eivGP.r --action=run --cores=12 > results/oai/resume.log 2>&1 < /dev/null &
+nohup Rscript tools/resume-oai-competitors.r --action=run --cores=12 > results/oai_competitors/resume.log 2>&1 < /dev/null &
+```
+
+The main log identifies the new `logs/eivGP_*` directory. `PROGRESS_eivGP.txt`,
+the task status CSVs and each task's `mcmc_progress.csv` record progress. A
+completed sampling budget still requires scientific convergence review.
+Both commands render their group's saved-results HTML after finishing.
+Use `--action=report` to rebuild that HTML without fitting or continuation.
+
 ## 3. Pilot and quick checks
 
 `--profile=pilot` uses the same fivefold workflow with a single 1,500-iteration

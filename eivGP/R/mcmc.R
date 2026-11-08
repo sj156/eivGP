@@ -8955,6 +8955,12 @@ mixedgp_v030_fit_object <- function(result, data, engine, kernel, matern_nu,
     dims <- dim(chains[[i]]$samples_U)
     chains[[i]]$samples_u <- matrix(chains[[i]]$samples_U, dims[1L], dims[2L])
   }
+  # Disk continuation publishes these new draws and terminal states directly.
+  # It never attaches the old retained history or builds pooled history views.
+  if (isTRUE(resume$state_only)) {
+    result$chains <- chains
+    return(result)
+  }
   chains <- mixedgp_v030_append_chains(chains, resume)
   fields <- c(if (engine == "univariate") "u" else c("U", "S", "A"),
               "tau", "logtheta", "sigma2", "V", "r", "J", "pi")
@@ -11335,6 +11341,8 @@ mixedgp_study2_target_series <- function(fit, X, C, U = NULL,
 #' @export
 continue_eivgp <- function(object, n_iter, parallel = NULL, n_cores = NULL,
                            verbose = FALSE) {
+  if (inherits(object, "eivgp_disk_fit"))
+    stop("Use continue_eivgp_disk() with the checkpoint path, or read_fit() for an in-memory fit.")
   if (!inherits(object, "eivgp_fit")) stop("object must be an eivgp_fit.")
   caller_rng <- mixedgp_rng_state()
   on.exit(mixedgp_restore_rng_state(caller_rng), add = TRUE)

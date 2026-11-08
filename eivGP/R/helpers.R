@@ -2398,9 +2398,16 @@ mixedgp_unpack_artifact <- function(x) {
   x
 }
 
-mixedgp_read_artifact <- function(path) mixedgp_unpack_artifact(readRDS(path))
+mixedgp_read_artifact <- function(path) {
+  if (file.exists(file.path(paste0(path, '.draws'), 'index.rds')))
+    return(mixedgp_disk_materialize(path))
+  mixedgp_unpack_artifact(readRDS(path))
+}
 
 mixedgp_save_artifact <- function(object, path) {
+  if (inherits(object, 'eivgp_disk_fit') ||
+      file.exists(file.path(paste0(path, '.draws'), 'index.rds')))
+    stop('Disk histories are committed by continue_eivgp_disk(); save a materialized fit to a new path.')
   dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
   tmp <- tempfile(".fit-storage-", tmpdir = dirname(path))
   on.exit(if (file.exists(tmp)) unlink(tmp), add = TRUE)
@@ -10294,7 +10301,11 @@ read_study_results <- function(path, competitor_dir = NULL) {
 }
 
 
-read_fit <- function(path) mixedgp_read_artifact(path)
+read_fit <- function(path, draw_ids = NULL, fields = NULL) {
+  if (!is.null(draw_ids) || !is.null(fields))
+    return(mixedgp_disk_materialize(path, draw_ids = draw_ids, fields = fields))
+  mixedgp_read_artifact(path)
+}
 save_fit <- function(object,path) mixedgp_save_artifact(object,path)
 
 

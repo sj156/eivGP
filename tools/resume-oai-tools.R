@@ -1,0 +1,435 @@
+# Shared command-line recovery for the frozen OAI method groups.
+resume_oai_recover_locks <- function(out, group) {
+  fail <- function(...) stop(..., call. = FALSE)
+  if (!dir.exists('/proc')) fail('Stale-lock verification requires Linux /proc.')
+  legacy <- file.path(out, c('.application.lock', '.adni-application.lock', '.oai-application.lock'))
+  modern <- file.path(out, '_meta/locks', paste0(group, '.lock'))
+  locks <- c(legacy[dir.exists(legacy)], modern[dir.exists(modern)])
+  live <- function(pid) is.finite(pid) && pid > 0 && dir.exists(file.path('/proc', as.character(pid)))
+  recorded <- integer()
+  owners <- list()
+  for (lock in locks) {
+    path <- file.path(lock, if (identical(lock, modern)) 'owner.json' else 'pid')
+    snapshot <- readLines(path, warn = FALSE)
+    if (identical(lock, modern)) {
+      owner <- tryCatch(jsonlite::fromJSON(paste(snapshot, collapse = '\n')), error = function(e) NULL)
+      if (is.null(owner) || length(owner$host) != 1L || is.na(owner$host) ||
+          !identical(owner$host, unname(Sys.info()[['nodename']])))
+        fail('Cannot verify executor lock host: ', lock)
+      if (length(owner$token) != 1L || is.na(owner$token) || !nzchar(owner$token))
+        fail('Cannot verify executor lock token: ', lock)
+      pid <- suppressWarnings(as.numeric(owner$pid))
+    } else pid <- suppressWarnings(as.numeric(snapshot))
+    if (length(pid) != 1L || !is.finite(pid) || pid < 1 || pid != floor(pid) || pid > .Machine$integer.max)
+      fail('Cannot verify lock owner PID: ', lock)
+    recorded <- c(recorded, pid)
+    owners[[lock]] <- list(path = path, snapshot = snapshot, pid = pid)
+  }
+  # A dead coordinator can leave orphaned workers. Check its phase records and
+  # matching R processes as well; the other method group may run independently.
+  files <- list.files(file.path(out, 'logs'), '^fit_status[.]csv$', recursive = TRUE, full.names = TRUE)
+  if (!any(dir.exists(legacy))) files <- files[grepl(paste0('/logs/', group, '_'), files, fixed = TRUE)]
+  for (f in files) {
+    tab <- read.csv(f, stringsAsFactors = FALSE)
+    recorded <- c(recorded, tab$worker_pid[tab$state == 'RUNNING'])
+  }
+  active <- unique(recorded[vapply(recorded, live, logical(1))])
+  if (length(active)) fail('Recorded OAI process IDs still exist: ', paste(active, collapse = ', '))
+  ancestors <- Sys.getpid()
+  repeat {
+    status <- readLines(file.path('/proc', tail(ancestors, 1L), 'status'), warn = FALSE)
+    parent <- as.integer(sub('^PPid:\\s*', '', grep('^PPid:', status, value = TRUE)))
+    if (length(parent) != 1L || is.na(parent) || parent <= 0L || parent %in% ancestors) break
+    ancestors <- c(ancestors, parent)
+  }
+  processes <- system2('ps', c('-eo', 'pid=,comm=,args='), stdout = TRUE)
+  pattern <- if (any(dir.exists(legacy))) 'oai' else
+    paste0('(resume-oai-', group, '[.]r|oai-', group, '[.]R|/oai[.]R)')
+  other <- processes[grepl('^ *[0-9]+ +R(script)? +', processes) & grepl(pattern, processes)]
+  pids <- as.integer(sub('^ *([0-9]+).*$', '\\1', other))
+  other <- other[!pids %in% ancestors]
+  if (length(other)) fail('Other OAI R processes are present:\n', paste(other, collapse = '\n'))
+  # Re-read every owner before moving anything, so a newly acquired lock cannot
+  # be mistaken for the stale lock inspected above. Preserve the owner record.
+  for (lock in locks) {
+    owner <- owners[[lock]]
+    if (!dir.exists(lock) || !identical(readLines(owner$path, warn = FALSE), owner$snapshot) || live(owner$pid))
+      fail('Lock ownership changed during recovery: ', lock)
+  }
+  archived <- character()
+  for (lock in locks) {
+    dest <- file.path(out, '_meta/stale-locks', paste0(basename(lock), '-',
+                     format(Sys.time(), '%Y%m%d_%H%M%OS6'), '-', Sys.getpid()))
+    dir.create(dirname(dest), recursive = TRUE, showWarnings = FALSE)
+    if (!file.rename(lock, dest)) fail('Cannot archive stale lock: ', lock)
+    cat('Archived stale lock: ', dest, '\n', sep = '')
+    archived <- c(archived, dest)
+  }
+  invisible(archived)
+}
+
+resume_oai_available_gib <- function() {
+  path <- '/proc/meminfo'
+  if (!file.exists(path)) return(NA_real_)
+  line <- grep('^MemAvailable:', readLines(path, warn = FALSE), value = TRUE)
+  if (length(line) != 1L) return(NA_real_)
+  suppressWarnings(as.numeric(strsplit(trimws(line), '\\s+')[[1L]][2L]) / 1024^2)
+}
+
+resume_oai_migration_capacity <- function(cores, sizes_gib, available_gib) {
+  # Compressed checkpoint size is only a heuristic for import RAM. Keep ample
+  # headroom and never import in the parent process.
+  per_fit <- max(8, 4 * sizes_gib)
+  memory_slots <- if (is.finite(available_gib))
+    max(0, floor((available_gib - 16) / per_fit)) else 1L
+  list(workers = as.integer(min(cores, length(sizes_gib), memory_slots)),
+       per_fit_gib = per_fit, reserve_gib = 16)
+}
+
+resume_oai_migrate <- function(paths, cores, chunk_iter, out) {
+  paths <- unique(normalizePath(paths, mustWork = TRUE))
+  if (!length(paths)) return(invisible(NULL))
+  capacity <- resume_oai_migration_capacity(cores, file.info(paths)$size / 1024^3,
+                                          resume_oai_available_gib())
+  if (capacity$workers < 1L)
+    stop('Insufficient available RAM for legacy import with 16 GiB headroom; checkpoints unchanged.', call. = FALSE)
+  cat('Converting ', length(paths), ' legacy histories with up to ', capacity$workers,
+      ' isolated import workers (within --cores=', cores, '); estimated RAM allowance ',
+      round(capacity$per_fit_gib, 1), ' GiB per worker plus 16 GiB headroom.\n', sep = '')
+  flush.console()
+  logdir <- file.path(out, 'logs', paste0('eivGP_migration_',
+    format(Sys.time(), '%Y%m%d_%H%M%OS6'), '_', Sys.getpid()))
+  dir.create(logdir, recursive = TRUE, showWarnings = FALSE)
+  status_path <- file.path(logdir, 'fit_status.csv')
+  status <- data.frame(path = paths, state = 'PENDING', worker_pid = NA_integer_,
+                       error = '', stringsAsFactors = FALSE)
+  publish <- function() {
+    tmp <- tempfile(tmpdir = logdir)
+    write.csv(status, tmp, row.names = FALSE)
+    if (!file.rename(tmp, status_path)) stop('Cannot publish import worker status.')
+  }
+  active <- list()
+  on.exit({
+    if (length(active)) {
+      for (job in active) tools::pskill(job$pid)
+      parallel::mccollect(active, wait = TRUE)
+      status$state[status$state == 'RUNNING'] <- 'STOPPED'
+      publish()
+    }
+  }, add = TRUE)
+  publish()
+  while (any(status$state == 'PENDING') || length(active)) {
+    while (any(status$state == 'PENDING') && length(active) < capacity$workers) {
+      available <- resume_oai_available_gib()
+      # Account for active imports which may not have allocated their RAM yet.
+      if (is.finite(available) && available < capacity$reserve_gib +
+          (length(active) + 1L) * capacity$per_fit_gib) {
+        if (!length(active)) stop('Available RAM dropped below the legacy-import allowance; retry later.', call. = FALSE)
+        break
+      }
+      i <- which(status$state == 'PENDING')[1L]
+      path <- paths[i]
+      job <- parallel::mcparallel({
+        tryCatch({
+          eivGP::continue_eivgp_disk(path, 0L, chunk_iter = chunk_iter,
+                                    parallel = FALSE, n_cores = 1L)
+          list(ok = TRUE, error = '')
+        }, error = function(e) list(ok = FALSE, error = conditionMessage(e)))
+      }, mc.set.seed = FALSE, silent = TRUE)
+      active[[as.character(job$pid)]] <- job
+      status$state[i] <- 'RUNNING'; status$worker_pid[i] <- job$pid
+      publish()
+      cat('Migrating saved history [PID ', job$pid, ']: ', path, '\n', sep = '')
+      flush.console()
+    }
+    done <- parallel::mccollect(active, wait = FALSE)
+    if (length(done)) for (pid in names(done)) {
+      i <- match(as.integer(pid), status$worker_pid)
+      result <- done[[pid]]
+      active[[pid]] <- NULL
+      ok <- is.list(result) && isTRUE(result$ok)
+      status$state[i] <- if (ok) 'DONE' else 'FAILED'
+      status$error[i] <- if (ok) '' else if (is.list(result)) result$error else
+        'Import worker exited without a successful result.'
+      publish()
+      if (ok) {
+        cat('Migrated saved history: ', paths[i], '\n', sep = ''); flush.console()
+      }
+    }
+    if (any(status$state == 'FAILED')) {
+      i <- which(status$state == 'FAILED')[1L]
+      stop('Disk-history migration failed; original fit preserved: ', paths[i],
+           '\n', status$error[i], call. = FALSE)
+    }
+    if (length(active)) Sys.sleep(0.1)
+  }
+  invisible(status)
+}
+
+resume_oai_main <- function(group, script, args = commandArgs(TRUE)) {
+  group <- match.arg(group, c("eivGP", "competitors"))
+  fail <- function(...) stop(..., call. = FALSE)
+  if (any(args %in% c('--help', '-h'))) {
+    cat('Usage: Rscript tools/resume-oai-', group, '.r --action=plan|run|report --cores=N\n', sep = '')
+    cat('       [--profile=paper] [--data-root=PATH] [--output=PATH]\n',
+        'Defaults: action=run, cores=4, frozen settings and inputs from the result root.\n',
+        if (group == 'eivGP') 'EIV-GP: cores >= 4; 4/8/12 cores permit 1/2/3 four-chain fits.\n' else
+          'Competitors: cores >= 1; each resident optimizer job uses one core.\n',
+        'plan verifies code/settings/inputs; run resumes incomplete work;\n',
+        'report renders saved results without fitting. --plan=true is also accepted.\n',
+        'Run mode records the implementation update, archives confirmed stale\n',
+        'workflow locks, reuses saved fits and completes missing work.\n', sep = '')
+  } else {
+    script <- normalizePath(script)
+    repo <- normalizePath(file.path(dirname(script), '..'))
+    opts <- list(cores = '4', action = 'run', plan = 'false', profile = NULL, data_root = NULL,
+                 output = file.path(repo, 'results', if (group == 'eivGP') 'oai' else 'oai_competitors'))
+    seen <- character()
+    for (arg in args) {
+      if (!grepl('^--(action|cores|plan|profile|data-root|output)=.+$', arg)) fail('Unknown option: ', arg, '; see --help')
+      key <- gsub('-', '_', sub('^--([^=]+)=.*$', '\\1', arg))
+      if (key %in% seen) fail('Repeated option: ', key)
+      seen <- c(seen, key)
+      opts[[key]] <- sub('^[^=]+=', '', arg)
+    }
+    cores <- suppressWarnings(as.numeric(opts$cores))
+    minimum <- if (group == 'eivGP') 4L else 1L
+    if (length(cores) != 1L || !is.finite(cores) || cores < minimum ||
+        cores != floor(cores) || cores > .Machine$integer.max)
+      fail('--cores must be an integer >= ', minimum, '.')
+    if (!opts$plan %in% c('true', 'false')) fail('--plan must be true or false.')
+    if (!opts$action %in% c('plan', 'run', 'report')) fail('--action must be plan, run or report.')
+    if (all(c('action', 'plan') %in% seen)) fail('Use --action or --plan, not both.')
+    if ('plan' %in% seen) opts$action <- if (opts$plan == 'true') 'plan' else 'run'
+    plan <- opts$action == 'plan'
+    cores <- as.integer(cores)
+    out <- normalizePath(path.expand(opts$output), mustWork = TRUE)
+    # Set thread limits BEFORE the worker starts R and loads numerical libraries.
+    if (!identical(Sys.getenv('EIVGP_OAI_RESUME_WORKER'), script)) {
+      Sys.setenv(OMP_NUM_THREADS = '1', OPENBLAS_NUM_THREADS = '1', MKL_NUM_THREADS = '1',
+                 VECLIB_MAXIMUM_THREADS = '1', BLIS_NUM_THREADS = '1', EIVGP_OAI_RESUME_WORKER = script)
+      status <- system2(file.path(R.home('bin'), 'Rscript'), shQuote(c('--vanilla', script, args)))
+      if (status != 0L) fail('OAI resume exited with status ', status, '. Check the error above; checkpoints retained.')
+    } else {
+      prepared_library <- file.path(repo, 'results/oai-resume-library')
+      if (!nzchar(Sys.getenv('EIVGP_R_LIBRARY')) && dir.exists(file.path(prepared_library, 'eivGP')))
+        Sys.setenv(EIVGP_R_LIBRARY = prepared_library)
+      .libPaths(c(Sys.getenv('EIVGP_R_LIBRARY'), file.path(repo, '.r-library'), .libPaths()))
+      source(file.path(repo, 'tools/oai-tools.R'), local = TRUE)
+      api <- oai_load_api(repo)
+      cores <- min(cores, getFromNamespace('mixedgp_available_cores', 'eivGP')())
+      if (cores < minimum) fail('At least ', minimum, ' available cores are required.')
+      manifest <- file.path(out, '_meta/application_manifest.json')
+      identity <- file.path(out, '_meta/workflow_identity.rds')
+      if (!all(file.exists(c(manifest, identity)))) fail('Missing frozen manifest/identity in ', out)
+      bundle <- api$oai_screen_manifest(manifest, api)
+      m <- bundle$manifest
+      if (!is.null(opts$profile) && !identical(opts$profile, m$profile))
+        fail('--profile must match the saved profile: ', m$profile)
+      if (!is.null(opts$data_root)) {
+        supplied <- api$oai_plan_inputs(normalizePath(path.expand(opts$data_root), mustWork = TRUE))
+        if (!identical(unname(tools::md5sum(supplied$files)),
+                       unname(tools::md5sum(bundle$inputs[[m$cases[[1]]$id]]$files))))
+          fail('--data-root differs from the frozen input snapshot.')
+      }
+      if (!identical(normalizePath(m$output_root), out) || length(m$cases) != 1L ||
+          !identical(m$trial_id, 'oai') || !identical(as.integer(m$chains), 4L))
+        fail('This script requires a single-cohort, four-chain OAI manifest.')
+      modules <- api$eivgp_module_identity()
+      paths <- file.path(repo, 'eivGP', ifelse(grepl('[.]R$', names(modules)), 'R', 'src'), names(modules))
+      if (!identical(unname(modules), unname(tools::md5sum(paths))))
+        fail('Installed eivGP differs from this checkout. Build/install the current package before resuming.')
+      code <- api$oai_source_files(repo)
+      current <- list(schema = 'oai-upstream-screening-v2', trial = m$trial_id, modules = modules,
+        application = setNames(unname(tools::md5sum(code)), substring(code, nchar(repo) + 2L)),
+        burn = m$burn, stages = unlist(m$stages), smoke = isTRUE(m$smoke), ess_min = m$ess_min,
+        chains = as.integer(m$chains), samplers = m$samplers, baseline_profile = m$baseline_profile,
+        draws_per_chain = m$draws_per_chain, plan = m$cases[[1]]$id,
+        inputs = unname(tools::md5sum(bundle$inputs[[m$cases[[1]]$id]]$files)))
+      # The user authorized the optimized implementation of the same algorithm.
+      # Only code/schema provenance may differ; statistical settings and inputs
+      # must still match exactly. Keep the original identity/receipts intact.
+      check_identity <- function(saved, now) {
+        if (length(saved$schema) != 1L || !saved$schema %in%
+            c('adni-upstream-screening-v2', 'oai-upstream-screening-v2')) fail('Unsupported saved workflow identity.')
+        omit <- c('schema', 'modules', 'application')
+        a <- saved[setdiff(names(saved), omit)]
+        b <- now[setdiff(names(now), omit)]
+        if (!identical(a, b)) fail('Frozen model settings or inputs differ: ', paste(all.equal(a, b), collapse = '; '))
+        invisible(saved)
+      }
+      saved <- readRDS(identity)
+      check_identity(saved, current)
+      task_directory <- function(task) {
+        if (task$kind == 'cc') api$oai_path(out, 'CC', task$cell, 'baselines',
+                                          sprintf('fold%02d', task$fold), task$method)
+        else api$oai_path(out, 'baselines', sprintf('fold%02d', task$fold), task$method)
+      }
+      cached_files <- function(task) file.path(task_directory(task),
+        c('fit.rds', 'prediction_draws.rds', 'metrics.csv', 'Y_predictions.csv'))
+      if (group == 'competitors') {
+        # Older runs had one OI receipt per fold, whereas the current executor
+        # schedules each method independently. Reuse its complete saved outputs
+        # even when a method-level receipt has not yet been written.
+        baseline <- api$baseline_cell
+        api$baseline_cell <- function(task, inputs, out, s, cc = FALSE) {
+          if (all(file.exists(cached_files(task)))) return(invisible('REUSED'))
+          baseline(task, inputs, out, s, cc)
+        }
+      }
+      if (group == 'eivGP') {
+        if (!exists('continue_eivgp_disk', asNamespace('eivGP'), inherits = FALSE))
+          fail('Install eivGP >= 0.4.0.9020 for disk-backed continuation.')
+        if (!is.null(m$ess_min)) fail('Disk resume currently requires the saved fixed-iteration configuration (ess_min=NULL).')
+        fit_task <- api$oai_plan_fit_task
+        api$oai_plan_fit_task <- function(task, inputs, out, s, extend = FALSE) {
+          if (extend) fail('Use the frozen target budget with disk resume.')
+          path <- api$oai_plan_fit_path(out, task)
+          if (!file.exists(path)) {
+            first <- s; first$iter <- s$first_checkpoint; first$final_stage <- FALSE
+            fit_task(task, inputs, out, first, extend = FALSE)
+          }
+          index <- if (file.exists(file.path(paste0(path, '.draws'), 'index.rds')))
+            getFromNamespace('mixedgp_disk_index', 'eivGP')(path) else
+              eivGP::continue_eivgp_disk(path, 0L, chunk_iter = s$checkpoint_step)
+          if (index$checkpoint$burn != s$burn || length(index$checkpoint$states) != s$chains ||
+              index$control$sampler != s$samplers[[task$cell]] || index$checkpoint$iteration > s$iter)
+            fail('Disk checkpoint settings or iteration differ from the frozen stage.')
+          if (file.exists(file.path(dirname(path), 'continuation_request.rds')))
+            fail('A separate continuation request exists; resolve its target before this fixed-budget resume.')
+          started <- proc.time()[['elapsed']]
+          api$oai_plan_progress(index, path, task, s, 'RESUMED', 0)
+          index <- eivGP::continue_eivgp_disk(path, s$iter - index$checkpoint$iteration,
+            chunk_iter = s$checkpoint_step, parallel = s$cores > 1L, n_cores = s$cores,
+            verbose = TRUE, progress = function(state)
+              api$oai_plan_progress(state, path, task, s, 'SAVED', proc.time()[['elapsed']] - started))
+          api$oai_plan_progress(index, path, task, s, 'FIT_COMPLETE', proc.time()[['elapsed']] - started)
+          invisible('DONE')
+        }
+        # Sampling buffers are bounded. Full-history diagnostics are a separate,
+        # serial analysis phase; auxiliary S draws are not required for them.
+        read_fit <- api$oai_plan_read_fit
+        api$oai_plan_read_fit <- function(path) {
+          if (!file.exists(file.path(paste0(path, '.draws'), 'index.rds'))) return(read_fit(path))
+          index <- getFromNamespace('mixedgp_disk_index', 'eivGP')(path)
+          eivGP::read_fit(path, fields = setdiff(index$disk_history$fields, 'S'))
+        }
+        resident <- api$oai_resident_workers
+        api$oai_resident_workers <- function(cores, phase, n_tasks, chains = 4L)
+          if (phase == 'evaluate') min(1L, n_tasks) else resident(cores, phase, n_tasks, chains)
+        analyze <- api$analyze_cell
+        api$analyze_cell <- function(task, inputs, out, s, stage) {
+          path <- api$oai_plan_fit_path(out, task)
+          fit <- api$oai_plan_read_fit(path)
+          dg <- api$oai_plan_diagnostics(fit)
+          api$atomic_csv(dg$parameters, file.path(dirname(path), 'diagnostic_parameters.csv'))
+          api$atomic_csv(dg$summary, file.path(dirname(path), 'diagnostic_summary.csv'))
+          if (isTRUE(s$final_stage) && length(fit$checkpoint$states) >= 4L) {
+            z <- inputs$cells[[paste(task$fold, task$cell, sep = '/')]]
+            X <- as.matrix(z$test[, z$x, drop = FALSE]); C <- as.matrix(z$test[, z$c, drop = FALSE])
+            rows <- getFromNamespace('mixedgp_study2_diagnostic_rows', 'eivGP')(X, C, 5L)
+            panel <- list(X = X[rows, , drop = FALSE], C = C[rows, , drop = FALSE],
+              U = if (task$cell != 'O0') as.matrix(z$test[rows, z$u, drop = FALSE]) else NULL,
+              n_latent = 64L, seed = z$protocol$seeds$prediction)
+            fit <- getFromNamespace('mixedgp_application_ess', 'eivGP')(fit, NULL, panel,
+              file.path(dirname(path), 'scientific-ess-state.rds'), s$cores)
+            api$atomic_rds(list(iteration = fit$checkpoint$iteration, scientific_ess = fit$scientific_ess),
+              file.path(dirname(path), 'scientific-diagnostics.rds'))
+            getFromNamespace('mixedgp_save_scientific_trace', 'eivGP')(fit,
+              file.path(dirname(path), 'scientific-trace-targets'),
+              sprintf('OAI | fold %d | %s', task$fold, task$cell))
+          }
+          rm(fit); gc(FALSE)
+          analyze(task, inputs, out, s, stage)
+        }
+      }
+      changed <- union(names(saved$modules), names(modules))
+      changed <- changed[!vapply(changed, function(n)
+        identical(unname(saved$modules[n]), unname(modules[n])), logical(1))]
+      cat('Verified frozen settings and inputs; current eivGP ', as.character(utils::packageVersion('eivGP')), '\n',
+          'Updated modules: ', if (length(changed)) paste(changed, collapse = ', ') else 'none', '\n',
+          'Output: ', out, '\n',
+          if (group == 'eivGP') paste0('Target: ', paste(unlist(m$stages), collapse = ', '),
+            ' iterations; burn: ', m$burn, '; chains: 4; simultaneous fits: ', cores %/% 4L) else
+            paste0('Competitor profile: ', m$baseline_profile, '; simultaneous optimizer jobs: ', cores), '\n', sep = '')
+      flush.console()
+      if (group == 'eivGP') {
+        cat('Disk history: at most ', m$checkpoint_step,
+            ' new draws per chain in RAM; one fit at a time during full-history analysis.\n', sep = '')
+        flush.console()
+      }
+      launcher <- c(script, file.path(repo, 'tools/resume-oai-tools.R'))
+      launcher_sources <- setNames(unname(tools::md5sum(launcher)), substring(launcher, nchar(repo) + 2L))
+      api$oai_workflow_identity <- function(path, id) {
+        original <- readRDS(path)
+        check_identity(original, id)
+        record <- list(schema = 'oai-resume-implementation-v1', group = group, original_identity = original,
+          current_identity = id, launcher_sources = launcher_sources,
+          package_version = as.character(utils::packageVersion('eivGP')),
+          statistical_settings_and_inputs_unchanged = TRUE,
+          reason = 'User-authorized resumption with the more efficient implementation of the same algorithm.')
+        dest <- file.path(dirname(path), 'implementation_updates',
+                          paste0(group, '-', digest::digest(list(id, launcher_sources)), '.rds'))
+        if (!file.exists(dest)) {
+          record$started_at <- format(Sys.time(), tz = 'UTC', usetz = TRUE)
+          api$atomic_rds(record, dest)
+        }
+        cat('Implementation provenance: ', dest, '\n', sep = ''); flush.console()
+        original
+      }
+      if (plan) {
+        if (group == 'competitors') {
+          tasks <- api$oai_screen_tasks(m, group, 'BASELINE')
+          tasks$state <- vapply(seq_len(nrow(tasks)), function(i) {
+            task <- tasks[i, , drop = FALSE]
+            receipt <- api$oai_screen_receipt(out, task, 'fit')
+            if (api$oai_screen_verified(receipt, saved)) 'VERIFIED'
+            else if (all(file.exists(cached_files(task)))) 'SAVED_FIT'
+            else 'INCOMPLETE'
+          }, '')
+          print(tasks[, c('fold', 'cell', 'method', 'state')], row.names = FALSE)
+          cat('Reusable tasks: ', sum(tasks$state != 'INCOMPLETE'), '/', nrow(tasks),
+              '; incomplete: ', sum(tasks$state == 'INCOMPLETE'),
+              '; resident optimizer limit: ', min(cores, nrow(tasks)), '\n', sep = '')
+        } else api$oai_screen_run(repo, list(manifest = manifest, cores = cores,
+                                           plan = TRUE, reuse_only = FALSE), group)
+        cat('Plan only: no fitting, provenance writes or lock changes.\n')
+        return(invisible(bundle))
+      } else resume_oai_recover_locks(out, group)
+      # Use the frozen manifest directly, so newer CLI defaults cannot change
+      # checkpoint spacing, priors, samplers, masks or the target budget.
+      if (opts$action == 'run')
+        api$oai_execution_lock(out, group, function() {
+          if (group == 'eivGP') {
+            # Each isolated import worker exits before sampling begins, so
+            # historical arrays never reside in the coordinator or its chains.
+            paths <- character()
+            for (fold in unlist(m$folds)) for (cell in unlist(m$cells)) {
+              path <- api$oai_plan_fit_path(out, list(fold = fold, cell = cell))
+              task <- api$oai_screen_tasks(m, 'eivGP', paste0('S', tail(unlist(m$stages), 1L)))
+              task <- task[task$fold == fold & task$cell == cell, , drop = FALSE]
+              receipt <- api$oai_screen_receipt(out, task, 'evaluate')
+              if (api$oai_screen_verified(receipt, saved)) next
+              if (file.exists(path) && !file.exists(file.path(paste0(path, '.draws'), 'index.rds'))) {
+                paths <- c(paths, path)
+              }
+            }
+            resume_oai_migrate(paths, cores, as.integer(m$checkpoint_step), out)
+            cat('All legacy history conversions complete; starting MCMC with four cores per fit.\n')
+            flush.console()
+          }
+          api$oai_screen_run(repo, list(manifest = manifest, cores = cores,
+            plan = FALSE, reuse_only = FALSE, lock_held = TRUE), group)
+        })
+      settings <- api$oai_settings(profile = m$profile, cores = max(4L, cores),
+        stages = as.integer(unlist(m$stages)), burn = as.integer(m$burn),
+        folds = as.integer(unlist(m$folds)), cells = unlist(m$cells),
+        first_checkpoint = as.integer(m$first_checkpoint), checkpoint_step = as.integer(m$checkpoint_step),
+        draws_per_chain = as.integer(m$draws_per_chain), baseline_profile = m$baseline_profile, ess_min = m$ess_min,
+        sampler_o0 = m$samplers$O0, sampler_o20 = m$samplers$O20, sampler_o50 = m$samplers$O50)
+      settings$cores <- cores
+      api$oai_execution_lock(out, group, function() api$oai_render_report(repo, m$cases[[1]]$input,
+        out, settings, report_dir = api$oai_path(out, 'reports', group), group = group, filename = 'index.html'))
+    }
+  }
+}

@@ -1210,7 +1210,8 @@ oai_screen_run <- function(repo,p,group) {
         path<-api$oai_plan_fit_path(out,t)
         if(evaluate){
           if(!file.exists(path))stop('Stage checkpoint unavailable for evaluation')
-          actual<-api$oai_plan_read_fit(path)$checkpoint$iteration
+          actual<-if(exists('mixedgp_saved_iteration',asNamespace('eivGP'),inherits=FALSE))
+            getFromNamespace('mixedgp_saved_iteration','eivGP')(path) else api$oai_plan_read_fit(path)$checkpoint$iteration
           if(is.null(s$ess_min) && actual!=iter || !is.null(s$ess_min) && actual<iter)stop('Stage checkpoint unavailable for evaluation')
           s$iter<-actual
           api$analyze_cell(t,inp,out,s,stage);folder<-oai_path(out,stage,'analysis',sprintf('fold%02d',t$fold),t$cell)

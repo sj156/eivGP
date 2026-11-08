@@ -20,7 +20,7 @@ summarize_comparison(results, metrics = c("RMSE", "CRPS", "Coverage95", "Width95
 summarize_diagnostics(diagnostics)
 plot_comparison(summary, metric = "RMSE")
 report_table(x, caption = NULL, digits = 3L)
-read_fit(path)
+read_fit(path, draw_ids = NULL, fields = NULL)
 save_fit(object, path)
 }
 \arguments{
@@ -38,6 +38,7 @@ save_fit(object, path)
 \item{x}{Table data.}
 \item{caption, digits}{Table presentation settings.}
 \item{object}{Fit or container to save losslessly.}
+\item{draw_ids, fields}{Optional disk-history selection. Draw IDs index the pooled chain order; include at least two per chain. Fields can omit auxiliary S draws while retaining complete parameter histories for diagnostics.}
 }
 \value{Configuration or result lists, summary data frames, a ggplot object, a formatted table, or a restored fit, depending on the function. Saving returns the output path invisibly.}
 \details{Existing result archives are never migrated automatically. Compact saves retain chain-resolved histories and terminal states, rebuilding identical pooled views on read. Replication MCSEs do not quantify within-fit MCMC error. Fitting uses existing package implementations and competitor packages; no automatic chain extension or diagnostic filtering is introduced.}

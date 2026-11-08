@@ -222,6 +222,36 @@ A quick check exercises the workflow; it is not a convergence assessment.
 Continuation is an explicit operation documented in each application guide;
 reporting does not start it.
 
+For the interrupted OAI runs in the separate saved roots, use the resume
+entrypoints with the same command syntax:
+
+```sh
+Rscript tools/resume-oai-eivGP.r --action=plan --profile=paper --cores=12 --data-root=data/oai --output=results/oai
+Rscript tools/resume-oai-eivGP.r --action=run --profile=paper --cores=12 --data-root=data/oai --output=results/oai
+Rscript tools/resume-oai-competitors.r --action=plan --profile=paper --cores=12 --data-root=data/oai --output=results/oai_competitors
+Rscript tools/resume-oai-competitors.r --action=run --profile=paper --cores=12 --data-root=data/oai --output=results/oai_competitors
+```
+
+These scripts use the current optimized implementation with the original
+frozen settings and inputs, and record the implementation update separately
+from the original fitting identity. EIV-GP continues saved chains; competitors
+reuse saved fits and run missing tasks. At 12 cores, EIV-GP allows three
+four-chain fits and competitors allow twelve one-core jobs. Use
+`--action=report` to rebuild a group's report without fitting. See the
+[OAI recovery guide](paper/README_oai.md#recover-the-october-2026-checkpoints).
+
+EIV-GP resume uses `continue_eivgp_disk()` (package 0.4.0.9020): full draw
+histories stay in `fit.rds.draws/`, with only terminal chain states and bounded
+new-draw buffers in RAM during sampling. Legacy fits are imported by isolated
+workers, using one core per fit with concurrency bounded by `--cores`, the
+remaining fits and available RAM. All conversions finish before MCMC begins;
+sampling then uses four cores per fit. This
+one-time conversion preserves the original file in
+`fit.rds.draws/legacy-fit.rds`; it generates no new draws. Full-history analysis
+runs separately, one fit at a time. The original
+configuration, RNG states and all retained draws are preserved. Keep the small
+`fit.rds` index and its `.draws` directory together.
+
 ## 5. Find outputs and inspect results
 
 Applications place group reports in `reports/eivGP/index.html` and

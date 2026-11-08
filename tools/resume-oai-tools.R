@@ -1,4 +1,97 @@
 # Shared command-line recovery for the frozen OAI method groups.
+resume_oai_process <- function(pid) {
+  path <- file.path('/proc', as.character(pid), 'stat')
+  if (!file.exists(path)) return(NULL)
+  fields <- tryCatch(strsplit(sub('^.*\\) ', '', readLines(path, warn = FALSE)), ' +')[[1L]],
+                     error = function(e) NULL)
+  if (length(fields) < 20L) return(NULL)
+  list(pid = as.integer(pid), state = fields[1L], group = as.integer(fields[3L]),
+       session = as.integer(fields[4L]), start = fields[20L])
+}
+
+resume_oai_record_session <- function(path) {
+  owner <- resume_oai_process(Sys.getpid())
+  if (is.null(owner) || owner$group != owner$pid || owner$session != owner$pid)
+    stop('Resume worker must start in its own process session.', call. = FALSE)
+  tmp <- tempfile(tmpdir = dirname(path))
+  on.exit(unlink(tmp), add = TRUE)
+  saveRDS(owner, tmp)
+  if (!file.rename(tmp, path)) stop('Cannot record isolated resume session.', call. = FALSE)
+}
+
+resume_oai_cleanup_session <- function(path) {
+  if (!file.exists(path)) return(invisible(integer()))
+  owner <- readRDS(path)
+  leader <- resume_oai_process(owner$pid)
+  # Never signal a recycled PID or the launcher's own process group.
+  if (owner$group != owner$pid || owner$session != owner$pid ||
+      owner$pid == resume_oai_process(Sys.getpid())$group ||
+      (!is.null(leader) && !identical(leader$start, owner$start)))
+    stop('Resume session identity changed; worker cleanup refused.', call. = FALSE)
+  members <- function() {
+    ids <- list.files('/proc', '^[0-9]+$')
+    info <- lapply(ids, resume_oai_process)
+    vapply(Filter(function(x) !is.null(x) && x$state != 'Z' &&
+      x$group == owner$group && x$session == owner$session, info), `[[`, integer(1), 'pid')
+  }
+  active <- members()
+  if (!length(active)) return(invisible(active))
+  tools::pskill(active, tools::SIGTERM)
+  for (i in seq_len(20L)) {
+    Sys.sleep(0.05)
+    if (!length(members())) break
+  }
+  remaining <- members()
+  if (length(remaining)) {
+    tools::pskill(remaining, tools::SIGKILL)
+    for (i in seq_len(20L)) {
+      Sys.sleep(0.05)
+      if (!length(members())) break
+    }
+  }
+  cat('Stopped ', length(active), ' remaining workers from this resume session.\n', sep = '')
+  invisible(active)
+}
+
+resume_oai_launch_worker <- function(script, args) {
+  setsid <- Sys.which('setsid')
+  if (!nzchar(setsid)) stop('Linux setsid is required for reliable worker cleanup.', call. = FALSE)
+  path <- tempfile('oai-resume-session-', fileext = '.rds')
+  status_path <- paste0(path, '.status'); pending_status <- paste0(status_path, '.tmp')
+  runner <- paste0(path, '.sh')
+  previous <- Sys.getenv('EIVGP_OAI_SESSION_FILE', unset = NA_character_)
+  Sys.setenv(EIVGP_OAI_SESSION_FILE = path)
+  on.exit({
+    resume_oai_cleanup_session(path)
+    unlink(c(path, status_path, pending_status, runner))
+    if (is.na(previous)) Sys.unsetenv('EIVGP_OAI_SESSION_FILE') else
+      Sys.setenv(EIVGP_OAI_SESSION_FILE = previous)
+  }, add = TRUE)
+  # A synchronous system2() ignores SIGINT while waiting. Poll an asynchronous
+  # shell instead, so Ctrl+C unwinds this function and runs the session cleanup.
+  command <- paste(shQuote(c(setsid, '--wait', file.path(R.home('bin'), 'Rscript'),
+                             '--vanilla', script, args)), collapse = ' ')
+  writeLines(c('#!/bin/sh', command, 'resume_status=$?',
+    paste("printf '%s\\n' \"$resume_status\" >", shQuote(pending_status)),
+    paste('mv -f --', shQuote(pending_status), shQuote(status_path))), runner)
+  launched <- system2('/bin/sh', shQuote(runner), wait = FALSE)
+  if (launched != 0L) stop('Cannot launch the isolated resume worker.', call. = FALSE)
+  started <- proc.time()[['elapsed']]; dead_polls <- 0L
+  while (!file.exists(status_path)) {
+    if (file.exists(path)) {
+      owner <- readRDS(path)
+      leader <- resume_oai_process(owner$pid)
+      if (is.null(leader) || leader$state %in% c('Z', 'X')) dead_polls <- dead_polls + 1L
+      if (dead_polls > 40L) stop('Resume worker exited without recording its status.', call. = FALSE)
+    } else if (proc.time()[['elapsed']] - started > 60)
+      stop('Resume worker did not initialize within 60 seconds.', call. = FALSE)
+    Sys.sleep(0.05)
+  }
+  status <- suppressWarnings(as.integer(readLines(status_path, warn = FALSE)))
+  if (length(status) != 1L || is.na(status)) stop('Invalid resume exit status.', call. = FALSE)
+  status
+}
+
 resume_oai_recover_locks <- function(out, group) {
   fail <- function(...) stop(..., call. = FALSE)
   if (!dir.exists('/proc')) fail('Stale-lock verification requires Linux /proc.')
@@ -208,9 +301,11 @@ resume_oai_main <- function(group, script, args = commandArgs(TRUE)) {
     if (!identical(Sys.getenv('EIVGP_OAI_RESUME_WORKER'), script)) {
       Sys.setenv(OMP_NUM_THREADS = '1', OPENBLAS_NUM_THREADS = '1', MKL_NUM_THREADS = '1',
                  VECLIB_MAXIMUM_THREADS = '1', BLIS_NUM_THREADS = '1', EIVGP_OAI_RESUME_WORKER = script)
-      status <- system2(file.path(R.home('bin'), 'Rscript'), shQuote(c('--vanilla', script, args)))
+      status <- resume_oai_launch_worker(script, args)
       if (status != 0L) fail('OAI resume exited with status ', status, '. Check the error above; checkpoints retained.')
     } else {
+      session_file <- Sys.getenv('EIVGP_OAI_SESSION_FILE')
+      if (nzchar(session_file)) resume_oai_record_session(session_file)
       prepared_library <- file.path(repo, 'results/oai-resume-library')
       if (!nzchar(Sys.getenv('EIVGP_R_LIBRARY')) && dir.exists(file.path(prepared_library, 'eivGP')))
         Sys.setenv(EIVGP_R_LIBRARY = prepared_library)

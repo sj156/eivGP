@@ -103,6 +103,11 @@ per fit, bounded by `--cores` and the number of remaining legacy fits. After
 all conversions finish, MCMC starts with four cores per fit and at most
 `floor(cores / 4)` simultaneous fits (12 with `--cores=48`). Conversion and
 sampling never overlap.
+The launcher starts its worker in an isolated Linux process session. On exit
+or Ctrl+C, it stops any remaining processes in that session, including nested
+chain workers, before allowing a new run to acquire the checkpoints. Committed
+disk blocks remain reusable; an unfinished block is recomputed from the last
+committed chain and RNG states.
 An available-RAM check may reduce concurrency: at least 8 GiB estimated allowance per worker (increased
 for larger compressed fits) and 16 GiB system headroom. These allowances are
 heuristics, not hard memory limits. Import progress and worker PIDs are recorded

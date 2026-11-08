@@ -1,5 +1,11 @@
 # Unreleased
 
+- Add `fit_eivgp(storage="disk", path=..., chunk_iter=...)` for fresh fits
+  with bounded retained-draw buffers and exact disk-backed continuation.
+  Preserve all draws, warmup recovery, chain/RNG states, tuning and scientific
+  ESS checks. Use disk storage by default in ADNI, OAI and Ocean workflows;
+  isolate legacy conversion and serialize full-history analysis.
+
 - Use the public EzGP covariance export. Register audited run-context and
   report data-mask names for static analysis, preserving numerical behavior
   and optional plotting dependencies.

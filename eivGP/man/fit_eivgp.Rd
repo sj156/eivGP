@@ -2,6 +2,8 @@
 % Please edit documentation in R/mcmc.R
 \name{fit_eivgp}
 \alias{fit_eivgp}
+\alias{print.eivgp_disk_fit}
+\alias{summary.eivgp_disk_fit}
 \title{Fit the EIV-GP for ordinal mixed inputs}
 \usage{
 fit_eivgp(
@@ -25,10 +27,16 @@ fit_eivgp(
   sampler = c("ESS", "HMC", "HYBRID"),
   ess_min = NULL,
   ess_panel = NULL,
+  storage = c("memory", "disk"),
+  path = NULL,
+  chunk_iter = 1000L,
   ...
 )
 }
 \arguments{
+\item{storage}{Draw storage. \code{"memory"} returns the ordinary full fit. \code{"disk"} returns a small checkpoint index and preserves every retained draw in the adjacent \code{path.draws/} directory.}
+\item{path}{New checkpoint path for disk storage. Existing paths are refused; use \code{continue_eivgp_disk()} to resume them.}
+\item{chunk_iter}{Maximum retained draws per chain buffered during disk sampling. Storage boundaries do not alter sampler transitions, warmup or tuning.}
 \item{X}{Numeric training design matrix.}
 
 \item{y}{Numeric response vector.}
@@ -116,7 +124,7 @@ settings such as \code{noise_strategy}, \code{sampler_strategy}, and
 \code{control_overrides} are rejected.}
 }
 \value{
-An EIV-GP fitted object.
+An EIV-GP fitted object for memory storage, or a small disk-backed checkpoint index for disk storage.
 }
 \description{
 This is the stable package-facing interface for both the univariate and
@@ -124,6 +132,19 @@ multivariate ordinal-input samplers. Independent chains use forked R
 processes on macOS/Linux and automatically fall back to serial execution.
 }
 \details{
+With \code{storage="disk"}, the unchanged sampler performs its original warmup
+and at most \code{chunk_iter} retained draws per chain before switching to
+disk-backed continuation. The returned \code{eivgp_disk_fit} contains terminal
+states and a block index, without the retained draw arrays. All post-warmup draws
+and HMC diagnostic traces are preserved in \code{path.draws/}; no thinning or
+new warmup is introduced. Configured initial sampler checkpoints still support
+warmup recovery. The initial warmup diagnostic trace is held until the first
+block is published. Keep the checkpoint and its adjacent archive together.
+Use \code{read_fit(path)} for analysis and \code{continue_eivgp_disk(path, ...)}
+for continuation. Full-history reads and scientific ESS checks require memory
+proportional to the retained parameter history; these analysis fits are released
+before additional sampling. Scientific ESS uses the original check and adaptive
+extension schedule, with target series stored on disk.
 X and y are always centered and scaled using training means and
 standard deviations. Variance priors and stored \code{samples_V} refer to the
 standardized response: the signal covariance is \eqn{V r R}, and noise

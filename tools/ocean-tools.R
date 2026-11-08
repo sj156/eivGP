@@ -9,9 +9,11 @@
 })
 
 ocean_workflow_api <- function(repository_dir=.ocean_repository) {
-  lib<-Sys.getenv('EIVGP_R_LIBRARY',file.path(repository_dir,'.r-library'))
-  if(nzchar(lib)&&dir.exists(lib)).libPaths(c(normalizePath(lib),.libPaths()))
-  if(!requireNamespace('eivGP',quietly=TRUE))stop('Install eivGP before running Ocean.')
+  description<-file.path(repository_dir,'eivGP/DESCRIPTION')
+  prepared<-if(file.exists(description))file.path(repository_dir,'results',paste0('eivgp-library-',read.dcf(description,fields='Version')[1L]))else ''
+  lib<-Sys.getenv('EIVGP_R_LIBRARY',if(nzchar(prepared)&&dir.exists(file.path(prepared,'eivGP')))prepared else file.path(repository_dir,'.r-library'))
+  if(nzchar(lib)&&dir.exists(lib)).libPaths(c(normalizePath(lib),file.path(repository_dir,'.r-library'),.libPaths()))
+  if(!requireNamespace('eivGP',quietly=TRUE)||utils::packageVersion('eivGP')<'0.4.0.9021')stop('Install eivGP >= 0.4.0.9021 before running Ocean.')
   ns<-asNamespace('eivGP');e<-new.env(parent=ns)
   evalq({
 ocean_settings <- function(profile = "paper", action = "plan", folds = 1:5,
@@ -374,7 +376,6 @@ ocean_task_files <- function(task,profile="paper",stage="analyze") {
     sub<-ocean_path(if(task$module=="continuation")"continuation_plus20k" else
       if(profile=="quick")"smoke_class4" else "full5_class4",sprintf("fold%02d",task$fold),task$cell)
     return(ocean_path(sub,c(if(task$module=="continuation")"fit_plus20k.rds" else "fit.rds",
-      "convergence_parameters.csv","convergence_summary.csv",
       if(task$module=="continuation")"continuation_settings.rds")))
   }
   initial <- if(profile!="quick") "full5_class4" else "smoke_class4"
@@ -581,9 +582,10 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
         ocean_run_task(task,repository_dir,output_dir,local_settings,inputs,identity)
         files<-ocean_result_relative(output_dir,ocean_task_files(task,settings$profile,stage))
         stopifnot(all(file.exists(ocean_path(output_dir,files))))
-        mixedgp_atomic_rds(list(identity=identity,task=task,files=files,
-          hashes=ocean_hashes(ocean_path(output_dir,files)),finished=as.character(Sys.time())),
-          ocean_path(output_dir,"workflow_tasks",paste0(id,".done.rds")))
+        if(!stage %in% c("fit","continue") || !task$module %in% c("eiv","continuation"))
+          mixedgp_atomic_rds(list(identity=identity,task=task,files=files,
+            hashes=ocean_hashes(ocean_path(output_dir,files)),finished=as.character(Sys.time())),
+            ocean_path(output_dir,"workflow_tasks",paste0(id,".done.rds")))
         NULL
       },error=function(e)e)
       detail<-if(inherits(outcome,"error"))conditionMessage(outcome) else ""
@@ -602,15 +604,51 @@ ocean_execute <- function(repository_dir,data_dir,output_dir,settings,
       status$elapsed_seconds[i]<<-result$elapsed_seconds
       event(i,"FINISH",active);publish("RUNNING",ids[i])
     }
+    if(stage %in% c("fit","continue")) {
+      paths <- vapply(pending, function(i) {
+        task <- selected[i,,drop=FALSE]
+        if(!task$module %in% c("eiv","continuation")) return('')
+        if(task$module=="continuation") {
+          destination <- ocean_path(output_dir,ocean_task_files(task,settings$profile,stage)[1L])
+          if(!file.exists(destination)) {
+            source <- ocean_path(output_dir,"full5_class4",sprintf("fold%02d",task$fold),task$cell,"fit.rds")
+            mixedgp_disk_copy(source,destination)
+          }
+        }
+        ocean_path(output_dir,ocean_task_files(task,settings$profile,stage)[1L])
+      }, '')
+      mixedgp_prepare_disk_fits(paths[nzchar(paths)])
+    }
     caps<-ifelse(selected$module[pending]%in%c("eiv","continuation"),settings$chains,1L)
     # Complete chain groups for EIV; one core per competitor task. Separate
     # queues keep a partial EIV group from starting on leftover cores.
     for(cap in unique(caps)) {
       queue<-pending[caps==cap]
-      outer<-mixedgp_stage_workers(settings$cores,stage,length(queue),cap)
+      outer<-if(stage=="analyze")min(1L,length(queue))else mixedgp_stage_workers(settings$cores,stage,length(queue),cap)
       mixedgp_budget_yield(function() mixedgp_schedule(queue,rep(1L,length(queue)),outer,
         function(i,allocated) mixedgp_budget_worker(function() work(i,min(settings$cores,cap))),
         start_task,finish_task))
+    }
+    # All chain workers have exited before loading complete diagnostic histories.
+    if(stage %in% c("fit","continue")) for(i in seq_len(nrow(selected))) {
+      task <- selected[i,,drop=FALSE]; rownames(task) <- NULL
+      if(!task$module %in% c("eiv","continuation") || !status$state[i] %in% c("DONE","REUSED")) next
+      files <- ocean_result_relative(output_dir,ocean_task_files(task,settings$profile,stage))
+      checkpoint <- ocean_path(output_dir,files[1L])
+      diagnostics <- file.path(dirname(checkpoint),c("convergence_parameters.csv","convergence_summary.csv"))
+      if(!all(file.exists(diagnostics))) {
+        diagnostic_settings <- settings
+        diagnostic_settings$action <- if(task$module=="eiv")"fit_diagnostics"else"continue_diagnostics"
+        diagnostic_settings$cores <- settings$cores
+        result <- tryCatch({ocean_run_task(task,repository_dir,output_dir,diagnostic_settings,inputs,identity);NULL},error=function(e)e)
+        if(inherits(result,"error")) {status$state[i]<-"FAILED";status$detail[i]<-conditionMessage(result);next}
+      }
+      relative <- substring(normalizePath(diagnostics),nchar(normalizePath(output_dir))+2L)
+      files <- c(files,relative)
+      mixedgp_atomic_rds(list(identity=identity,task=task,files=files,
+        hashes=ocean_hashes(ocean_path(output_dir,files)),finished=as.character(Sys.time())),
+        ocean_path(output_dir,"workflow_tasks",paste0(ids[i],".done.rds")))
+      gc(FALSE)
     }
     publish(if(any(status$state=="FAILED")) "SELECTED_COMPLETE_WITH_FAILURES" else "SELECTED_COMPLETE")
     ocean_atomic_lines(capture.output(print(status,row.names=FALSE)),ocean_path(job,"SUMMARY.txt"))
@@ -729,7 +767,7 @@ run_eiv <- function(fold, cell, train, test, fold_out) {
   fit_path <- ocean_path(cell_out, "fit.rds")
   if(identical(get0("stage",inherits=TRUE),"analyze") && !file.exists(fit_path))
     stop("Missing fit; run ocean.R --action=fit first: ",fit_path)
-  fit <- if (file.exists(fit_path)) readRDS(fit_path) else {
+  fit <- if (file.exists(fit_path)) mixedgp_disk_checkpoint(fit_path) else {
     # 2. Fit: missing U is NA; exact calibration entries are in u_obs.
     # RMD-BEGIN eiv-fit
     model <- eivGP::fit_eivgp(
@@ -739,24 +777,27 @@ run_eiv <- function(fold, cell, train, test, fold_out) {
       n_chains = chains, parallel = cores > 1L, n_cores = cores,
       sampler_control = list(u_block_size = u_block),
       seed = 2026092680L + fold * 100L + seed_offset,
-      verbose = TRUE
+      verbose = TRUE, storage = "disk", path = fit_path, chunk_iter = 1000L
     )
     # RMD-END eiv-fit
-    saveRDS(model, fit_path)
-    capture.output(summary(model), file = ocean_path(cell_out, "fit_summary.txt"))
     model
   }
-  if(identical(get0("stage",inherits=TRUE),"fit") && length(fit$checkpoint$states)>=4L) {
+  if (fit$checkpoint$iteration < iter) {
+    if (isTRUE(get0("stage", inherits=TRUE) %in% c("analyze", "fit_diagnostics")))
+      stop("Sampling is incomplete; run --action=fit before analysis.")
+    fit <- eivGP::continue_eivgp_disk(fit_path, iter - fit$checkpoint$iteration,
+      chunk_iter = 1000L, parallel = cores > 1L, n_cores = cores, verbose = TRUE)
+  }
+  if (identical(get0("stage", inherits=TRUE), "fit")) return(invisible("disk fit saved; diagnostics deferred"))
+  if(length(fit$checkpoint$states)>=4L) {
     rows<-mixedgp_study2_diagnostic_rows(x_test,c_test,5L)
     panel<-list(X=x_test[rows,,drop=FALSE],C=as.integer(c_test[rows,1L]),
       U=if(any(mask))test$U[rows]else NULL,n_latent=64L,seed=202610240L+fold*100L+seed_offset)
-    fit<-mixedgp_application_ess(fit,get0("ess_min",inherits=TRUE),panel,
-      ocean_path(cell_out,"scientific-ess-state.rds"),cores)
-    atomic_rds(fit,fit_path)
-    mixedgp_save_scientific_trace(fit,ocean_path(cell_out,"scientific-trace-targets"),
-      sprintf("Ocean | fold %d | %s",fold,cell))
-    unlink(ocean_path(cell_out,"scientific-ess-state.rds"))
+    mixedgp_application_disk_ess(fit_path,get0("ess_min",inherits=TRUE),panel,cores,1000L,
+      ocean_path(cell_out,"scientific-trace-targets"),sprintf("Ocean | fold %d | %s",fold,cell))
   }
+  fit <- mixedgp_disk_analysis_fit(fit_path)
+  capture.output(summary(fit), file = ocean_path(cell_out, "fit_summary.txt"))
   diagnostic_parts <- lapply(
     fit$diagnostics[c("rhat_hyper", "rhat_tau", "rhat_u")],
     function(z) z[, c("parameter", "rhat", "ess_bulk", "ess_tail", "target_pass"),
@@ -771,7 +812,7 @@ run_eiv <- function(fold, cell, train, test, fold_out) {
                         limited_screen_pass = length(finite_rhat) > 0L && length(finite_ess) > 0L &&
                           max(finite_rhat) <= 1.01 && min(finite_ess) >= 400),
              ocean_path(cell_out, "convergence_summary.csv"))
-  if(identical(get0("stage",inherits=TRUE),"fit"))return(invisible("fit saved; analysis deferred"))
+  if(identical(get0("stage",inherits=TRUE),"fit_diagnostics"))return(invisible("fit diagnostics saved"))
   n_draw <- nrow(fit$mcmc$samples_tau)
   stopifnot(is.finite(n_draw), n_draw > 0L)
   set.seed(2026092690L + fold * 100L + seed_offset)
@@ -884,7 +925,7 @@ run_one <- function(fold, cell) {
   metrics_path <- ocean_path(task_out, "metrics.csv")
   fit_path <- ocean_path(task_out, "fit_plus20k.rds")
   if (file.exists(metrics_path)) {
-    fit <- readRDS(fit_path)
+    fit <- mixedgp_disk_analysis_fit(fit_path)
     set_task(fold, cell, "DONE", "reused complete continuation",
              diag = diagnostic_row(fit))
     return(invisible(NULL))
@@ -894,17 +935,21 @@ run_one <- function(fold, cell) {
   t0 <- Sys.time()
   if(identical(get0("stage",inherits=TRUE),"analyze") && !file.exists(fit_path))
     stop("Missing continuation; run ocean.R --action=continue first.")
-  fit <- if (file.exists(fit_path)) readRDS(fit_path) else {
-    original <- readRDS(original_path(fold, cell))
-    # Continue the saved chains/RNG states, then repeat prediction and imputation.
+  if (!file.exists(fit_path)) mixedgp_disk_copy(original_path(fold, cell), fit_path)
+  fit <- mixedgp_disk_checkpoint(fit_path)
+  source_iteration <- fit$disk_history$copied_from_iteration
+  if (is.null(source_iteration)) source_iteration <- mixedgp_saved_iteration(original_path(fold, cell))
+  target_iteration <- source_iteration + continuation_iter
+  if (fit$checkpoint$iteration < target_iteration) {
+    if (isTRUE(get0("stage", inherits=TRUE) %in% c("analyze", "continue_diagnostics")))
+      stop("Sampling is incomplete; run --action=continue before analysis.")
     # RMD-BEGIN eiv-continue
-    continued <- eivGP::continue_eivgp(original, n_iter = continuation_iter,
-      parallel = cores > 1L, n_cores = cores, verbose = TRUE)
+    fit <- eivGP::continue_eivgp_disk(fit_path, target_iteration - fit$checkpoint$iteration,
+      chunk_iter = 1000L, parallel = cores > 1L, n_cores = cores, verbose = TRUE)
     # RMD-END eiv-continue
-    atomic_rds(continued, fit_path)
-    rm(original); gc(FALSE)
-    continued
   }
+  if(identical(get0("stage",inherits=TRUE),"continue"))return(invisible("disk continuation saved; diagnostics deferred"))
+  fit <- mixedgp_disk_analysis_fit(fit_path)
   diag <- diagnostic_row(fit)
   diagnostic_parts<-lapply(fit$diagnostics[c("rhat_hyper","rhat_tau","rhat_u")],function(z)z[,c("parameter","rhat","ess_bulk","ess_tail","target_pass"),drop=FALSE])
   atomic_csv(do.call(rbind,diagnostic_parts),ocean_path(task_out,"convergence_parameters.csv"))
@@ -913,7 +958,7 @@ run_one <- function(fold, cell) {
     max_rhat = diag$max_rhat, min_ess_bulk = diag$min_ess_bulk,
     pass_screen = diag$pass_screen), ocean_path(task_out, "diagnostics.csv"))
   capture.output(summary(fit), file = ocean_path(task_out, "fit_summary.txt"))
-  if(identical(get0("stage",inherits=TRUE),"continue"))return(invisible("continued fit saved; analysis deferred"))
+  if(identical(get0("stage",inherits=TRUE),"continue_diagnostics"))return(invisible("continuation diagnostics saved"))
 
   train <- read.csv(ocean_path(root, "data", sprintf("fold%02d_train.csv", fold)))
   test <- read.csv(ocean_path(root, "data", sprintf("fold%02d_test.csv", fold)))
@@ -2032,7 +2077,7 @@ ocean_diag_functionals <- function(i, sources, output_dir, inputs, grids, settin
     return(saved$result)
   }
   message("Function diagnostics: fold ", s$fold, "/", s$cell)
-  fit <- readRDS(fit_path)
+  fit <- mixedgp_disk_analysis_fit(fit_path)
   mask <- switch(s$cell, O0 = rep(FALSE, nrow(tr)), O20 = tr$calib_o20, O50 = tr$calib_o50)
   xmat <- function(d) as.matrix(d[, c("G2salinity", "log_pressure"), drop = FALSE])
   ocean_diag_require(inherits(fit, "eivgp_fit") && identical(fit$sampler_version, "0.3.1") &&
@@ -2295,7 +2340,7 @@ ocean_build_diagnostics <- function(output_dir, data_dir = ocean_path(output_dir
   saved_chains<-if(file.exists(identity_path))readRDS(identity_path)$numerics$chains else NULL
   if(is.null(saved_chains))saved_chains<-4L
   parts <- mixedgp_stage_lapply(seq_len(nrow(sources)), run_one,
-    workers=mixedgp_stage_workers(mixedgp_budget_cores(),"functionals",nrow(sources),saved_chains))
+    workers=1L)
   m <- do.call(rbind, lapply(parts, `[[`, "m"))
   f <- do.call(rbind, lapply(parts, `[[`, "f"))
   checks <- do.call(rbind, lapply(parts, `[[`, "integration_check"))
@@ -2658,7 +2703,7 @@ ocean_refinement_review <- function(output_dir, inputs, diagnostics,
     bad<-z[!is.finite(z$rhat) | !is.finite(z$ess_bulk) | !is.finite(z$ess_tail),]
     if(!nrow(bad) && i!=selected && i!=trace_selected) next
     cat(sprintf("Reviewing saved chains: fold %d / %s\n",s$fold,s$cell))
-    fit<-readRDS(ocean_path(output_dir,s$source,s$fit_file));by<-fit$mcmc$samples_by_chain
+    fit<-mixedgp_disk_analysis_fit(ocean_path(output_dir,s$source,s$fit_file));by<-fit$mcmc$samples_by_chain
     for(j in seq_len(nrow(bad))) {
       name<-bad$parameter[j]
       if(grepl("^dictionary_occupancy",name)) {
@@ -2768,7 +2813,7 @@ ocean_u_distribution_report <- function(output_dir,inputs,representative_fold=1L
   } else {
     object<-list()
     for(cell in c("O0","O20","O50")) {
-      s<-sources[sources$cell==cell,];fit<-readRDS(ocean_path(output_dir,s$source,s$fit_file))
+      s<-sources[sources$cell==cell,];fit<-mixedgp_disk_analysis_fit(ocean_path(output_dir,s$source,s$fit_file))
       draw<-do.call(rbind,lapply(fit$mcmc$samples_by_chain$u,function(u) {
         idx<-unique(round(seq(1,nrow(u),length.out=min(1000L,nrow(u)))))
         as.matrix(u)[idx,ids,drop=FALSE]
@@ -3088,12 +3133,11 @@ ocean_build_target_traces <- function(output_dir,inputs,settings,
       old<-readRDS(cache)
       if(identical(old$signature,signature))return(cache)
     }
-    fit<-readRDS(path)
+    fit<-mixedgp_disk_analysis_fit(path)
     z<-ocean_target_trace_fit(fit,train,s$fold,s$cell,settings$burn,spec,
       if(file.exists(dp))utils::read.csv(dp) else NULL)
     mixedgp_atomic_rds(list(signature=signature,source=s,result=z),cache);cache
-  },workers=mixedgp_stage_workers(mixedgp_budget_cores(),"functionals",nrow(sources),
-    if(is.null(settings$chains))4L else settings$chains))
+  },workers=1L)
   z<-lapply(paths,function(p)readRDS(p)$result)
   out<-list(traces=mixedgp_bind(lapply(z,`[[`,'traces')),summary=mixedgp_bind(lapply(z,`[[`,'summary')),
     integration_check=mixedgp_bind(lapply(z,`[[`,'integration_check')),

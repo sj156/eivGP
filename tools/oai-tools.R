@@ -10,10 +10,12 @@
 
 oai_load_api <- function(repo=.oai_repository) {
   repo<-normalizePath(repo)
-  lib<-Sys.getenv('EIVGP_R_LIBRARY',file.path(repo,'.r-library'))
-  if(nzchar(lib)&&dir.exists(lib)).libPaths(c(normalizePath(lib),.libPaths()))
-  if(!requireNamespace('eivGP',quietly=TRUE)||utils::packageVersion('eivGP')<'0.4.0.9014')
-    stop('Install eivGP >= 0.4.0.9014 before running this application.')
+  description<-file.path(repo,'eivGP/DESCRIPTION')
+  prepared<-if(file.exists(description))file.path(repo,'results',paste0('eivgp-library-',read.dcf(description,fields='Version')[1L]))else ''
+  lib<-Sys.getenv('EIVGP_R_LIBRARY',if(nzchar(prepared)&&dir.exists(file.path(prepared,'eivGP')))prepared else file.path(repo,'.r-library'))
+  if(nzchar(lib)&&dir.exists(lib)).libPaths(c(normalizePath(lib),file.path(repo,'.r-library'),.libPaths()))
+  if(!requireNamespace('eivGP',quietly=TRUE)||utils::packageVersion('eivGP')<'0.4.0.9021')
+    stop('Install eivGP >= 0.4.0.9021 before running this application.')
   ns<-asNamespace('eivGP');e<-new.env(parent=ns)
   evalq({
 oai_labels <- function(fields,labels=NULL) {
@@ -365,7 +367,7 @@ oai_plan_fit_args <- function(z, s) {
 
 oai_plan_fit_path <- function(out, task) oai_path(out, "fits", sprintf("fold%02d", task$fold), task$cell, "fit.rds")
 
-oai_plan_read_fit <- function(path) mixedgp_read_artifact(path)
+oai_plan_read_fit <- function(path) mixedgp_disk_analysis_fit(path)
 
 oai_plan_save_fit <- function(fit, path) {
     dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
@@ -406,7 +408,7 @@ oai_plan_fit_task <- function(task, inputs, out, s, extend = FALSE) {
     on.exit(options(old), add = TRUE)
     started<-proc.time()[['elapsed']]
     fit <- if (file.exists(path))
-        oai_plan_read_fit(path)
+        mixedgp_disk_checkpoint(path, s$checkpoint_step)
     else NULL
     if(!is.null(fit)) {
       if(!extend && fit$checkpoint$iteration>s$iter && is.null(s$ess_min))
@@ -419,7 +421,7 @@ oai_plan_fit_task <- function(task, inputs, out, s, extend = FALSE) {
     if (extend) {
         if (is.null(fit))
             stop("Missing initial fit: ", path)
-        tab <- oai_plan_diagnostics(fit)
+        tab <- oai_plan_diagnostics(oai_plan_read_fit(path)); gc(FALSE)
         if (!file.exists(request)) {
             if (isTRUE(tab$summary$core_pass))
                 return(invisible("SKIPPED_CONVERGED"))
@@ -435,39 +437,22 @@ oai_plan_fit_task <- function(task, inputs, out, s, extend = FALSE) {
         target <- readRDS(request)$target
     if (is.null(fit)) {
         first <- min(target, s$first_checkpoint)
-        fit <- do.call(fit_eivgp, c(oai_plan_fit_args(z, s), list(n_iter = first, burn = s$burn)))
-        oai_plan_save_fit(fit, path)
+        fit <- do.call(fit_eivgp, c(oai_plan_fit_args(z, s), list(n_iter = first, burn = s$burn,
+            storage = "disk", path = path, chunk_iter = s$checkpoint_step)))
         oai_plan_progress(fit,path,task,s,'SAVED',proc.time()[['elapsed']]-started)
     }
     else oai_plan_progress(fit,path,task,s,'RESUMED',proc.time()[['elapsed']]-started)
     # Later segments recover from the published full fit. Avoid duplicating its
     # entire retained history in the package's per-call restart identity.
     options(eivGP.checkpoint_root=NULL)
-    while (fit$checkpoint$iteration < target) {
-        current <- fit$checkpoint$iteration
-        next_target <- min(target, (floor(current/s$checkpoint_step) + 1L) * s$checkpoint_step)
-        fit <- continue_eivgp(fit, n_iter = next_target - current, parallel = s$cores > 1L, n_cores = s$cores,
-            verbose = TRUE)
-        oai_plan_save_fit(fit, path)
-        oai_plan_progress(fit,path,task,s,'SAVED',proc.time()[['elapsed']]-started)
-    }
+    if (fit$checkpoint$iteration < target)
+      fit <- continue_eivgp_disk(path, n_iter = target - fit$checkpoint$iteration,
+        chunk_iter = s$checkpoint_step, parallel = s$cores > 1L, n_cores = s$cores,
+        verbose = TRUE, progress = function(index)
+              oai_plan_progress(index,path,task,s,'SAVED',proc.time()[['elapsed']]-started))
     if (fit$checkpoint$burn != s$burn || length(fit$checkpoint$states) != s$chains)
         stop("Saved fit settings differ.")
-    if(isTRUE(s$final_stage) && length(fit$checkpoint$states)>=4L) {
-      X<-as.matrix(z$test[,z$x,drop=FALSE]);C<-as.matrix(z$test[,z$c,drop=FALSE])
-      rows<-mixedgp_study2_diagnostic_rows(X,C,5L)
-      panel<-list(X=X[rows,,drop=FALSE],C=C[rows,,drop=FALSE],
-        U=if(task$cell!="O0")as.matrix(z$test[rows,z$u,drop=FALSE])else NULL,
-        n_latent=64L,seed=z$protocol$seeds$prediction)
-      fit<-mixedgp_application_ess(fit,s$ess_min,panel,oai_path(dirname(path),"scientific-ess-state.rds"),s$cores)
-      oai_plan_save_fit(fit,path)
-      mixedgp_save_scientific_trace(fit,oai_path(dirname(path),"scientific-trace-targets"),
-        sprintf("OAI | fold %d | %s",task$fold,task$cell))
-      unlink(oai_path(dirname(path),"scientific-ess-state.rds"))
-    }
-    dg <- oai_plan_diagnostics(fit)
-    mixedgp_atomic_csv(dg$parameters, oai_path(dirname(path), "diagnostic_parameters.csv"))
-    mixedgp_atomic_csv(dg$summary, oai_path(dirname(path), "diagnostic_summary.csv"))
+    # Full-history diagnostics and scientific ESS run in the serial evaluation phase.
     oai_plan_progress(fit,path,task,s,'FIT_COMPLETE',proc.time()[['elapsed']]-started)
     invisible("DONE")
 }
@@ -632,6 +617,7 @@ oai_plan_analyze_cell <- function(task, inputs, out, s) {
     dg <- oai_plan_diagnostics(fit)
     mixedgp_atomic_csv(cbind(fold = task$fold, cell = task$cell, dg$summary), oai_path(dir, "convergence.csv"))
     mixedgp_atomic_csv(dg$parameters, oai_path(dir, "diagnostic_parameters.csv"))
+    mixedgp_atomic_csv(dg$summary, oai_path(dir, "diagnostic_summary.csv"))
     scale <- if (any(tr$calibration == 1L))
         "raw"
     else "model"
@@ -713,6 +699,18 @@ oai_analyze_cell <- function(task, inputs, out, s, stage) {
     tr <- z$train
     te <- z$test
     p <- z$protocol
+    path <- oai_plan_fit_path(out, task)
+    if (isTRUE(s$final_stage) && s$chains >= 4L) {
+      X <- as.matrix(te[, z$x, drop = FALSE]); C <- as.matrix(te[, z$c, drop = FALSE])
+      rows <- mixedgp_study2_diagnostic_rows(X, C, 5L)
+      panel <- list(X = X[rows, , drop = FALSE], C = C[rows, , drop = FALSE],
+        U = if (task$cell != "O0") as.matrix(te[rows, z$u, drop = FALSE]) else NULL,
+        n_latent = 64L, seed = p$seeds$prediction)
+      mixedgp_application_disk_ess(path, s$ess_min, panel, s$cores, s$checkpoint_step,
+        oai_path(dirname(path), "scientific-trace-targets"),
+        sprintf("OAI | fold %d | %s", task$fold, task$cell))
+      s$iter <- mixedgp_saved_iteration(path)
+    }
     stageout <- oai_path(out, stage)
     dir <- oai_path(stageout, "analysis", sprintf("fold%02d", task$fold), task$cell)
     dir.create(dir, recursive = TRUE, showWarnings = FALSE)
@@ -1058,6 +1056,7 @@ oai_resident_workers <- function(cores,phase,n_tasks,chains=4L) {
   phase<-match.arg(phase,c('fit','evaluate'))
   cores<-oai_integer(cores,'cores');chains<-oai_integer(chains,'chains')
   n_tasks<-oai_integer(n_tasks,'n_tasks',0L)
+  if (phase == 'evaluate') return(as.integer(min(1L, n_tasks)))
   # One resident job per chain-sized group in either phase; the shared pool
   # lends unused CPU slots to other jobs, including a complete group.
   as.integer(min(n_tasks,mixedgp_stage_workers(cores,phase,n_tasks,chains)))
@@ -1194,6 +1193,12 @@ oai_screen_run <- function(repo,p,group) {
   if(group=='report'||p$reuse_only){
     if(!all(vapply(required,function(r)oai_screen_verified(r$path,r$identity),logical(1))))stop('Saved-only prerequisites incomplete; no fitting or continuation started')
     return(oai_screen_collect(m,api,group))
+  }
+  if (group == 'eivGP') {
+    pending <- oai_screen_tasks(m, group, paste0('S', unlist(m$stages)[1L]))
+    paths <- vapply(seq_len(nrow(pending)), function(i)
+      api$oai_plan_fit_path(cases[[pending$plan[i]]]$output, pending[i, , drop = FALSE]), '')
+    mixedgp_prepare_disk_fits(paths, as.integer(m$checkpoint_step))
   }
   api$oai_plan_require();job<-oai_path(root,'logs',paste0(group,'_',format(Sys.time(),'%Y%m%d_%H%M%S')))
   old<-options(eivGP.core_events=oai_path(job,'core-events'));on.exit(options(old),add=TRUE)

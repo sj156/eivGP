@@ -31,10 +31,12 @@ if(!params$action%in%c('report','plan'))stop('Render saved results or a plan; us
 here<-dirname(knitr::current_input(dir=TRUE));repository_dir<-normalizePath(file.path(here,'..'))
 # A local copy may live outside the checkout; the rendering caller supplies its root.
 if(exists('.oai_repository_dir',inherits=TRUE))repository_dir<-get('.oai_repository_dir',inherits=TRUE)
-source(file.path(repository_dir,'tools/oai.R'),local=TRUE)
-api<-oai_load_api(repository_dir)
-list2env(as.list(api),envir=environment())
 a<-get0('.oai_precomputed_analysis',inherits=TRUE)
+if(!is.null(a$api)) api<-a$api else {
+  source(file.path(repository_dir,'tools/oai.R'),local=TRUE)
+  api<-oai_load_api(repository_dir)
+}
+list2env(as.list(api),envir=environment())
 if(is.null(a)&&params$action=='report') {
   data_dir<-if(nzchar(params$data_dir))params$data_dir else file.path(repository_dir,'data/oai')
   output_dir<-if(nzchar(params$output_dir))params$output_dir else oai_default_output('oai',params$profile,repository_dir)

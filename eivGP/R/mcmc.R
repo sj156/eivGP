@@ -10199,6 +10199,12 @@ mixedgp_resolve_latent_scale <- function(object,
 #'   settings such as `noise_strategy`, `sampler_strategy`, and
 #'   `control_overrides` are rejected.
 #' @return An EIV-GP fitted object.
+#' @param storage Draw storage: `"memory"` returns the ordinary full fit;
+#'   `"disk"` returns a small index and preserves every retained draw on disk.
+#' @param path New checkpoint path required for disk storage. Existing paths
+#'   are never overwritten; resume them with [continue_eivgp_disk()].
+#' @param chunk_iter Maximum retained draws per chain buffered during disk
+#'   sampling. It changes storage boundaries, not the MCMC algorithm or tuning.
 #' @details X and y are always centered and scaled using training means and
 #'   standard deviations. Variance priors and stored `samples_V` refer to the
 #'   standardized response: the signal covariance is \eqn{V r R}, and noise
@@ -10239,9 +10245,21 @@ fit_eivgp <- function(X,
                       sampler_control = list(),
                       sampler = c("ESS", "HMC", "HYBRID"),
                       ess_min = NULL, ess_panel = NULL,
+                      storage = c("memory", "disk"), path = NULL,
+                      chunk_iter = 1000L,
                       ...) {
   mixedgp_validate_ess_request(ess_min, ess_panel)
   fit_call <- match.call()
+  storage <- match.arg(storage)
+  if (storage == "disk") {
+    arguments <- list(X = X, y = y, C = C, U_obs = U_obs, latent_dim = latent_dim,
+      engine = engine, m_vec = m_vec, ordinal_levels = ordinal_levels, kernel = kernel,
+      matern_nu = matern_nu, ident = ident, standardize_U = standardize_U,
+      store_scores = store_scores, parallel = parallel, n_cores = n_cores,
+      priors = priors, sampler_control = sampler_control, sampler = sampler)
+    return(mixedgp_fit_disk(arguments, list(...), path, chunk_iter, fit_call, ess_min, ess_panel))
+  }
+  if (!is.null(path)) stop("path requires storage = 'disk'.")
   sampler <- match.arg(sampler)
   if (!is.null(sampler_control$sampler) && sampler_control$sampler != sampler) stop("Conflicting sampler options.")
   sampler_control$sampler <- sampler
@@ -11469,6 +11487,8 @@ diagnose_eivgp <- function(object, X = NULL, C = NULL, U = NULL,
                            rhat_limit = 1.01, bulk_ess_limit = 400,
                            tail_ess_limit = 400, mcse_sd_ratio_limit = 0.05,
                            additional_series = list()) {
+  if (inherits(object, 'eivgp_disk_fit'))
+    stop('Read the disk-backed fit with read_fit(path) before diagnosing it.')
   if (!inherits(object, "eivgp_fit")) stop("object must be an eivgp_fit.")
   for (name in c("rhat_limit", "bulk_ess_limit", "tail_ess_limit", "mcse_sd_ratio_limit")) {
     value <- get(name)

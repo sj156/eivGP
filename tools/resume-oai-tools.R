@@ -367,7 +367,10 @@ resume_oai_main <- function(group, script, args = commandArgs(TRUE)) {
     } else {
       session_file <- Sys.getenv('EIVGP_OAI_SESSION_FILE')
       if (nzchar(session_file)) resume_oai_record_session(session_file)
-      prepared_library <- file.path(repo, 'results/oai-resume-library')
+      version <- read.dcf(file.path(repo, 'eivGP/DESCRIPTION'), fields = 'Version')[1L]
+      prepared_library <- file.path(repo, 'results', paste0('eivgp-library-', version))
+      if (!dir.exists(file.path(prepared_library, 'eivGP')))
+        prepared_library <- file.path(repo, 'results/oai-resume-library')
       if (!nzchar(Sys.getenv('EIVGP_R_LIBRARY')) && dir.exists(file.path(prepared_library, 'eivGP')))
         Sys.setenv(EIVGP_R_LIBRARY = prepared_library)
       .libPaths(c(Sys.getenv('EIVGP_R_LIBRARY'), file.path(repo, '.r-library'), .libPaths()))
@@ -433,72 +436,8 @@ resume_oai_main <- function(group, script, args = commandArgs(TRUE)) {
           baseline(task, inputs, out, s, cc)
         }
       }
-      if (group == 'eivGP') {
-        if (!exists('continue_eivgp_disk', asNamespace('eivGP'), inherits = FALSE))
-          fail('Install eivGP >= 0.4.0.9020 for disk-backed continuation.')
-        if (!is.null(m$ess_min)) fail('Disk resume currently requires the saved fixed-iteration configuration (ess_min=NULL).')
-        fit_task <- api$oai_plan_fit_task
-        api$oai_plan_fit_task <- function(task, inputs, out, s, extend = FALSE) {
-          if (extend) fail('Use the frozen target budget with disk resume.')
-          path <- api$oai_plan_fit_path(out, task)
-          if (!file.exists(path)) {
-            first <- s; first$iter <- s$first_checkpoint; first$final_stage <- FALSE
-            fit_task(task, inputs, out, first, extend = FALSE)
-          }
-          index <- if (file.exists(file.path(paste0(path, '.draws'), 'index.rds')))
-            getFromNamespace('mixedgp_disk_index', 'eivGP')(path) else
-              eivGP::continue_eivgp_disk(path, 0L, chunk_iter = s$checkpoint_step)
-          if (index$checkpoint$burn != s$burn || length(index$checkpoint$states) != s$chains ||
-              index$control$sampler != s$samplers[[task$cell]] || index$checkpoint$iteration > s$iter)
-            fail('Disk checkpoint settings or iteration differ from the frozen stage.')
-          if (file.exists(file.path(dirname(path), 'continuation_request.rds')))
-            fail('A separate continuation request exists; resolve its target before this fixed-budget resume.')
-          started <- proc.time()[['elapsed']]
-          api$oai_plan_progress(index, path, task, s, 'RESUMED', 0)
-          index <- eivGP::continue_eivgp_disk(path, s$iter - index$checkpoint$iteration,
-            chunk_iter = s$checkpoint_step, parallel = s$cores > 1L, n_cores = s$cores,
-            verbose = TRUE, progress = function(state)
-              api$oai_plan_progress(state, path, task, s, 'SAVED', proc.time()[['elapsed']] - started))
-          api$oai_plan_progress(index, path, task, s, 'FIT_COMPLETE', proc.time()[['elapsed']] - started)
-          invisible('DONE')
-        }
-        # Sampling buffers are bounded. Full-history diagnostics are a separate,
-        # serial analysis phase; auxiliary S draws are not required for them.
-        read_fit <- api$oai_plan_read_fit
-        api$oai_plan_read_fit <- function(path) {
-          if (!file.exists(file.path(paste0(path, '.draws'), 'index.rds'))) return(read_fit(path))
-          index <- getFromNamespace('mixedgp_disk_index', 'eivGP')(path)
-          eivGP::read_fit(path, fields = setdiff(index$disk_history$fields, 'S'))
-        }
-        resident <- api$oai_resident_workers
-        api$oai_resident_workers <- function(cores, phase, n_tasks, chains = 4L)
-          if (phase == 'evaluate') min(1L, n_tasks) else resident(cores, phase, n_tasks, chains)
-        analyze <- api$analyze_cell
-        api$analyze_cell <- function(task, inputs, out, s, stage) {
-          path <- api$oai_plan_fit_path(out, task)
-          fit <- api$oai_plan_read_fit(path)
-          dg <- api$oai_plan_diagnostics(fit)
-          api$atomic_csv(dg$parameters, file.path(dirname(path), 'diagnostic_parameters.csv'))
-          api$atomic_csv(dg$summary, file.path(dirname(path), 'diagnostic_summary.csv'))
-          if (isTRUE(s$final_stage) && length(fit$checkpoint$states) >= 4L) {
-            z <- inputs$cells[[paste(task$fold, task$cell, sep = '/')]]
-            X <- as.matrix(z$test[, z$x, drop = FALSE]); C <- as.matrix(z$test[, z$c, drop = FALSE])
-            rows <- getFromNamespace('mixedgp_study2_diagnostic_rows', 'eivGP')(X, C, 5L)
-            panel <- list(X = X[rows, , drop = FALSE], C = C[rows, , drop = FALSE],
-              U = if (task$cell != 'O0') as.matrix(z$test[rows, z$u, drop = FALSE]) else NULL,
-              n_latent = 64L, seed = z$protocol$seeds$prediction)
-            fit <- getFromNamespace('mixedgp_application_ess', 'eivGP')(fit, NULL, panel,
-              file.path(dirname(path), 'scientific-ess-state.rds'), s$cores)
-            api$atomic_rds(list(iteration = fit$checkpoint$iteration, scientific_ess = fit$scientific_ess),
-              file.path(dirname(path), 'scientific-diagnostics.rds'))
-            getFromNamespace('mixedgp_save_scientific_trace', 'eivGP')(fit,
-              file.path(dirname(path), 'scientific-trace-targets'),
-              sprintf('OAI | fold %d | %s', task$fold, task$cell))
-          }
-          rm(fit); gc(FALSE)
-          analyze(task, inputs, out, s, stage)
-        }
-      }
+      if (group == 'eivGP' && utils::packageVersion('eivGP') < '0.4.0.9021')
+        fail('Install eivGP >= 0.4.0.9021 for the default disk-backed application workflow.')
       changed <- union(names(saved$modules), names(modules))
       changed <- changed[!vapply(changed, function(n)
         identical(unname(saved$modules[n]), unname(modules[n])), logical(1))]

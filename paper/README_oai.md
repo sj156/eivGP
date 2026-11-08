@@ -128,10 +128,11 @@ This bounds sampling memory without changing the transition algorithm, priors,
 warmup exclusion, update schedule, seeds, draw retention or target iterations.
 The existing `fit.rds` and its `.draws` directory must remain together.
 
-The revised package was installed separately in `results/oai-resume-library/`
-on the development machine, leaving the library of the active R job intact.
-Resume entrypoints prefer that library when present unless `EIVGP_R_LIBRARY`
-is explicitly set. On another checkout, install the revised package normally
+The revised package is installed separately in `results/eivgp-library-0.4.0.9021/`
+on the development machine, leaving active jobs' libraries intact. Real-data
+entrypoints prefer the prepared library matching the checkout's package version
+unless `EIVGP_R_LIBRARY` is explicitly set. The OAI resume entrypoints retain
+`results/oai-resume-library/` as a fallback for older prepared installations. On another checkout, install the revised package normally
 with `tools/build_package.R` and `tools/setup_numerical.R --install-local`.
 An already running R process adopts these changes only after it is restarted
 from its last saved checkpoint.

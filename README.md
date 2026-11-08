@@ -252,6 +252,15 @@ runs separately, one fit at a time. The original
 configuration, RNG states and all retained draws are preserved. Keep the small
 `fit.rds` index and its `.draws` directory together.
 
+From package 0.4.0.9021, fresh ADNI, OAI and Ocean fits also use disk storage
+by default. Their CLI syntax and numerical settings are unchanged. Independent
+fits retain only their current chain states and bounded draw buffers during
+sampling; legacy conversion precedes fitting forks, and full-history analysis
+uses one resident fit. Install the revised package before using these workflows.
+For direct R calls, add `storage="disk", path="fit.rds", chunk_iter=1000L`
+to `fit_eivgp()`. It returns a small index; call `read_fit("fit.rds")` explicitly
+when full-history analysis is needed. Every retained draw stays on disk.
+
 ## 5. Find outputs and inspect results
 
 Applications place group reports in `reports/eivGP/index.html` and

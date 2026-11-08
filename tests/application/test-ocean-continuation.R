@@ -17,9 +17,13 @@ testthat::test_that("Ocean continuation accepts supported totals before held-out
   fit<-list(diagnostics=list(rhat_hyper=diagnostic,rhat_tau=diagnostic,rhat_u=diagnostic),
     mcmc=list(samples_tau=matrix(1,20L,1L)))
   saveRDS(fit,file.path(cell,"fit_plus20k.rds"))
+  fit$checkpoint <- list(iteration=80L)
+  fit$disk_history <- list(copied_from_iteration=0L)
   env<-new.env(parent=environment(ocean_initial_functions))
   env$root<-root;env$out<-output;env$continuation_iter<-80L
   env$atomic_csv<-mixedgp_atomic_csv
+  env$mixedgp_disk_checkpoint<-function(...)fit
+  env$mixedgp_disk_analysis_fit<-function(...)fit
   env$set_task<-env$write_progress<-function(...)invisible(NULL)
   ocean_continuation_functions(env)
   for(n in c(200L,500L,1000L)) {
@@ -36,6 +40,8 @@ testthat::test_that("Ocean continuation accepts supported totals before held-out
     testthat::expect_error(env$run_one(1L,"O20"),"nrow")
   }
   testthat::expect_identical(prediction_calls,3L)
+  env$stage <- 'analyze'; fit$checkpoint$iteration <- 79L
+  testthat::expect_error(env$run_one(1L,'O20'),'Sampling is incomplete')
 })
 
 

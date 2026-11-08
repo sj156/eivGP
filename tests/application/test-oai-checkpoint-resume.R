@@ -33,17 +33,17 @@ testthat::test_that('HMC and ESS recover exact chains after warm-up and full-fit
     warm<-list.files(dirname(path),'^chain-[0-9]+[.]rds$',recursive=TRUE,full.names=TRUE)
     testthat::expect_true(length(warm)>=1L)
     testthat::expect_identical(readRDS(warm[1])$iteration,8L)
-    save_fit<-e$oai_plan_save_fit
-    e$oai_plan_save_fit<-function(fit,path) {
-      save_fit(fit,path)
-      if(fit$checkpoint$iteration==24L)stop('test published-fit interruption')
-      invisible(path)
-    }
-    testthat::expect_error(suppressWarnings(e$oai_plan_fit_task(task,input,out,s)),'published-fit interruption')
+    commit <- getFromNamespace('mixedgp_disk_commit','eivGP')
+    testthat::expect_error(suppressWarnings(testthat::with_mocked_bindings(
+      e$oai_plan_fit_task(task,input,out,s), mixedgp_disk_commit=function(index,path) {
+        result <- commit(index,path)
+        if(index$checkpoint$iteration==24L)stop('test published-fit interruption')
+        result
+      }, .package='eivGP')),'published-fit interruption')
     testthat::expect_identical(e$oai_plan_read_fit(path)$checkpoint$iteration,24L)
-    e$oai_plan_save_fit<-save_fit;s$cores<-2L
+    s$cores<-2L
     suppressWarnings(e$oai_plan_fit_task(task,input,out,s))
-    resumed<-e$oai_plan_read_fit(path)
+    resumed<-eivGP::read_fit(path)
     direct<-suppressWarnings(do.call(eivGP::fit_eivgp,c(e$oai_plan_fit_args(input$cells[[paste(1,cell,sep='/')]],s),
       list(n_iter=32L,burn=8L))))
     testthat::expect_identical(resumed$mcmc$samples_by_chain,direct$mcmc$samples_by_chain)

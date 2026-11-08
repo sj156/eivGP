@@ -10,10 +10,12 @@
 
 adni_load_api <- function(repo=.adni_repository) {
   repo<-normalizePath(repo)
-  lib<-Sys.getenv('EIVGP_R_LIBRARY',file.path(repo,'.r-library'))
-  if(nzchar(lib)&&dir.exists(lib)).libPaths(c(normalizePath(lib),.libPaths()))
-  if(!requireNamespace('eivGP',quietly=TRUE)||utils::packageVersion('eivGP')<'0.4.0.9014')
-    stop('Install eivGP >= 0.4.0.9014 before running this application.')
+  description<-file.path(repo,'eivGP/DESCRIPTION')
+  prepared<-if(file.exists(description))file.path(repo,'results',paste0('eivgp-library-',read.dcf(description,fields='Version')[1L]))else ''
+  lib<-Sys.getenv('EIVGP_R_LIBRARY',if(nzchar(prepared)&&dir.exists(file.path(prepared,'eivGP')))prepared else file.path(repo,'.r-library'))
+  if(nzchar(lib)&&dir.exists(lib)).libPaths(c(normalizePath(lib),file.path(repo,'.r-library'),.libPaths()))
+  if(!requireNamespace('eivGP',quietly=TRUE)||utils::packageVersion('eivGP')<'0.4.0.9021')
+    stop('Install eivGP >= 0.4.0.9021 before running this application.')
   ns<-asNamespace('eivGP');e<-new.env(parent=ns)
   evalq({
 # Task folders and shared directories mirror the Ocean flat result layout.
@@ -360,7 +362,7 @@ adni_plan_fit_args <- function(z, s) {
 
 adni_plan_fit_path <- function(out, task) adni_path(out, "fits", sprintf("fold%02d", task$fold), task$cell, "fit.rds")
 
-adni_plan_read_fit <- function(path) mixedgp_read_artifact(path)
+adni_plan_read_fit <- function(path) mixedgp_disk_analysis_fit(path)
 
 adni_plan_save_fit <- function(fit, path) {
     dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
@@ -383,7 +385,7 @@ adni_plan_fit_task <- function(task, inputs, out, s, extend = FALSE) {
     old <- options(eivGP.checkpoint_root = NULL)
     on.exit(options(old), add = TRUE)
     fit <- if (file.exists(path))
-        adni_plan_read_fit(path)
+        mixedgp_disk_checkpoint(path, s$checkpoint_step)
     else NULL
     if(!is.null(fit)) {
       if(!extend && fit$checkpoint$iteration>s$iter && is.null(s$ess_min))
@@ -396,7 +398,7 @@ adni_plan_fit_task <- function(task, inputs, out, s, extend = FALSE) {
     if (extend) {
         if (is.null(fit))
             stop("Missing initial fit: ", path)
-        tab <- adni_plan_diagnostics(fit)
+        tab <- adni_plan_diagnostics(adni_plan_read_fit(path)); gc(FALSE)
         if (!file.exists(request)) {
             if (isTRUE(tab$summary$core_pass))
                 return(invisible("SKIPPED_CONVERGED"))
@@ -412,33 +414,16 @@ adni_plan_fit_task <- function(task, inputs, out, s, extend = FALSE) {
         target <- readRDS(request)$target
     if (is.null(fit)) {
         first <- min(target, s$first_checkpoint)
-        fit <- do.call(fit_eivgp, c(adni_plan_fit_args(z, s), list(n_iter = first, burn = s$burn)))
-        adni_plan_save_fit(fit, path)
+        fit <- do.call(fit_eivgp, c(adni_plan_fit_args(z, s), list(n_iter = first, burn = s$burn,
+            storage = "disk", path = path, chunk_iter = s$checkpoint_step)))
     }
-    while (fit$checkpoint$iteration < target) {
-        current <- fit$checkpoint$iteration
-        next_target <- min(target, (floor(current/s$checkpoint_step) + 1L) * s$checkpoint_step)
-        fit <- continue_eivgp(fit, n_iter = next_target - current, parallel = s$cores > 1L, n_cores = s$cores,
-            verbose = TRUE)
-        adni_plan_save_fit(fit, path)
-    }
+    if (fit$checkpoint$iteration < target)
+      fit <- continue_eivgp_disk(path, n_iter = target - fit$checkpoint$iteration,
+        chunk_iter = s$checkpoint_step, parallel = s$cores > 1L, n_cores = s$cores,
+        verbose = TRUE)
     if (fit$checkpoint$burn != s$burn || length(fit$checkpoint$states) != s$chains)
         stop("Saved fit settings differ.")
-    if(isTRUE(s$final_stage) && length(fit$checkpoint$states)>=4L) {
-      X<-as.matrix(z$test[,z$x,drop=FALSE]);C<-as.matrix(z$test[,z$c,drop=FALSE])
-      rows<-mixedgp_study2_diagnostic_rows(X,C,5L)
-      panel<-list(X=X[rows,,drop=FALSE],C=C[rows,,drop=FALSE],
-        U=if(task$cell!="O0")as.matrix(z$test[rows,z$u,drop=FALSE])else NULL,
-        n_latent=64L,seed=z$protocol$seeds$prediction)
-      fit<-mixedgp_application_ess(fit,s$ess_min,panel,adni_path(dirname(path),"scientific-ess-state.rds"),s$cores)
-      adni_plan_save_fit(fit,path)
-      mixedgp_save_scientific_trace(fit,adni_path(dirname(path),"scientific-trace-targets"),
-        sprintf("ADNI | fold %d | %s",task$fold,task$cell))
-      unlink(adni_path(dirname(path),"scientific-ess-state.rds"))
-    }
-    dg <- adni_plan_diagnostics(fit)
-    mixedgp_atomic_csv(dg$parameters, adni_path(dirname(path), "diagnostic_parameters.csv"))
-    mixedgp_atomic_csv(dg$summary, adni_path(dirname(path), "diagnostic_summary.csv"))
+    # Full-history diagnostics and scientific ESS run in the serial evaluation phase.
     invisible("DONE")
 }
 
@@ -602,6 +587,7 @@ adni_plan_analyze_cell <- function(task, inputs, out, s) {
     dg <- adni_plan_diagnostics(fit)
     mixedgp_atomic_csv(cbind(fold = task$fold, cell = task$cell, dg$summary), adni_path(dir, "convergence.csv"))
     mixedgp_atomic_csv(dg$parameters, adni_path(dir, "diagnostic_parameters.csv"))
+    mixedgp_atomic_csv(dg$summary, adni_path(dir, "diagnostic_summary.csv"))
     scale <- if (any(tr$calibration == 1L))
         "raw"
     else "model"
@@ -683,6 +669,18 @@ adni_analyze_cell <- function(task, inputs, out, s, stage) {
     tr <- z$train
     te <- z$test
     p <- z$protocol
+    path <- adni_plan_fit_path(out, task)
+    if (isTRUE(s$final_stage) && s$chains >= 4L) {
+      X <- as.matrix(te[, z$x, drop = FALSE]); C <- as.matrix(te[, z$c, drop = FALSE])
+      rows <- mixedgp_study2_diagnostic_rows(X, C, 5L)
+      panel <- list(X = X[rows, , drop = FALSE], C = C[rows, , drop = FALSE],
+        U = if (task$cell != "O0") as.matrix(te[rows, z$u, drop = FALSE]) else NULL,
+        n_latent = 64L, seed = p$seeds$prediction)
+      mixedgp_application_disk_ess(path, s$ess_min, panel, s$cores, s$checkpoint_step,
+        adni_path(dirname(path), "scientific-trace-targets"),
+        sprintf("ADNI | fold %d | %s", task$fold, task$cell))
+      s$iter <- mixedgp_saved_iteration(path)
+    }
     stageout <- adni_path(out, stage)
     dir <- adni_path(stageout, "analysis", sprintf("fold%02d", task$fold), task$cell)
     dir.create(dir, recursive = TRUE, showWarnings = FALSE)
@@ -1028,6 +1026,7 @@ adni_resident_workers <- function(cores,phase,n_tasks,chains=4L) {
   phase<-match.arg(phase,c('fit','evaluate'))
   cores<-adni_integer(cores,'cores');chains<-adni_integer(chains,'chains')
   n_tasks<-adni_integer(n_tasks,'n_tasks',0L)
+  if (phase == 'evaluate') return(as.integer(min(1L, n_tasks)))
   # One resident job per chain-sized group in either phase; the shared pool
   # lends unused CPU slots to other jobs, including a complete group.
   as.integer(min(n_tasks,mixedgp_stage_workers(cores,phase,n_tasks,chains)))
@@ -1161,6 +1160,12 @@ adni_screen_run <- function(repo,p,group) {
     if(!all(vapply(required,function(r)adni_screen_verified(r$path,r$identity),logical(1))))stop('Saved-only prerequisites incomplete; no fitting or continuation started')
     return(adni_screen_collect(m,api,group))
   }
+  if (group == 'eivGP') {
+    pending <- adni_screen_tasks(m, group, paste0('S', unlist(m$stages)[1L]))
+    paths <- vapply(seq_len(nrow(pending)), function(i)
+      api$adni_plan_fit_path(cases[[pending$plan[i]]]$output, pending[i, , drop = FALSE]), '')
+    mixedgp_prepare_disk_fits(paths, as.integer(m$checkpoint_step))
+  }
   api$adni_plan_require();job<-adni_path(root,'logs',paste0(group,'_',format(Sys.time(),'%Y%m%d_%H%M%S')))
   old<-options(eivGP.core_events=adni_path(job,'core-events'));on.exit(options(old),add=TRUE)
   close<-api$mixedgp_budget_enter(p$cores);on.exit(close(),add=TRUE,after=FALSE);cores<-api$mixedgp_budget_cores()
@@ -1176,7 +1181,7 @@ adni_screen_run <- function(repo,p,group) {
         path<-api$adni_plan_fit_path(out,t)
         if(evaluate){
           if(!file.exists(path))stop('Stage checkpoint unavailable for evaluation')
-          actual<-api$adni_plan_read_fit(path)$checkpoint$iteration
+          actual<-mixedgp_saved_iteration(path)
           if(is.null(s$ess_min) && actual!=iter || !is.null(s$ess_min) && actual<iter)stop('Stage checkpoint unavailable for evaluation')
           s$iter<-actual
           api$analyze_cell(t,inp,out,s,stage);folder<-adni_path(out,stage,'analysis',sprintf('fold%02d',t$fold),t$cell)
@@ -2097,14 +2102,14 @@ run_one_fold <- function(fold) {
 
   fit_path <- adni_path(fold_dir, "fit_latest.rds")
   if (file.exists(fit_path)) {
-    fit <- mixedgp_read_artifact(fit_path)
+    fit <- mixedgp_disk_checkpoint(fit_path, CHECKPOINT_EVERY)
     stopifnot(
       identical(fit$sampler_version, "0.3.1"),
       identical(fit$control$u_block_size, SAMPLER_CONTROL$u_block_size),
       identical(fit$control$cross_every, SAMPLER_CONTROL$cross_every),
-      fit$diagnostics$summary$burn == BURN
+      fit$checkpoint$burn == BURN
     )
-    stamp(fold_dir, paste("Loaded checkpoint at iteration", fit$diagnostics$summary$n_iter))
+    stamp(fold_dir, paste("Loaded checkpoint at iteration", fit$checkpoint$iteration))
   } else {
     first_target <- min(INITIAL_ITER, BURN + CHECKPOINT_EVERY)
     set_status(fold_dir, fold, "fit", paste("Initial fit to iteration", first_target))
@@ -2116,43 +2121,45 @@ run_one_fold <- function(fold) {
       parallel = TRUE, n_cores = N_CORES, n_chains = N_CHAINS,
       n_iter = first_target, burn = BURN, thin = 1L,
       seed = fit_seed,
-      verbose = FALSE, sampler_control = SAMPLER_CONTROL
+      verbose = FALSE, sampler_control = SAMPLER_CONTROL,
+      storage = "disk", path = fit_path, chunk_iter = CHECKPOINT_EVERY
     )
-    save_fit(fit, fit_path)
     elapsed <- as.numeric(difftime(Sys.time(), started, units = "secs"))
     stamp(fold_dir, sprintf("Saved checkpoint at %d; segment %.1f min.",
                             first_target, elapsed / 60))
   }
 
   extend_to <- function(fit, target) {
-    while (fit$diagnostics$summary$n_iter < target) {
-      current <- fit$diagnostics$summary$n_iter
+    while (fit$checkpoint$iteration < target) {
+      current <- fit$checkpoint$iteration
       add <- min(CHECKPOINT_EVERY, target - current)
       set_status(fold_dir, fold, "continue",
                  sprintf("Iteration %d -> %d; checkpoint will overwrite fit_latest.rds.",
                          current, current + add))
       started <- Sys.time()
-      fit <- continue_eivgp(fit, n_iter = add, parallel = TRUE,
+      fit <- continue_eivgp_disk(fit_path, n_iter = add, chunk_iter = CHECKPOINT_EVERY, parallel = TRUE,
                             n_cores = N_CORES, verbose = FALSE)
-      save_fit(fit, fit_path)
       elapsed <- as.numeric(difftime(Sys.time(), started, units = "secs"))
-      remaining <- target - fit$diagnostics$summary$n_iter
+      remaining <- target - fit$checkpoint$iteration
       eta <- if (remaining > 0L) elapsed / add * remaining / 60 else 0
       stamp(fold_dir, sprintf(
         "Saved iteration %d; last %d took %.1f min; ETA to %d about %.1f min.",
-        fit$diagnostics$summary$n_iter, add, elapsed / 60, target, eta
+        fit$checkpoint$iteration, add, elapsed / 60, target, eta
       ))
     }
     fit
   }
 
   fit <- extend_to(fit, INITIAL_ITER)
+  fit <- mixedgp_disk_analysis_fit(fit_path)
   current_iter <- fit$diagnostics$summary$n_iter
   final_stage <- paste0("iter", current_iter)
   diagnostic <- light_diagnostics(fit, fold_dir, final_stage)
   draw_convergence_plots(fit, diagnostic, fold_dir, final_stage)
   if (!diagnostic$passed && current_iter < INITIAL_ITER + EXTENSION_ITER) {
+    fit <- mixedgp_disk_checkpoint(fit_path); gc(FALSE)
     fit <- extend_to(fit, INITIAL_ITER + EXTENSION_ITER)
+    fit <- mixedgp_disk_analysis_fit(fit_path)
     final_stage <- paste0("iter", fit$diagnostics$summary$n_iter)
     diagnostic <- light_diagnostics(fit, fold_dir, final_stage)
     draw_convergence_plots(fit, diagnostic, fold_dir, final_stage)
@@ -2215,6 +2222,8 @@ run_one_fold <- function(fold) {
 
 if (!PREPARE_ONLY) {
 cat("Running fit units; progress and errors are written to fold_N/worker.log.\n")
+mixedgp_prepare_disk_fits(vapply(FOLDS_TO_RUN, function(f)
+  adni_path(OUTPUT_ROOT, paste0("fold_", f), "fit_latest.rds"), ''), CHECKPOINT_EVERY)
 all_metrics <- adni_run_folds(FOLDS_TO_RUN, run_one_fold, CORE_PLAN, OUTPUT_ROOT)
 combined_metrics <- do.call(rbind, all_metrics)
 write.csv(combined_metrics, adni_path(OUTPUT_ROOT, "all_fold_metrics.csv"), row.names = FALSE)

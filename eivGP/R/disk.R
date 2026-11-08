@@ -2,6 +2,198 @@
 # immutable draw blocks and the original legacy fit survive interrupted writes.
 mixedgp_disk_directory <- function(path) paste0(path, ".draws")
 
+summary.eivgp_disk_fit <- function(object, ...) {
+  cp <- object$checkpoint; nc <- length(cp$states)
+  object$diagnostics <- list(summary = data.frame(sampler_strategy = object$sampler_strategy,
+    n_chains = nc, n_iter = cp$iteration, burn = cp$burn, thin = cp$thin,
+    saved_per_chain = cp$iteration - cp$burn,
+    total_saved_draws = nc * (cp$iteration - cp$burn),
+    parallel_backend = if (is.null(object$disk_history$parallel_backend)) 'serial' else object$disk_history$parallel_backend,
+    parallel_cores = if (is.null(object$disk_history$parallel_cores)) 1L else object$disk_history$parallel_cores,
+    time_seconds = object$disk_history$elapsed_seconds))
+  result <- summary.eivgp_fit(object, ...)
+  result$storage <- 'disk'
+  result
+}
+
+print.eivgp_disk_fit <- function(x, ...) {
+  cp <- x$checkpoint
+  cat('<eivgp_disk_fit>\n', length(cp$states), ' chains; iteration ', cp$iteration,
+      '; burn ', cp$burn, '; ', length(cp$states) * (cp$iteration - cp$burn),
+      ' retained draws stored on disk.\nUse read_fit(path) for full-history analysis.\n', sep = '')
+  invisible(x)
+}
+
+# A short call to the unchanged sampler performs the original warmup and at
+# most one retained block. All subsequent sampling uses terminal states only.
+mixedgp_fit_disk <- function(arguments, dots, path, chunk_iter, call, ess_min, ess_panel) {
+  mixedgp_validate_named_dots(dots)
+  if (!is.character(path) || length(path) != 1L || is.na(path) || !nzchar(path))
+    stop("Disk storage requires one nonempty checkpoint path.")
+  chunk_iter <- mixedgp_as_integer_strict(chunk_iter, "chunk_iter", 1L, 1L)
+  target <- mixedgp_as_integer_strict(if (is.null(dots$n_iter)) 1750L else dots$n_iter, "n_iter", 1L, 1L)
+  burn <- mixedgp_as_integer_strict(if (is.null(dots$burn)) 500L else dots$burn, "burn", 0L, 1L)
+  if (target <= burn) stop("n_iter must exceed burn.")
+  if (!is.null(ess_min) && !is.null(dots$n_chains) && dots$n_chains < 4L)
+    stop("Scientific ESS requires at least four chains.")
+  path <- path.expand(path)
+  if (file.exists(path) || dir.exists(mixedgp_disk_directory(path)))
+    stop("Checkpoint path already exists; use continue_eivgp_disk() to resume it: ", path)
+  rng <- mixedgp_rng_state(); on.exit(mixedgp_restore_rng_state(rng), add = TRUE)
+  first <- as.integer(min(as.double(target), as.double(burn) + chunk_iter))
+  dots$n_iter <- first
+  prefix <- do.call(fit_eivgp, c(arguments, dots))
+  prefix$call <- call
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  save_fit(prefix, path)
+  mixedgp_retire_saved_checkpoints(prefix, path)
+  rm(prefix); gc(FALSE)
+  path <- normalizePath(path)
+  index <- continue_eivgp_disk(path, target - first, chunk_iter = chunk_iter,
+    parallel = arguments$parallel, n_cores = arguments$n_cores,
+    verbose = isTRUE(dots$verbose))
+  if (!is.null(ess_min)) index <- mixedgp_finish_ess_disk(path, ess_min, ess_panel,
+    arguments$parallel, arguments$n_cores, chunk_iter)
+  index
+}
+
+# Use the established scientific-ESS check and extension policy. Diagnostic
+# materialization is separate from sampling, and is released before forking.
+mixedgp_finish_ess_disk <- function(path, ess_min, panel = NULL, parallel = FALSE,
+                                    n_cores = 1L, chunk_iter = 1000L) {
+  index <- mixedgp_disk_index(path)
+  if (length(index$checkpoint$states) < 4L) stop("Scientific ESS requires at least four chains.")
+  if (is.null(panel)) {
+    d <- index$data; one <- mixedgp_fit_engine(index) == 'univariate'
+    X <- if (one) d$x_raw else d$X_raw
+    C <- if (one) matrix(d$c_ord, ncol = 1L) else d$C_ord
+    rows <- unique(as.integer(round(seq(1, nrow(X), length.out = min(5, nrow(X))))))
+    panel <- list(X = X[rows, , drop = FALSE], C = C[rows, , drop = FALSE])
+  }
+  history <- data.frame()
+  repeat {
+    fit <- read_fit(path, fields = setdiff(index$disk_history$fields, 'S'))
+    state <- continue_eivgp_until_ess(fit, panel$X, panel$C, panel$U, ess_min = ess_min,
+      n_latent = if (is.null(panel$n_latent)) 64L else panel$n_latent,
+      seed = if (is.null(panel$seed)) 481517L else panel$seed,
+      parallel = parallel, n_cores = n_cores, max_extensions = 0L, adaptive = TRUE)
+    history <- rbind(history, state$history)
+    if (isTRUE(state$success)) {
+      result <- state[setdiff(names(state), 'fit')]; result$history <- history
+      # The in-memory ESS loop removes/re-adds these fields after extension.
+      if (nrow(history) > 1L)
+        result <- result[c('history', 'success', 'settings', 'target_series', 'diagnostics')]
+      return(mixedgp_disk_save_scientific(index, result, path))
+    }
+    extra <- mixedgp_ess_extension_size(state$diagnostics,
+      index$checkpoint$iteration - index$checkpoint$burn, ess_min, 5000L)
+    rm(fit, state); gc(FALSE)
+    index <- continue_eivgp_disk(path, extra, chunk_iter = chunk_iter,
+                                parallel = parallel, n_cores = n_cores)
+  }
+}
+
+mixedgp_disk_save_scientific <- function(index, result, path) {
+  name <- sprintf('scientific-ess-%09d.rds', index$checkpoint$iteration)
+  destination <- file.path(mixedgp_disk_directory(path), name)
+  mixedgp_atomic_rds(result, destination)
+  index$scientific_ess <- result[setdiff(names(result), 'target_series')]
+  index$disk_history$scientific_ess <- list(file = name, iteration = index$checkpoint$iteration,
+    md5 = unname(tools::md5sum(destination)))
+  mixedgp_disk_commit(index, path)
+}
+
+# Legacy conversion is deliberately isolated and sequential: historical arrays
+# must not be inherited by a later pool of application fitting workers.
+mixedgp_prepare_disk_fits <- function(paths, chunk_iter = 1000L) {
+  for (path in unique(paths)) if (file.exists(path) &&
+      !file.exists(file.path(mixedgp_disk_directory(path), 'index.rds'))) {
+    cat('Preparing disk history: ', path, '\n', sep = ''); flush.console()
+    code <- paste0('a<-commandArgs(TRUE);.libPaths(strsplit(a[3],.Platform$path.sep,fixed=TRUE)[[1]]);',
+      'eivGP::continue_eivgp_disk(a[1],0L,chunk_iter=as.integer(a[2]),parallel=FALSE,n_cores=1L)')
+    status <- system2(file.path(R.home('bin'), 'Rscript'),
+      shQuote(c('--vanilla', '-e', code, normalizePath(path), as.character(chunk_iter),
+                paste(unique(c(dirname(getNamespaceInfo(asNamespace('eivGP'), 'path')),
+                               .libPaths())), collapse = .Platform$path.sep))),
+      env = c('OPENBLAS_NUM_THREADS=1', 'OMP_NUM_THREADS=1', 'MKL_NUM_THREADS=1'))
+    if (status != 0L) stop('Disk-history preparation failed; original checkpoint retained: ', path)
+  }
+  invisible(paths)
+}
+
+mixedgp_disk_checkpoint <- function(path, chunk_iter = 1000L) {
+  if (file.exists(file.path(mixedgp_disk_directory(path), 'index.rds')))
+    mixedgp_disk_index(path) else continue_eivgp_disk(path, 0L, chunk_iter = chunk_iter)
+}
+
+mixedgp_application_disk_ess <- function(path, ess_min, panel, cores = 1L,
+                                         chunk_iter = 1000L, trace_path = NULL, label = NULL) {
+  ess_min <- mixedgp_parse_ess_min(ess_min)
+  index <- mixedgp_disk_index(path)
+  settings <- index$scientific_ess$settings
+  cached <- !is.null(index$disk_history$scientific_ess) &&
+    identical(index$disk_history$scientific_ess$iteration, index$checkpoint$iteration) &&
+    identical(settings$X, panel$X) && identical(settings$C, panel$C) && identical(settings$U, panel$U) &&
+    identical(settings$n_latent, panel$n_latent) && identical(settings$seed, panel$seed) &&
+    identical(settings$ess_min, ess_min) && (is.null(ess_min) || isTRUE(index$scientific_ess$success))
+  if (!cached && !is.null(ess_min)) {
+    mixedgp_finish_ess_disk(path, ess_min, panel, cores > 1L, cores, chunk_iter)
+    index <- mixedgp_disk_index(path)
+  }
+  fit <- read_fit(path, fields = setdiff(index$disk_history$fields, 'S'))
+  if (!cached && is.null(ess_min)) {
+    fit <- mixedgp_application_ess(fit, NULL, panel, NULL, cores)
+    mixedgp_disk_save_scientific(index, fit$scientific_ess, path)
+  }
+  if (!is.null(trace_path)) mixedgp_save_scientific_trace(fit, trace_path, label)
+  mixedgp_atomic_rds(list(iteration = fit$checkpoint$iteration, scientific_ess = fit$scientific_ess),
+    file.path(dirname(path), 'scientific-diagnostics.rds'))
+  invisible(fit$checkpoint$iteration)
+}
+
+mixedgp_disk_analysis_fit <- function(path) {
+  if (!file.exists(file.path(mixedgp_disk_directory(path), 'index.rds')))
+    return(mixedgp_read_artifact(path))
+  index <- mixedgp_disk_index(path)
+  read_fit(path, fields = setdiff(index$disk_history$fields, 'S'))
+}
+
+# Copy an archive without materializing its draw history, e.g. Ocean's separate
+# continuation output. Immutable blocks may be hard-linked on the same device.
+mixedgp_disk_copy <- function(source, destination) {
+  if (file.exists(destination)) stop('Continuation destination already exists: ', destination)
+  directory <- mixedgp_disk_directory(destination)
+  if (dir.exists(directory)) {
+    # Recover a completed directory publication interrupted before its pointer.
+    index <- mixedgp_disk_index(destination, verify = TRUE)
+    mixedgp_atomic_rds(index, destination)
+    return(index)
+  }
+  dir.create(dirname(destination), recursive = TRUE, showWarnings = FALSE)
+  if (!file.exists(file.path(mixedgp_disk_directory(source), 'index.rds'))) {
+    if (!file.link(source, destination) && !file.copy(source, destination))
+      stop('Cannot copy legacy checkpoint: ', source)
+    index <- continue_eivgp_disk(destination, 0L)
+    index$disk_history$copied_from_iteration <- index$checkpoint$iteration
+    return(mixedgp_disk_commit(index, destination))
+  }
+  index <- mixedgp_disk_index(source, verify = TRUE)
+  index$disk_history$copied_from_iteration <- index$checkpoint$iteration
+  index$disk_history$signature <- mixedgp_disk_signature(index)
+  staging <- tempfile('.disk-clone-', tmpdir = dirname(destination))
+  dir.create(staging)
+  on.exit(unlink(staging, recursive = TRUE), add = TRUE)
+  files <- list.files(mixedgp_disk_directory(source), full.names = TRUE)
+  for (file in files[basename(files) != 'index.rds']) {
+    target <- file.path(staging, basename(file))
+    if (!file.link(file, target) && !file.copy(file, target)) stop('Cannot copy disk archive: ', file)
+  }
+  mixedgp_atomic_rds(index, file.path(staging, 'index.rds'))
+  if (!file.rename(staging, directory)) stop('Cannot publish continuation archive: ', directory)
+  mixedgp_atomic_rds(index, destination)
+  index
+}
+
 mixedgp_saved_iteration <- function(path) {
   if (file.exists(file.path(mixedgp_disk_directory(path), "index.rds")))
     return(mixedgp_disk_index(path)$checkpoint$iteration)
@@ -106,6 +298,8 @@ mixedgp_disk_import <- function(path, chunk_iter) {
     }
   }
   elapsed <- fit$diagnostics$summary$time_seconds
+  parallel_backend <- fit$diagnostics$summary$parallel_backend
+  parallel_cores <- fit$diagnostics$summary$parallel_cores
   fit$mcmc <- fit$mcmc[c("chain_stats", "chain_initial")]
   fit$diagnostics <- NULL
   fit$scientific_ess <- NULL # Recomputed for the completed history during analysis.
@@ -113,7 +307,8 @@ mixedgp_disk_import <- function(path, chunk_iter) {
   fit$disk_history <- list(schema = "eivgp-disk-v1", fields = fields,
     blocks = do.call(rbind, blocks), hmc_blocks = if (length(traces)) do.call(rbind, traces) else
       do.call(rbind, blocks)[FALSE, ], base_iteration = cp$iteration,
-    legacy_md5 = unname(tools::md5sum(original)), elapsed_seconds = elapsed)
+    legacy_md5 = unname(tools::md5sum(original)), elapsed_seconds = elapsed,
+    parallel_backend = parallel_backend, parallel_cores = parallel_cores)
   class(fit) <- unique(c("eivgp_disk_fit", class(fit)))
   mixedgp_disk_commit(fit, path)
 }
@@ -189,6 +384,8 @@ continue_eivgp_disk <- function(path, n_iter, chunk_iter = 1000L, parallel = TRU
     index$checkpoint$states <- lapply(result$chains, function(chain) chain$checkpoint)
     index$checkpoint$iteration <- to
     index$checkpoint$arguments <- arguments
+    index$scientific_ess <- NULL
+    index$disk_history$scientific_ess <- NULL
     index$mcmc$chain_stats <- mixedgp_disk_add_stats(index$mcmc$chain_stats,
       do.call(rbind, lapply(result$chains, function(chain) chain$stats)))
     index$interface$parallel <- parallel
@@ -281,6 +478,12 @@ mixedgp_disk_materialize <- function(path, draw_ids = NULL, fields = NULL) {
   built <- mixedgp_v030_fit_object(result, index$data, mixedgp_fit_engine(index),
                                    index$kernel$name, index$kernel$matern_nu)
   index$mcmc <- built$mcmc; index$diagnostics <- built$diagnostics
+  scientific <- index$disk_history$scientific_ess
+  if (!is.null(scientific) && identical(scientific$iteration, cp$iteration)) {
+    file <- file.path(mixedgp_disk_directory(path), scientific$file)
+    if (!identical(unname(tools::md5sum(file)), scientific$md5)) stop("Scientific ESS archive changed.")
+    index$scientific_ess <- readRDS(file)
+  }
   index$checkpoint <- cp
   index$disk_history <- NULL
   class(index) <- setdiff(class(index), "eivgp_disk_fit")

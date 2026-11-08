@@ -71,7 +71,7 @@ test_that("ADNI and Ocean use identical cores-only resident allocations", {
     for(stage in c('fit','continue','analyze','functionals','predict'))
       expect_identical(mixedgp_stage_workers(cores,stage,tasks,chains),expected)
     for(phase in c('fit','evaluate'))
-      expect_identical(adni$adni_resident_workers(cores,phase,tasks,chains),expected)
+      expect_identical(adni$adni_resident_workers(cores,phase,tasks,chains),if(phase=='evaluate')1L else expected)
   }
 })
 

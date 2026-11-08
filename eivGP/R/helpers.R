@@ -1857,6 +1857,8 @@ predict_eivgp <- function(object,
                           rejection_max_batches = 1000L,
                           seed = NULL,
                           ...) {
+  if (inherits(object, 'eivgp_disk_fit'))
+    stop('Read the disk-backed fit with read_fit(path) before predicting from it.')
   if (!inherits(object, "eivgp_fit")) {
     stop("object must be returned by fit_eivgp().")
   }
@@ -2169,6 +2171,8 @@ impute_eivgp <- function(object,
                          rejection_max_batches = 1000L,
                          seed = NULL,
                          ...) {
+  if (inherits(object, 'eivgp_disk_fit'))
+    stop('Read the disk-backed fit with read_fit(path) before imputing from it.')
   if (!inherits(object, "eivgp_fit")) {
     stop("object must be returned by fit_eivgp().")
   }

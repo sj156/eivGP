@@ -1,4 +1,4 @@
-# eivGP 0.4.0.9020
+# eivGP 0.4.0.9021
 
 The package fits errors-in-variables Gaussian processes with ordinal inputs.
 Public APIs support fitting, prediction, imputation, diagnostics, continuation,
@@ -7,7 +7,7 @@ and reporting. The implementation follows the upstream three-module structure:
 - `helpers.R`: data preparation, model utilities and analysis workflows, including Ocean execution and core-model calls.
 - `mcmc.R`: posterior sampling, fitting and exact continuation.
 - `hmc.R`: joint HMC coordinates, warmup adaptation and diagnostics.
-- `disk.R`: bounded-memory continuation and immutable draw-history archives.
+- `disk.R`: bounded-memory fresh fitting, continuation and immutable draw-history archives.
 - `plotting.R`: summaries, tables, figures and report generation, including Ocean reporting and diagnostics.
 
 Package metadata and static-analysis declarations remain in their existing files.
@@ -24,9 +24,14 @@ a complete ESS sweep after every 20 HMC iterations; change that frequency
 with `sampler_control=list(hybrid_every=20L)`. Continuation preserves the
 selected kernel, frequency, frozen adaptation and RNG state.
 
-### Continue without loading the full draw history
+### Fit and continue with draws on disk
 
 ```r
+index <- fit_eivgp(X, y, C, U_obs = U_obs, engine = "multivariate",
+  latent_dim = 1L, ident = "none", n_iter = 50000L, burn = 5000L,
+  n_chains = 4L, n_cores = 4L,
+  storage = "disk", path = "fit.rds", chunk_iter = 1000L)
+
 # Import an existing fit once, then add 10,000 transitions per chain.
 continue_eivgp_disk("fit.rds", n_iter = 10000L,
                     chunk_iter = 1000L, parallel = TRUE, n_cores = 4L)
@@ -42,6 +47,21 @@ together when moving results. Initial import reads one legacy fit; subsequent
 sampling keeps only the current states and at most `chunk_iter` new draws per
 chain in RAM. Interrupted writes resume from the last committed block with the
 same RNG states and absolute iteration numbers. No warmup or thinning is added.
+
+Fresh disk fits run the unchanged sampler through its original warmup and at
+most one retained block, then use disk-backed continuation. Configured warmup
+recovery checkpoints remain supported. The initial HMC warmup trace is held
+until that first publication; retained-history memory is bounded by the block
+size rather than the total iteration budget. Existing checkpoint paths are
+refused; resume them with `continue_eivgp_disk()`.
+
+ADNI, OAI and Ocean real-data workflows use disk storage by default. Their
+sampling phases do not materialize past draws. Full-history evaluation and
+scientific ESS checks run separately with one resident fit; those operations
+still need memory proportional to the parameter history. Automatic scientific
+ESS uses the same check and adaptive extension policy, storing its target
+series on disk and releasing the analysis fit before further sampling.
+Direct R calls retain `storage="memory"` as the compatibility default.
 
 `read_fit(path, draw_ids=...)` can reconstruct selected draws (at least two per
 chain). `read_fit(path, fields=...)` can omit auxiliary `S` draws while retaining

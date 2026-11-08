@@ -30,9 +30,12 @@ if(!params$action%in%c('report','plan'))stop('Render saved results or a plan; us
 here<-dirname(knitr::current_input(dir=TRUE));repository_dir<-normalizePath(file.path(here,'..'))
 # A local copy may live outside the checkout; the rendering caller supplies its root.
 if(exists('.adni_repository_dir',inherits=TRUE))repository_dir<-get('.adni_repository_dir',inherits=TRUE)
-source(file.path(repository_dir,'tools/adni.R'),local=TRUE)
-list2env(as.list(adni_load_api(repository_dir)),envir=environment())
 a<-get0('.adni_precomputed_analysis',inherits=TRUE)
+if(!is.null(a$api)) api<-a$api else {
+  source(file.path(repository_dir,'tools/adni.R'),local=TRUE)
+  api<-adni_load_api(repository_dir)
+}
+list2env(as.list(api),envir=environment())
 if(is.null(a)&&params$action=='report') {
   data_dir<-if(nzchar(params$data_dir))params$data_dir else file.path(repository_dir,'data/adni')
   output_dir<-if(nzchar(params$output_dir))params$output_dir else adni_default_output('adni',params$profile,repository_dir)

@@ -1,5 +1,11 @@
 # Unreleased
 
+- Keep disk-index checksums stable when a recorded do.call() contains a
+  versioned package namespace. Validate legacy archives with their original
+  package and retain their exact bytes, draw checksums and completed receipts.
+  Isolate OAI/ADNI plot rendering from application bootstrap and show render
+  errors directly in the terminal.
+
 - Add `fit_eivgp(storage="disk", path=..., chunk_iter=...)` for fresh fits
   with bounded retained-draw buffers and exact disk-backed continuation.
   Preserve all draws, warmup recovery, chain/RNG states, tuning and scientific

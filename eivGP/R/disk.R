@@ -179,6 +179,7 @@ mixedgp_disk_copy <- function(source, destination) {
   }
   index <- mixedgp_disk_index(source, verify = TRUE)
   index$disk_history$copied_from_iteration <- index$checkpoint$iteration
+  index$call <- mixedgp_disk_portable_call(index$call)
   index$disk_history$signature <- mixedgp_disk_signature(index)
   staging <- tempfile('.disk-clone-', tmpdir = dirname(destination))
   dir.create(staging)
@@ -205,12 +206,70 @@ mixedgp_disk_signature <- function(index) {
   mixedgp_object_fingerprint(index)
 }
 
+# do.call() can put a closure, including its versioned namespace environment,
+# in the recorded call. Keep its source expression as provenance, without
+# allowing a package upgrade to change serialization of the sampling index.
+mixedgp_disk_portable_call <- function(call) {
+  if (is.call(call) && is.function(call[[1L]]) && !is.primitive(call[[1L]])) {
+    fun <- call[[1L]]
+    call[[1L]] <- as.call(list(as.name('function'), formals(fun), body(fun)))
+  }
+  call
+}
+
+mixedgp_disk_compatible_index <- function(index, path) {
+  directory <- mixedgp_disk_directory(path)
+  certificate <- file.path(directory, 'index-compatibility.rds')
+  if (!file.exists(certificate)) return(FALSE)
+  evidence <- tryCatch(readRDS(certificate), error = function(e) NULL)
+  if (!is.list(evidence) || !identical(evidence$schema, 'eivgp-index-compat-v1') ||
+      !identical(evidence$signature, index$disk_history$signature) ||
+      !identical(evidence$index_md5, unname(tools::md5sum(file.path(directory, 'index.rds')))))
+    return(FALSE)
+  index$call <- mixedgp_disk_portable_call(index$call)
+  identical(evidence$portable_signature, mixedgp_disk_signature(index))
+}
+
+# Verify old indexes in their original installed package before certifying the
+# unchanged bytes for a newer reader. This never rewrites an index, draw block,
+# terminal state, RNG state, or completed evaluation receipt.
+mixedgp_disk_prepare_compatibility <- function(path, library) {
+  valid <- tryCatch({ mixedgp_disk_index(path); TRUE }, error = function(e) FALSE)
+  if (valid) return(invisible(FALSE))
+  if (!dir.exists(file.path(library, 'eivGP')))
+    stop('Original package library required to validate legacy disk index: ', library)
+  cat('Validating legacy index and draw checksums: ', path, '\n', sep = ''); flush.console()
+  code <- paste0('a<-commandArgs(TRUE);.libPaths(strsplit(a[2],.Platform$path.sep,fixed=TRUE)[[1]]);',
+    'directory<-paste0(a[1],".draws");file<-file.path(directory,"index.rds");',
+    'before<-unname(tools::md5sum(file));',
+    'x<-getFromNamespace("mixedgp_disk_index","eivGP")(a[1],verify=TRUE);',
+    'signature<-x$disk_history$signature;',
+    'x$call<-(', paste(deparse(mixedgp_disk_portable_call), collapse = '\n'), ')(x$call);',
+    'portable<-getFromNamespace("mixedgp_disk_signature","eivGP")(x);',
+    'stopifnot(identical(before,unname(tools::md5sum(file))));',
+    'evidence<-list(schema="eivgp-index-compat-v1",index_md5=before,',
+    'signature=signature,portable_signature=portable,',
+    'validated_package=as.character(utils::packageVersion("eivGP")),validated_at=as.character(Sys.time()));',
+    'getFromNamespace("mixedgp_atomic_rds","eivGP")(evidence,file.path(directory,"index-compatibility.rds"))')
+  log <- file.path(mixedgp_disk_directory(path), 'index-compatibility.log')
+  status <- system2(file.path(R.home('bin'), 'Rscript'),
+    shQuote(c('--vanilla', '-e', code, normalizePath(path),
+      paste(unique(c(normalizePath(library), .libPaths())), collapse = .Platform$path.sep))),
+    stdout = log, stderr = log,
+    env = c('OPENBLAS_NUM_THREADS=1', 'OMP_NUM_THREADS=1', 'MKL_NUM_THREADS=1'))
+  if (status != 0L)
+    stop('Legacy disk validation failed; original files retained. Inspect ', log)
+  mixedgp_disk_index(path)
+  invisible(TRUE)
+}
+
 mixedgp_disk_index <- function(path, verify = FALSE) {
   directory <- mixedgp_disk_directory(path)
   index <- readRDS(file.path(directory, "index.rds"))
   if (!inherits(index, "eivgp_disk_fit") ||
       !identical(index$disk_history$schema, "eivgp-disk-v1") ||
-      !identical(index$disk_history$signature, mixedgp_disk_signature(index)))
+      (!identical(index$disk_history$signature, mixedgp_disk_signature(index)) &&
+       !mixedgp_disk_compatible_index(index, path)))
     stop("Invalid or modified disk continuation index: ", path)
   cp <- index$checkpoint
   if (!identical(cp$version, 2L) || !identical(cp$sampler_version, "0.3.1") ||
@@ -234,6 +293,7 @@ mixedgp_disk_index <- function(path, verify = FALSE) {
 }
 
 mixedgp_disk_commit <- function(index, path) {
+  index$call <- mixedgp_disk_portable_call(index$call)
   index$disk_history$signature <- mixedgp_disk_signature(index)
   # The archive index is authoritative if interrupted between these two writes.
   mixedgp_atomic_rds(index, file.path(mixedgp_disk_directory(path), "index.rds"))

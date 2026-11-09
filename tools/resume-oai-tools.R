@@ -496,6 +496,14 @@ resume_oai_main <- function(group, script, args = commandArgs(TRUE)) {
       if (opts$action == 'run')
         api$oai_execution_lock(out, group, function() {
           if (group == 'eivGP') {
+            # Old do.call() provenance serialized a versioned package namespace.
+            # Validate it with the original library; leave completed outputs intact.
+            for (fold in unlist(m$folds)) for (cell in unlist(m$cells)) {
+              path <- api$oai_plan_fit_path(out, list(fold = fold, cell = cell))
+              if (file.exists(file.path(paste0(path, '.draws'), 'index.rds')))
+                getFromNamespace('mixedgp_disk_prepare_compatibility', 'eivGP')(
+                  path, file.path(repo, 'results/oai-resume-library'))
+            }
             # Each isolated import worker exits before sampling begins, so
             # historical arrays never reside in the coordinator or its chains.
             paths <- character()
@@ -510,7 +518,7 @@ resume_oai_main <- function(group, script, args = commandArgs(TRUE)) {
               }
             }
             resume_oai_migrate(paths, cores, as.integer(m$checkpoint_step), out)
-            cat('All legacy history conversions complete; starting MCMC with four cores per fit.\n')
+            cat('All legacy history conversions complete; resuming workflow (completed fits are reused).\n')
             flush.console()
           }
           api$oai_screen_run(repo, list(manifest = manifest, cores = cores,

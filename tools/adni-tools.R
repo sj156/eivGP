@@ -632,13 +632,22 @@ adni_plan_analyze_cell <- function(task, inputs, out, s) {
 
 adni_save_plot <- function(filename, plot, width, height, dpi = 130, ...) {
     input <- paste0(filename, ".plot.rds")
+    log <- paste0(filename, ".render.log")
     saveRDS(plot, input)
-    code <- paste0("source(", deparse(adni_path(repository_dir,"tools/adni.R")),
-      ");adni_load_api()$adni_render_plot(commandArgs(TRUE))")
-    args <- c('-e', shQuote(code), shQuote(input), shQuote(filename), width, height, dpi)
-    rc <- system2(adni_path(R.home("bin"), "Rscript"), args, stdout = paste0(filename, ".render.log"), stderr = paste0(filename,
-        ".render.log"))
-    stopifnot(rc == 0L, file.exists(filename), file.info(filename)$size > 1000)
+    # A long-running caller may use a different package version from the current
+    # application entrypoint. Render in a fresh R without reloading that entrypoint,
+    # using the caller's actual package library for any serialized namespaces.
+    libraries <- unique(c(dirname(getNamespaceInfo(asNamespace("eivGP"), "path")), .libPaths()))
+    code <- paste0("a<-commandArgs(TRUE);.libPaths(strsplit(a[6],.Platform$path.sep,fixed=TRUE)[[1]]);(",
+        paste(deparse(adni_render_plot), collapse = "\n"), ")(a[1:5])")
+    args <- shQuote(c("--vanilla", "-e", code, input, filename, as.character(width), as.character(height),
+        as.character(dpi), paste(libraries, collapse = .Platform$path.sep)))
+    rc <- system2(file.path(R.home("bin"), "Rscript"), args, stdout = log, stderr = log)
+    if (rc != 0L || !file.exists(filename) || !isTRUE(file.info(filename)$size > 1000)) {
+        detail <- if (file.exists(log)) paste(tail(readLines(log, warn = FALSE), 12L), collapse = "\n") else ""
+        stop("Plot rendering failed (status ", rc, "). Log: ", log,
+            if (nzchar(detail)) paste0("\n", detail), call. = FALSE)
+    }
     unlink(input)
     invisible(filename)
 }

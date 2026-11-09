@@ -33,14 +33,8 @@ numerical_package_check <- function() {
 
 # Shared CLI bootstrap; scientific orchestration is implemented in the package.
 run_study_cli <- function(study,args=commandArgs(TRUE)) {
-  a<-list()
-  for(x in args) {
-    if(!grepl("^--[^=]+=.+$",x))stop("Use --name=value")
-    key<-sub("^--([^=]+)=.*$","\\1",x)
-    if(key%in%names(a))stop("Repeated option: ",key)
-    a[[key]]<-sub("^--[^=]+=","",x)
-  }
   numerical_package_check()
+  a<-getFromNamespace('mixedgp_parse_cli_args','eivGP')(args)
   if(is.null(a$cores))a$cores<-"12"
   eivGP::run_paper_study(study,a,NUMERICAL_REPO_ROOT)
 }

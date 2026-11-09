@@ -1,5 +1,3 @@
-
-
 # ---- core/00_study1_functions.R ----
 ############################################################
 ## 00_study1_functions.R
@@ -8,24 +6,6 @@
 ## covariates x of any dimension. A numeric vector x is treated
 ## as n x 1 and recovers the original Study I model.
 ############################################################
-
-
-safe_max <- function(x) {
-  if (length(x) == 0 || all(!is.finite(x))) return(NA_real_)
-  max(x, na.rm = TRUE)
-}
-
-
-safe_min <- function(x) {
-  if (length(x) == 0 || all(!is.finite(x))) return(NA_real_)
-  min(x, na.rm = TRUE)
-}
-
-
-safe_median <- function(x) {
-  if (length(x) == 0 || all(!is.finite(x))) return(NA_real_)
-  median(x, na.rm = TRUE)
-}
 
 
 normalize_gp_kernel_1d <- function(kernel = c("se", "matern"), matern_nu = 2.5) {
@@ -115,44 +95,6 @@ weighted_distance_multix <- function(Dlist, theta) {
 }
 
 
-prepare_gp_block_1d <- function(y, u, Dx_list, logtheta, theta_spec,
-                                block_idx, kernel = "se", matern_nu = 2.5,
-                                gp_cache = NULL) {
-  n <- length(y)
-  b <- length(block_idx)
-  ## Dense calculations are cheaper for very small data or large blocks.
-  if (is.null(gp_cache) || !isTRUE(gp_cache$use_blocks) || n < 40L ||
-      b < 1L || b >= n || b > ceiling(sqrt(n))) return(NULL)
-  if (anyNA(block_idx) || anyDuplicated(block_idx) ||
-      any(block_idx < 1L | block_idx > n)) stop("Invalid GP block indices.")
-  if (!is.list(Dx_list)) Dx_list <- list(as.matrix(Dx_list))
-  if (is.null(theta_spec)) theta_spec <- make_theta_spec_multix(length(Dx_list))
-  current <- gp_state_1d(
-    y, u, Dx_list, logtheta, 1, theta_spec, kernel, matern_nu,
-    gp_cache = gp_cache, require_factor = FALSE
-  )
-  rest <- setdiff(seq_len(n), block_idx)
-  chol_rest <- try(chol(current$A[rest, rest, drop = FALSE]), silent = TRUE)
-  if (inherits(chol_rest, "try-error")) {
-    gp_cache$block_fallbacks <- gp_cache$block_fallbacks + 1L
-    return(NULL)
-  }
-  gp_cache$block_setups <- gp_cache$block_setups + 1L
-  alpha_rest <- solve_chol(chol_rest, y[rest])
-  Dx <- weighted_distance_multix(Dx_list, exp(logtheta[theta_spec$x_index]))
-  list(y = y, u = u, Dx_list = Dx_list, logtheta = logtheta,
-       theta_spec = theta_spec, kernel = kernel, matern_nu = matern_nu,
-       block_idx = block_idx, rest = rest, n = n, b = b,
-       rho2 = exp(logtheta[1L])^2,
-       theta_u = exp(logtheta[theta_spec$u_index]),
-       Dx_cross = Dx[block_idx, rest, drop = FALSE],
-       Dx_block = Dx[block_idx, block_idx, drop = FALSE],
-       A = current$A, chol_rest = chol_rest, alpha_rest = alpha_rest,
-       quad_rest = sum(y[rest] * alpha_rest),
-       logdet_rest = 2 * sum(log(diag(chol_rest))))
-}
-
-
 gp_predict_draw <- function(x_train, u_train, y_train,
                             x_star, u_star,
                             logtheta, sigma2_eps,
@@ -200,10 +142,10 @@ gp_predict_draw <- function(x_train, u_train, y_train,
   )
   K <- rho^2 * sigma2_eps * R
   C <- K + sigma2_eps * diag(n)
-  
+
   U <- safe_chol_1d(C)
   alpha <- solve_chol(U, y_train)
-  
+
   Dxs <- lapply(seq_len(p_x), function(j) {
     pairwise_sqdist(x_star[, j, drop = FALSE], x_train[, j, drop = FALSE])
   })
@@ -211,15 +153,15 @@ gp_predict_draw <- function(x_train, u_train, y_train,
     matrix(u_star, ncol = 1),
     matrix(u_train, ncol = 1)
   )
-  
+
   D2_star <- weighted_distance_multix(Dxs, theta_x) + theta_u * Dus
   R_star <- kernel_from_weighted_sqdist_1d(
     D2_star, kernel_spec$name, kernel_spec$matern_nu
   )
   K_star <- rho^2 * sigma2_eps * R_star
-  
+
   mu <- as.numeric(K_star %*% alpha)
-  
+
   v <- forwardsolve(t(U), t(K_star))
   var_lat <- rho^2 * sigma2_eps - colSums(v^2)
   var_tolerance <- 100 * (n + nrow(x_star)) * .Machine$double.eps *
@@ -228,7 +170,7 @@ gp_predict_draw <- function(x_train, u_train, y_train,
     stop("GP conditional variance is materially negative.")
   }
   var_lat <- pmax(var_lat, 0)
-  
+
   if (!isTRUE(return_cov)) {
     if (noisy) var_lat <- var_lat + sigma2_eps
     return(list(mean = mu, var = var_lat))
@@ -268,30 +210,30 @@ gp_mle_predict_1d <- function(fit, Xstar, noisy = FALSE) {
   )
   N <- nrow(Xstar)
   kernel_spec <- kernel_spec_from_fit_1d(fit)
-  
+
   par <- fit$par
-  
+
   sigma2 <- exp(par[1])
   rho <- exp(par[2])
   theta <- exp(par[-c(1, 2)])
-  
+
   Rexp <- matrix(0, n, n)
-  
+
   for (j in seq_len(d)) {
     Rexp <- Rexp + theta[j] * pairwise_sqdist(X[, j, drop = FALSE])
   }
-  
+
   R <- kernel_from_weighted_sqdist_1d(
     Rexp, kernel_spec$name, kernel_spec$matern_nu
   )
   K <- rho^2 * sigma2 * R
   C <- K + sigma2 * diag(n)
-  
+
   U <- safe_chol_1d(C)
   alpha <- solve_chol(U, y)
-  
+
   Rstar_exp <- matrix(0, N, n)
-  
+
   for (j in seq_len(d)) {
     Rstar_exp <- Rstar_exp +
       theta[j] * pairwise_sqdist(
@@ -299,14 +241,14 @@ gp_mle_predict_1d <- function(fit, Xstar, noisy = FALSE) {
         X[, j, drop = FALSE]
       )
   }
-  
+
   Rstar <- kernel_from_weighted_sqdist_1d(
     Rstar_exp, kernel_spec$name, kernel_spec$matern_nu
   )
   Kstar <- rho^2 * sigma2 * Rstar
-  
+
   mu <- as.numeric(Kstar %*% alpha)
-  
+
   v <- forwardsolve(t(U), t(Kstar))
   var_lat <- rho^2 * sigma2 - colSums(v^2)
   var_tolerance <- 100 * (n + N) * .Machine$double.eps *
@@ -315,20 +257,20 @@ gp_mle_predict_1d <- function(fit, Xstar, noisy = FALSE) {
     stop("GP conditional variance is materially negative.")
   }
   var_lat <- pmax(var_lat, 0)
-  
+
   if (noisy) {
     var_lat <- var_lat + sigma2
   }
-  
+
   list(mean = mu, var = var_lat)
 }
 
 
 sample_gp_mle_predictive_1d <- function(fit, Xstar, n_draw = 1000) {
   pred <- gp_mle_predict_1d(fit, Xstar = Xstar, noisy = TRUE)
-  
+
   n_test <- length(pred$mean)
-  
+
   out <- matrix(
     rnorm(
       n_draw * n_test,
@@ -342,152 +284,6 @@ sample_gp_mle_predictive_1d <- function(fit, Xstar, n_draw = 1000) {
   attr(out, "conditional_vars") <- matrix(pred$var, nrow = 1L)
   attr(out, "mixture_components") <- "fitted GP Gaussian predictor"
   out
-}
-
-
-conditional_mean_scores <- function(c_ord, m) {
-  counts <- tabulate(c_ord, nbins = m)
-  probs <- cumsum(counts) / sum(counts)
-  probs <- pmin(pmax(probs[seq_len(m - 1)], 1e-4), 1 - 1e-4)
-  
-  tau_hat <- qnorm(probs)
-  
-  lower <- c(-Inf, tau_hat)
-  upper <- c(tau_hat, Inf)
-  
-  denom <- pnorm(upper) - pnorm(lower)
-  numer <- dnorm(lower) - dnorm(upper)
-  
-  numer / pmax(denom, .Machine$double.eps)
-}
-
-
-make_monotone_scores_1d <- function(a, m) {
-  if (m == 1) {
-    return(0)
-  }
-  
-  if (m == 2) {
-    return(c(0, 1))
-  }
-  
-  logits <- c(a, 0)
-  e <- exp(logits - max(logits))
-  inc <- e / sum(e)
-  
-  c(0, cumsum(inc))
-}
-
-
-gp_mle_predict_learned_embedding <- function(fit, x_star, c_star,
-                                             noisy = TRUE) {
-  X_train <- cbind(fit$x, fit$z_scores[fit$c_ord])
-  X_star <- cbind(x_star, fit$z_scores[c_star])
-  predictor_names <- colnames(fit$x)
-  if (is.null(predictor_names)) {
-    predictor_names <- paste0("x", seq_len(ncol(fit$x)))
-  }
-  embedding_names <- c(predictor_names, ".ordinal_score")
-  colnames(X_train) <- embedding_names
-  colnames(X_star) <- embedding_names
-  
-  fake_fit <- list(
-    par = fit$par,
-    X = X_train,
-    y = fit$y,
-    kernel = fit$kernel
-  )
-  
-  gp_mle_predict_1d(fake_fit, Xstar = X_star, noisy = noisy)
-}
-
-
-sample_gp_learned_embedding_predictive <- function(fit, x_star, c_star,
-                                                   n_draw = 1000) {
-  pred <- gp_mle_predict_learned_embedding(
-    fit,
-    x_star = x_star,
-    c_star = c_star,
-    noisy = TRUE
-  )
-  
-  n_test <- length(pred$mean)
-  
-  matrix(
-    rnorm(
-      n_draw * n_test,
-      mean = rep(pred$mean, each = n_draw),
-      sd = rep(sqrt(pred$var), each = n_draw)
-    ),
-    nrow = n_draw,
-    ncol = n_test
-  )
-}
-
-
-predict_embedding_baseline_samples <- function(baselines,
-                                               x_star_raw,
-                                               c_star,
-                                               m,
-                                               n_draw = 1000) {
-  x_star_raw <- as_study1_numeric_matrix(
-    x_star_raw,
-    "x_star_raw",
-    ncol_expected = length(baselines$x_center),
-    expected_names = baselines$predictor_names
-  )
-  x_star <- sweep(
-    sweep(x_star_raw, 2, baselines$x_center, "-"),
-    2, baselines$x_scale, "/"
-  )
-  
-  z_gauss_star <- qnorm(c_star / (m + 1))
-  X_gauss_star <- cbind(x_star, z_gauss_star)
-  colnames(X_gauss_star) <- colnames(baselines$fit_gauss$X)
-  
-  draws_gauss_std <- sample_gp_mle_predictive_1d(
-    baselines$fit_gauss,
-    Xstar = X_gauss_star,
-    n_draw = n_draw
-  )
-  
-  draws_gauss <- baselines$y_center + baselines$y_scale * draws_gauss_std
-  
-  z_cm_star <- baselines$z_cm_scores[c_star]
-  X_cm_star <- cbind(x_star, z_cm_star)
-  colnames(X_cm_star) <- colnames(baselines$fit_cm$X)
-  
-  draws_cm_std <- sample_gp_mle_predictive_1d(
-    baselines$fit_cm,
-    Xstar = X_cm_star,
-    n_draw = n_draw
-  )
-  
-  draws_cm <- baselines$y_center + baselines$y_scale * draws_cm_std
-  
-  draws_learned_std <- sample_gp_learned_embedding_predictive(
-    baselines$fit_learned,
-    x_star = x_star,
-    c_star = c_star,
-    n_draw = n_draw
-  )
-  
-  draws_learned <- baselines$y_center + baselines$y_scale * draws_learned_std
-  
-  list(
-    `GP-Gaussian` = draws_gauss,
-    `GP-CondMean` = draws_cm,
-    `GP-LearnedEmb` = draws_learned
-  )
-}
-
-
-interval_score <- function(lo, hi, y, alpha = 0.05) {
-  width <- hi - lo
-  
-  width +
-    2 / alpha * (lo - y) * (y < lo) +
-    2 / alpha * (y - hi) * (y > hi)
 }
 
 
@@ -505,7 +301,7 @@ summarize_predictive_samples_1d <- function(draw_mat, y_true,
   }
   nlpd <- normal_mixture_nlpd(y_true, component_means, component_vars)
   pred_mean <- colMeans(draw_mat)
-  
+
   qs <- apply(
     draw_mat,
     2,
@@ -513,10 +309,10 @@ summarize_predictive_samples_1d <- function(draw_mat, y_true,
     probs = c(0.025, 0.975),
     names = FALSE
   )
-  
+
   lo <- qs[1, ]
   hi <- qs[2, ]
-  
+
   data.frame(
     rep = rep_id,
     scenario = scenario,
@@ -532,59 +328,6 @@ summarize_predictive_samples_1d <- function(draw_mat, y_true,
     IntervalScore95 = mean(interval_score(lo, hi, y_true)),
     stringsAsFactors = FALSE
   )
-}
-
-
-validate_control_ordprobit <- function(control, sampler_strategy, n_mis, n_iter) {
-  integer_control <- function(name, minimum) {
-    value <- control[[name]]
-    if (!is.numeric(value) || length(value) != 1L || !is.finite(value) ||
-        value != floor(value) || value < minimum) {
-      stop(name, " must be one integer >= ", minimum, ".")
-    }
-  }
-  for (name in c("score_update_every", "A_update_every", "tau_update_every",
-                 "theta_update_every", "adapt_every", "adapt_window",
-                 "max_ess_try")) integer_control(name, 1L)
-  for (name in c("n_u_blocks_per_iter", "joint_local_blocks_per_iter",
-                 "global_u_every", "joint_theta_every", "joint_global_every",
-                 "joint_collapsed_every", "marginal_measurement_every",
-                 "joint_measurement_every", "loading_transport_every")) {
-    integer_control(name, 0L)
-  }
-  integer_control("u_block_size", if (n_mis > 0L) 1L else 0L)
-  for (name in c("s_A", "tau_bound", "theta_width_min", "theta_width_max")) {
-    value <- control[[name]]
-    if (!is.numeric(value) || length(value) != 1L ||
-        !is.finite(value) || value <= 0) stop(name, " must be positive and finite.")
-  }
-  if (!is.logical(control$adapt_theta_width) ||
-      length(control$adapt_theta_width) != 1L || is.na(control$adapt_theta_width)) {
-    stop("adapt_theta_width must be one non-missing logical value.")
-  }
-  if (control$theta_width_min > control$theta_width_max) {
-    stop("theta_width_min must not exceed theta_width_max.")
-  }
-  scheduled <- function(value) value > 0L && value <= n_iter
-  for (name in c("score_update_every", "A_update_every", "tau_update_every")) {
-    if (!scheduled(control[[name]])) stop(name, " must not exceed n_iter.")
-  }
-  if (sampler_strategy == "interwoven") {
-    theta_active <- any(vapply(control[c("joint_theta_every", "joint_global_every",
-                                        "joint_collapsed_every")], scheduled, logical(1)))
-    u_active <- control$joint_local_blocks_per_iter > 0L ||
-      any(vapply(control[c("joint_global_every", "joint_collapsed_every")],
-                 scheduled, logical(1)))
-  } else {
-    theta_active <- scheduled(control$theta_update_every)
-    u_active <- control$n_u_blocks_per_iter > 0L || scheduled(control$global_u_every)
-    if (control$joint_measurement_every > 0L || control$loading_transport_every > 0L) {
-      stop("joint_measurement_every and loading_transport_every require interwoven sampling.")
-    }
-  }
-  if (!theta_active) stop("The schedule freezes all GP hyperparameter moves.")
-  if (n_mis > 0L && !u_active) stop("The schedule freezes all missing-U moves.")
-  invisible(TRUE)
 }
 
 
@@ -800,7 +543,7 @@ safe_chol <- function(A, jitter = 0) {
     attr(ans, "jitter") <- 0
     return(ans)
   }
-  
+
   if (!is.finite(jitter) || jitter <= 0) {
     stop("Cholesky decomposition failed without numerical regularization.")
   }
@@ -812,7 +555,7 @@ safe_chol <- function(A, jitter = 0) {
       return(ans)
     }
   }
-  
+
   stop("Cholesky decomposition failed.")
 }
 
@@ -824,24 +567,24 @@ safe_chol <- function(A, jitter = 0) {
 empirical_normal_scores <- function(C, m_vec = NULL) {
   C <- as.matrix(C)
   q <- ncol(C)
-  
+
   if (is.null(m_vec)) {
     m_vec <- apply(C, 2, max, na.rm = TRUE)
   }
-  
+
   scores <- vector("list", q)
-  
+
   for (j in seq_len(q)) {
     counts <- tabulate(C[, j], nbins = m_vec[j])
     n <- sum(counts)
     cum_counts <- cumsum(counts)
-    
+
     mid_probs <- (cum_counts - 0.5 * counts) / n
     mid_probs <- pmin(pmax(mid_probs, 1e-4), 1 - 1e-4)
-    
+
     scores[[j]] <- qnorm(mid_probs)
   }
-  
+
   scores
 }
 
@@ -850,23 +593,23 @@ sample_scores_ord <- function(C, U, A, tau) {
   C <- as.matrix(C)
   U <- as.matrix(U)
   A <- as.matrix(A)
-  
+
   n <- nrow(C)
   q <- ncol(C)
-  
+
   S <- matrix(NA_real_, n, q)
-  
+
   for (j in seq_len(q)) {
     mu <- as.numeric(U %*% A[j, ])
-    
+
     tau_j <- tau[[j]]
-    
+
     lower <- c(-Inf, tau_j)[C[, j]]
     upper <- c(tau_j, Inf)[C[, j]]
-    
+
     S[, j] <- rtruncnorm_vec(mu, 1, lower, upper)
   }
-  
+
   S
 }
 
@@ -886,7 +629,7 @@ gp_predict_draw_general <- function(X_train,
   U_train <- as.matrix(U_train)
   X_star <- as.matrix(X_star)
   U_star <- as.matrix(U_star)
-  
+
   n <- nrow(X_train)
   N <- nrow(X_star)
   p <- ncol(X_train)
@@ -903,24 +646,24 @@ gp_predict_draw_general <- function(X_train,
   }
 
   kernel_spec <- normalize_gp_kernel(kernel, matern_nu)
-  
+
   rho <- exp(logtheta[1])
   theta_x <- exp(logtheta[1L + seq_len(p)])
   theta_u <- exp(logtheta[1L + p + seq_len(d)])
-  
+
   D2 <- weighted_sqdist_general(X_train, U_train, theta_x, theta_u)
   R <- kernel_from_weighted_sqdist(
     D2,
     kernel = kernel_spec$name,
     matern_nu = kernel_spec$matern_nu
   )
-  
+
   K <- rho^2 * sigma2_eps * R
   C <- K + sigma2_eps * diag(n)
-  
+
   Uchol <- safe_chol(C)
   alpha <- solve_chol(Uchol, y_train)
-  
+
   D2_star <- weighted_sqdist_general(
     X_star, U_star, theta_x, theta_u,
     X_b = X_train,
@@ -932,11 +675,11 @@ gp_predict_draw_general <- function(X_train,
     matern_nu = kernel_spec$matern_nu
   )
   Kstar <- rho^2 * sigma2_eps * Rstar
-  
+
   mu <- as.numeric(Kstar %*% alpha)
-  
+
   v <- forwardsolve(t(Uchol), t(Kstar))
-  
+
   var_lat <- rho^2 * sigma2_eps - colSums(v^2)
   var_tolerance <- 100 * (n + N) * .Machine$double.eps *
     max(1, rho^2 * sigma2_eps)
@@ -968,28 +711,6 @@ gp_predict_draw_general <- function(X_train,
 }
 
 
-loading_transport_score_loglik <- function(S, U, A, miss_idx) {
-  n <- nrow(U)
-  q <- nrow(A)
-  calibrated <- setdiff(seq_len(n), miss_idx)
-  answer <- 0
-  if (length(miss_idx)) {
-    covariance_chol <- safe_chol(diag(q) + tcrossprod(A))
-    standardized <- forwardsolve(t(covariance_chol), t(S[miss_idx, , drop = FALSE]))
-    answer <- -0.5 * (length(miss_idx) *
-      (q * log(2 * base::pi) + 2 * sum(log(diag(covariance_chol)))) +
-      sum(standardized^2))
-  }
-  if (length(calibrated)) {
-    residual <- S[calibrated, , drop = FALSE] -
-      U[calibrated, , drop = FALSE] %*% t(A)
-    answer <- answer - 0.5 *
-      (length(calibrated) * q * log(2 * base::pi) + sum(residual^2))
-  }
-  answer
-}
-
-
 draw_study2_score_errors <- function(n, true_params) {
   q <- true_params$q
 
@@ -1014,9 +735,9 @@ ordinal_from_scores_matrix_tau <- function(S, tau_mat) {
   S <- as.matrix(S)
   n <- nrow(S)
   q <- ncol(S)
-  
+
   C <- matrix(NA_integer_, n, q)
-  
+
   for (j in seq_len(q)) {
     C[, j] <- as.integer(cut(
       S[, j],
@@ -1024,7 +745,7 @@ ordinal_from_scores_matrix_tau <- function(S, tau_mat) {
       labels = FALSE
     ))
   }
-  
+
   C
 }
 
@@ -1070,53 +791,37 @@ validate_oracle_pool_2d <- function(oracle_pool, true_params) {
 ## these functions or report them under literature-method labels.
 ############################################################
 
-conditional_mean_scores_ord <- function(c_ord, m) {
-  counts <- tabulate(c_ord, nbins = m)
-  probs <- cumsum(counts) / sum(counts)
-  probs <- pmin(pmax(probs[seq_len(m - 1)], 1e-4), 1 - 1e-4)
-  
-  tau_hat <- qnorm(probs)
-  
-  lower <- c(-Inf, tau_hat)
-  upper <- c(tau_hat, Inf)
-  
-  denom <- pnorm(upper) - pnorm(lower)
-  numer <- dnorm(lower) - dnorm(upper)
-  
-  numer / pmax(denom, .Machine$double.eps)
-}
-
 
 gp_mle_predict <- function(fit, Xstar, noisy = FALSE) {
   X <- fit$X
   y <- fit$y
   Xstar <- as.matrix(Xstar)
-  
+
   n <- nrow(X)
   N <- nrow(Xstar)
   d <- ncol(X)
-  
+
   par <- fit$par
-  
+
   sigma2 <- exp(par[1])
   rho <- exp(par[2])
   theta <- exp(par[-c(1, 2)])
-  
+
   Rexp <- matrix(0, n, n)
-  
+
   for (j in seq_len(d)) {
     Rexp <- Rexp + theta[j] * pairwise_sqdist(X[, j, drop = FALSE])
   }
-  
+
   R <- exp(-Rexp)
   K <- rho^2 * sigma2 * R
   Cmat <- K + sigma2 * diag(n)
-  
+
   Uchol <- safe_chol(Cmat)
   alpha <- solve_chol(Uchol, y)
-  
+
   Rstar_exp <- matrix(0, N, n)
-  
+
   for (j in seq_len(d)) {
     Rstar_exp <- Rstar_exp +
       theta[j] * pairwise_sqdist(
@@ -1124,14 +829,14 @@ gp_mle_predict <- function(fit, Xstar, noisy = FALSE) {
         X[, j, drop = FALSE]
       )
   }
-  
+
   Rstar <- exp(-Rstar_exp)
   Kstar <- rho^2 * sigma2 * Rstar
-  
+
   mu <- as.numeric(Kstar %*% alpha)
-  
+
   v <- forwardsolve(t(Uchol), t(Kstar))
-  
+
   var_lat <- rho^2 * sigma2 - colSums(v^2)
   var_tolerance <- 100 * (n + N) * .Machine$double.eps *
     max(1, rho^2 * sigma2)
@@ -1139,158 +844,16 @@ gp_mle_predict <- function(fit, Xstar, noisy = FALSE) {
     stop("GP conditional variance is materially negative.")
   }
   var_lat <- pmax(var_lat, 0)
-  
+
   if (noisy) var_lat <- var_lat + sigma2
-  
+
   list(mean = mu, var = var_lat)
-}
-
-
-sample_gp_mle_predictive <- function(fit, Xstar, n_draw = 1000) {
-  pred <- gp_mle_predict(fit, Xstar = Xstar, noisy = TRUE)
-  
-  n_test <- length(pred$mean)
-  
-  out <- matrix(
-    rnorm(
-      n_draw * n_test,
-      mean = rep(pred$mean, each = n_draw),
-      sd = rep(sqrt(pred$var), each = n_draw)
-    ),
-    nrow = n_draw,
-    ncol = n_test
-  )
-  attr(out, "conditional_means") <- matrix(pred$mean, nrow = 1L)
-  attr(out, "conditional_vars") <- matrix(pred$var, nrow = 1L)
-  attr(out, "mixture_components") <- "fitted GP Gaussian predictor"
-  out
-}
-
-
-make_monotone_scores <- function(a, m) {
-  if (m == 1) return(0)
-  if (m == 2) return(c(0, 1))
-  
-  logits <- c(a, 0)
-  e <- exp(logits - max(logits))
-  inc <- e / sum(e)
-  
-  c(0, cumsum(inc))
-}
-
-
-gp_mle_predict_learned_embedding_ord <- function(fit, X_star, C_star,
-                                                 noisy = TRUE) {
-  X_star <- as.matrix(X_star)
-  C_star <- as.matrix(C_star)
-  
-  q <- ncol(C_star)
-  Z_star <- matrix(NA_real_, nrow(C_star), q)
-  
-  for (j in seq_len(q)) {
-    Z_star[, j] <- fit$z_scores_list[[j]][C_star[, j]]
-  }
-  
-  fake_fit <- list(
-    par = fit$par,
-    X = fit$X_aug,
-    y = fit$y
-  )
-  
-  gp_mle_predict(fake_fit, Xstar = cbind(X_star, Z_star), noisy = noisy)
-}
-
-
-sample_gp_learned_embedding_predictive_ord <- function(fit,
-                                                       X_star,
-                                                       C_star,
-                                                       n_draw = 1000) {
-  pred <- gp_mle_predict_learned_embedding_ord(
-    fit,
-    X_star = X_star,
-    C_star = C_star,
-    noisy = TRUE
-  )
-  
-  n_test <- length(pred$mean)
-  
-  matrix(
-    rnorm(
-      n_draw * n_test,
-      mean = rep(pred$mean, each = n_draw),
-      sd = rep(sqrt(pred$var), each = n_draw)
-    ),
-    nrow = n_draw,
-    ncol = n_test
-  )
-}
-
-
-predict_embedding_baseline_samples_ord <- function(baselines,
-                                                   X_star_raw,
-                                                   C_star,
-                                                   n_draw = 1000) {
-  X_star_raw <- as.matrix(X_star_raw)
-  C_star <- as.matrix(C_star)
-  
-  m_vec <- baselines$m_vec
-  q <- ncol(C_star)
-  
-  X_star <- sweep(
-    sweep(X_star_raw, 2, baselines$X_center, "-"),
-    2,
-    baselines$X_scale,
-    "/"
-  )
-  
-  Z_gauss_star <- matrix(NA_real_, nrow(C_star), q)
-  
-  for (j in seq_len(q)) {
-    Z_gauss_star[, j] <- qnorm(C_star[, j] / (m_vec[j] + 1))
-  }
-  
-  draws_gauss_std <- sample_gp_mle_predictive(
-    baselines$fit_gauss,
-    Xstar = cbind(X_star, Z_gauss_star),
-    n_draw = n_draw
-  )
-  
-  draws_gauss <- baselines$y_center + baselines$y_scale * draws_gauss_std
-  
-  Z_cm_star <- matrix(NA_real_, nrow(C_star), q)
-  
-  for (j in seq_len(q)) {
-    Z_cm_star[, j] <- baselines$z_cm_scores[[j]][C_star[, j]]
-  }
-  
-  draws_cm_std <- sample_gp_mle_predictive(
-    baselines$fit_cm,
-    Xstar = cbind(X_star, Z_cm_star),
-    n_draw = n_draw
-  )
-  
-  draws_cm <- baselines$y_center + baselines$y_scale * draws_cm_std
-  
-  draws_learned_std <- sample_gp_learned_embedding_predictive_ord(
-    baselines$fit_learned,
-    X_star = X_star,
-    C_star = C_star,
-    n_draw = n_draw
-  )
-  
-  draws_learned <- baselines$y_center + baselines$y_scale * draws_learned_std
-  
-  list(
-    `GP-Gaussian` = draws_gauss,
-    `GP-CondMean` = draws_cm,
-    `GP-LearnedEmb` = draws_learned
-  )
 }
 
 
 interval_score <- function(lo, hi, y, alpha = 0.05) {
   width <- hi - lo
-  
+
   width +
     2 / alpha * (lo - y) * (y < lo) +
     2 / alpha * (y - hi) * (y > hi)
@@ -1331,7 +894,7 @@ summarize_predictive_samples <- function(draw_mat,
   nlpd <- normal_mixture_nlpd(y_true, component_means, component_vars)
 
   pred_mean <- colMeans(draw_mat)
-  
+
   qs <- apply(
     draw_mat,
     2,
@@ -1339,10 +902,10 @@ summarize_predictive_samples <- function(draw_mat,
     probs = c(0.025, 0.975),
     names = FALSE
   )
-  
+
   lo <- qs[1, ]
   hi <- qs[2, ]
-  
+
   data.frame(
     rep = rep_id,
     scenario = scenario,
@@ -3459,7 +3022,6 @@ mixedgp_cached_competitors <- function(X_train, y_train, C_train, X_test, C_test
 ############################################################
 
 
-
 initial_thresholds_response_free <- function(c_ord,
                                              u_obs,
                                              calib_idx,
@@ -5069,7 +4631,6 @@ mixedgp_simulation_code_dir <- function(code_dir = NULL) {
   if (is.null(code_dir)) code_dir <- system.file(package = "eivGP")
   normalizePath(code_dir, mustWork = TRUE)
 }
-mixedgp_simulation_modules <- function() character()
 mixedgp_simulation_engine <- function(code_dir = NULL) {
   mixedgp_simulation_code_dir(code_dir)
   ns <- asNamespace("eivGP")
@@ -5186,9 +4747,6 @@ mixedgp_apply_core_budget <- function(config, core_budget = NULL) {
   config
 }
 
-mixedgp_number_slug <- function(x) {
-  gsub("[^0-9A-Za-z]+", "p", format(x, scientific = FALSE, trim = TRUE))
-}
 
 mixedgp_config_fingerprint <- function(config) {
   payload <- config
@@ -5621,7 +5179,6 @@ validate_simulation_config <- function(config) {
   }
   config
 }
-
 
 
 # ---- simulations/helpers/data.R ----
@@ -6155,7 +5712,6 @@ mixedgp_validate_common_random_numbers <- function(config, engine = NULL) {
 }
 
 
-
 # ---- simulations/helpers/execution.R ----
 # Simulation execution: package implementation.
 
@@ -6409,7 +5965,6 @@ mixedgp_run_study2_cell <- function(config, cell, engine, run_dir) {
     output_directory = cell_output
   )
 }
-
 
 
 # ---- simulations/helpers/gates.R ----
@@ -6734,7 +6289,6 @@ mixedgp_result_gates <- function(result, config) {
     mixedgp_output_completeness_gates(result, config)
   ))
 }
-
 
 
 # ---- simulations/helpers/summaries.R ----
@@ -7247,7 +6801,6 @@ mixedgp_aggregate_results <- function(results, config, run_dir) {
 }
 
 
-
 # ---- simulations/helpers/workflow.R ----
 # Simulation workflow: package implementation.
 
@@ -7466,15 +7019,6 @@ mixedgp_run_simulation <- function(config) {
   invisible(out)
 }
 
-run_study1_simulation <- function(config = study1_simulation_config()) {
-  if (!identical(config$study, "study1")) stop("Expected a Study I config.")
-  mixedgp_run_simulation(config)
-}
-
-run_study2_simulation <- function(config = study2_simulation_config()) {
-  if (!identical(config$study, "study2")) stop("Expected a Study II config.")
-  mixedgp_run_simulation(config)
-}
 
 ## Stable content identity shared by independent fitting/reporting layers.
 mixedgp_dataset_identity <- function(data) {
@@ -10167,29 +9711,8 @@ invisible(list(status=status,summary=summary,output=output))
 ## Reporting only: combine portable numeric outputs, never load/fix model fits.
 
 
-
 # ---- reporting/notebook_helpers.R ----
 # Keep HTML focused on analysis while preserving complete execution logs.
-notebook_logged <- function(path, expr) {
-  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
-  connection <- file(path, open = "wt")
-  output_depth <- sink.number()
-  sink(connection)
-  on.exit({
-    while (sink.number() > output_depth) sink()
-    close(connection)
-  }, add = TRUE)
-  warnings <- character()
-  value <- withCallingHandlers(eval(substitute(expr), envir = parent.frame()),
-    message = function(m) { cat(conditionMessage(m)); invokeRestart("muffleMessage") },
-    warning = function(w) {
-      warnings <<- unique(c(warnings, conditionMessage(w)))
-      cat("WARNING:", conditionMessage(w), "\n")
-      invokeRestart("muffleWarning")
-    })
-  attr(value, "notebook_warnings") <- warnings
-  value
-}
 
 notebook_with_env <- function(values, expr) {
   old <- Sys.getenv(names(values), unset = NA_character_)
@@ -10201,25 +9724,11 @@ notebook_with_env <- function(values, expr) {
   eval(substitute(expr), envir = parent.frame())
 }
 
-notebook_cache_identity <- function(directory, identity) {
-  path <- file.path(directory, "notebook_identity.rds")
-  if (file.exists(path)) {
-    if (!identical(readRDS(path), identity)) stop("Inputs or settings changed. Use a new output directory: ", directory)
-  } else {
-    if (dir.exists(directory) && length(list.files(directory, all.files = TRUE, no.. = TRUE)))
-      stop("Existing outputs lack notebook provenance. Choose a fresh output directory: ", directory)
-    dir.create(directory, recursive = TRUE, showWarnings = FALSE)
-    saveRDS(identity, path)
-  }
-  invisible(identity)
-}
-
 
 # Fixed design: no outcome or fitted performance is used to choose the split.
 
 
 # Fold/chain scheduling. Statistical settings and seed formulas are unchanged.
-
 
 
 # Rscript and direct Rmd rendering use the same fold scheduler.
@@ -10228,14 +9737,7 @@ notebook_cache_identity <- function(directory, identity) {
 # Reporting and comparison helpers. Inference remains in eivGP 0.3.1.
 
 
-
-
 # Empirical-distribution CRPS uses every draw, in O(S log S) per participant.
-
-
-
-
-
 
 
 # Public package workflows. Numerical settings remain explicit and results external.
@@ -10313,9 +9815,6 @@ read_fit <- function(path, draw_ids = NULL, fields = NULL) {
 save_fit <- function(object,path) mixedgp_save_artifact(object,path)
 
 
-
-
-
 # ============================================================================
 # ============================================================================
 
@@ -10340,9 +9839,6 @@ mixedgp_competitor_controls <- function() list(
 
 # Extension lengths belong to individual continuation tasks, not initial fits.
 # Keep historical checkpoint paths stable; record the actual budget separately.
-
-
-
 
 
 # Execution and provenance
@@ -11687,10 +11183,11 @@ mixedgp_followup_normalize <- function(x,compat) {
     before<-x
     for(i in seq_len(nrow(compat))) {
       row<-compat[i,]
-      if(row$field=="helpers.R" && identical(unname(x$package_manifest["helpers.R"]),row$new))
-        x$package_manifest["helpers.R"]<-row$old
-      if(row$field=="mechanism" && identical(unname(x$code["mechanism"]),row$new))
-        x$code["mechanism"]<-row$old
+      for(section in c("package_manifest","code","versions")) {
+        values<-x[[section]]
+        if(row$field%in%names(values) && identical(unname(values[row$field]),row$new))
+          x[[section]][row$field]<-row$old
+      }
     }
     if(identical(before,x))return(x)
   }
@@ -12199,35 +11696,14 @@ mixedgp_ezgp_predict <- function(X_new, model) {
 # application predictions all use the same covariance calculation.
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ============================================================================
 # ============================================================================
 
 # Author: Xinye Chen. Preserve approved held-out and latent-recovery protocols as package code.
 
 
-
-
-
-
 # ============================================================================
 # ============================================================================
-
-
-
 
 
 # ============================================================================
@@ -12250,8 +11726,6 @@ mixedgp_ezgp_predict <- function(X_new, model) {
 
 # ============================================================================
 # ============================================================================
-
-
 
 
 # Score one existing fit; this function never fits any model.
@@ -12855,6 +12329,17 @@ mixedgp_squared_differences <- function(x, y = NULL) {
 
 
 # Normalize the common method-lane CLI while preserving historical flags.
+mixedgp_parse_cli_args <- function(args) {
+  result <- list()
+  for (arg in args) {
+    if (!grepl('^--[^=]+=.+$', arg)) stop('Use --name=value')
+    name <- sub('^--([^=]+)=.*$', '\\1', arg)
+    if (name %in% names(result)) stop('Repeated option: ', name)
+    result[[name]] <- sub('^--[^=]+=', '', arg)
+  }
+  result
+}
+
 mixedgp_workflow_cli <- function(args,group=NULL) {
   ix<-grep("^--action=",args)
   if(!length(ix))return(args)
@@ -13013,11 +12498,6 @@ mixedgp_block_summary <- function(data, column, summary) {
   out
 }
 
-mixedgp_tag_block <- function(data, block) {
-  data <- as.data.frame(data)
-  data$block <- rep(block, nrow(data))
-  data
-}
 
 # Resolve against the launch directory even when the destination does not exist.
 mixedgp_absolute_path <- function(path,base=getwd()) {

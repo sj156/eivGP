@@ -64,3 +64,25 @@ test_that("cached CC predictions resume scoring without fitting or changing pred
   expect_false(file.exists(file.path(root,"failure.rds")))
   expect_equal(nrow(readRDS(file.path(root,"scores.rds"))),6L)
 })
+
+
+test_that("source-only cleanup aliases preserve caches while rejecting scientific changes", {
+  compat<-data.frame(field=c("mcmc.R","plotting.R","common","eivGP"),
+    old=c("sampler0","plots0","cli0","0.4.0.9022"),
+    new=c("sampler1","plots1","cli1","0.4.0.9023"))
+  saved<-list(package_manifest=c(mcmc.R="sampler0",plotting.R="plots0"),
+    code=c(common="cli0"),versions=c(eivGP="0.4.0.9022",posterior="fixed"),
+    settings=list(seed=1L,burn=5000L,sampler="HMC"))
+  current<-saved;current$package_manifest[]<-c("sampler1","plots1")
+  current$code["common"]<-"cli1";current$versions["eivGP"]<-"0.4.0.9023"
+  expect_true(mixedgp_followup_identity_equal(saved,current,compat))
+  expect_identical(mixedgp_followup_normalize(current,compat),saved)
+  for(field in names(saved$settings)) {
+    bad<-current;bad$settings[[field]]<-"changed"
+    expect_false(mixedgp_followup_identity_equal(saved,bad,compat))
+  }
+  bad<-current;bad$versions["posterior"]<-"changed"
+  expect_false(mixedgp_followup_identity_equal(saved,bad,compat))
+  bad<-current;bad$package_manifest["mcmc.R"]<-"unknown"
+  expect_false(mixedgp_followup_identity_equal(saved,bad,compat))
+})

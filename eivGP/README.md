@@ -1,18 +1,21 @@
-# eivGP 0.4.0.9021
+# eivGP 0.4.0.9023
 
 The package fits errors-in-variables Gaussian processes with ordinal inputs.
 Public APIs support fitting, prediction, imputation, diagnostics, continuation,
-and reporting. The implementation follows the upstream three-module structure:
+and reporting. The implementation is organized by responsibility:
 
-- `helpers.R`: data preparation, model utilities and analysis workflows, including Ocean execution and core-model calls.
+- `helpers.R`: data preparation, shared model utilities and numerical-study workflows.
 - `mcmc.R`: posterior sampling, fitting and exact continuation.
 - `hmc.R`: joint HMC coordinates, warmup adaptation and diagnostics.
 - `disk.R`: bounded-memory fresh fitting, continuation and immutable draw-history archives.
-- `plotting.R`: summaries, tables, figures and report generation, including Ocean reporting and diagnostics.
+- `plotting.R`: summaries, tables, figures and shared report/plot rendering.
 
 Package metadata and static-analysis declarations remain in their existing files.
-The sampler remains version 0.3.1. Ocean-specific sections have explicit headings;
-no separate Ocean implementation scripts are installed.
+The sampler remains version 0.3.1. Application-specific orchestration stays in
+the flat `tools/APP-tools.R` files; the package supplies reusable calculations.
+Unused pre-0.3.1 sampler and pilot-baseline helpers have been removed. Public
+APIs, dynamically selected study constructors/reports and checkpoint readers
+remain available.
 
 See the [repository guide](../README.md) for installation,
 the [paper guide](../paper/README.md) for the four analysis workflows,
@@ -57,8 +60,9 @@ refused; resume them with `continue_eivgp_disk()`.
 
 ADNI, OAI and Ocean real-data workflows use disk storage by default. Their
 sampling phases do not materialize past draws. Full-history evaluation and
-scientific ESS checks run separately with one resident fit; those operations
-still need memory proportional to the parameter history. Automatic scientific
+scientific ESS checks run separately. ADNI and Ocean use one resident fit;
+OAI allows one evaluation per four cores, capped at eight jobs. Each evaluation
+still needs memory proportional to its parameter history. Automatic scientific
 ESS uses the same check and adaptive extension policy, storing its target
 series on disk and releasing the analysis fit before further sampling.
 Direct R calls retain `storage="memory"` as the compatibility default.

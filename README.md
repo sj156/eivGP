@@ -247,16 +247,20 @@ workers, using one core per fit with concurrency bounded by `--cores`, the
 remaining fits and available RAM. All conversions finish before MCMC begins;
 sampling then uses four cores per fit. This
 one-time conversion preserves the original file in
-`fit.rds.draws/legacy-fit.rds`; it generates no new draws. Full-history analysis
-runs separately, one fit at a time. The original
+`fit.rds.draws/legacy-fit.rds`; it generates no new draws. OAI full-history analysis
+runs separately, with one job per four cores and at most eight simultaneous
+jobs: `--cores=32` permits eight evaluations, each with four chain workers.
+Each evaluation materializes one fit's history, so RAM use rises with the job
+count; lower `--cores` to reduce concurrency. The original
 configuration, RNG states and all retained draws are preserved. Keep the small
 `fit.rds` index and its `.draws` directory together.
 
 From package 0.4.0.9021, fresh ADNI, OAI and Ocean fits also use disk storage
 by default. Their CLI syntax and numerical settings are unchanged. Independent
 fits retain only their current chain states and bounded draw buffers during
-sampling; legacy conversion precedes fitting forks, and full-history analysis
-uses one resident fit. Install the revised package before using these workflows.
+sampling; legacy conversion precedes fitting forks. ADNI and Ocean full-history
+analysis uses one resident fit; OAI permits up to eight as described above.
+Install the revised package before using these workflows.
 For direct R calls, add `storage="disk", path="fit.rds", chunk_iter=1000L`
 to `fit_eivgp()`. It returns a small index; call `read_fit("fit.rds")` explicitly
 when full-history analysis is needed. Every retained draw stays on disk.

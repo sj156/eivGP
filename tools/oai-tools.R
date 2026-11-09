@@ -14,8 +14,8 @@ oai_load_api <- function(repo=.oai_repository) {
   prepared<-if(file.exists(description))file.path(repo,'results',paste0('eivgp-library-',read.dcf(description,fields='Version')[1L]))else ''
   lib<-Sys.getenv('EIVGP_R_LIBRARY',if(nzchar(prepared)&&dir.exists(file.path(prepared,'eivGP')))prepared else file.path(repo,'.r-library'))
   if(nzchar(lib)&&dir.exists(lib)).libPaths(c(normalizePath(lib),file.path(repo,'.r-library'),.libPaths()))
-  if(!requireNamespace('eivGP',quietly=TRUE)||utils::packageVersion('eivGP')<'0.4.0.9021')
-    stop('Install eivGP >= 0.4.0.9021 before running this application.')
+  if(!requireNamespace('eivGP',quietly=TRUE)||utils::packageVersion('eivGP')<'0.4.0.9023')
+    stop('Install eivGP >= 0.4.0.9023 before running this application.')
   ns<-asNamespace('eivGP');e<-new.env(parent=ns)
   evalq({
 oai_labels <- function(fields,labels=NULL) {
@@ -661,25 +661,7 @@ oai_plan_analyze_cell <- function(task, inputs, out, s) {
 # OAI application: evaluation. Reuses package model and sampler functions.
 
 oai_save_plot <- function(filename, plot, width, height, dpi = 130, ...) {
-    input <- paste0(filename, ".plot.rds")
-    log <- paste0(filename, ".render.log")
-    saveRDS(plot, input)
-    # A long-running caller may use a different package version from the current
-    # application entrypoint. Render in a fresh R without reloading that entrypoint,
-    # using the caller's actual package library for any serialized namespaces.
-    libraries <- unique(c(dirname(getNamespaceInfo(asNamespace("eivGP"), "path")), .libPaths()))
-    code <- paste0("a<-commandArgs(TRUE);.libPaths(strsplit(a[6],.Platform$path.sep,fixed=TRUE)[[1]]);(",
-        paste(deparse(oai_render_plot), collapse = "\n"), ")(a[1:5])")
-    args <- shQuote(c("--vanilla", "-e", code, input, filename, as.character(width), as.character(height),
-        as.character(dpi), paste(libraries, collapse = .Platform$path.sep)))
-    rc <- system2(file.path(R.home("bin"), "Rscript"), args, stdout = log, stderr = log)
-    if (rc != 0L || !file.exists(filename) || !isTRUE(file.info(filename)$size > 1000)) {
-        detail <- if (file.exists(log)) paste(tail(readLines(log, warn = FALSE), 12L), collapse = "\n") else ""
-        stop("Plot rendering failed (status ", rc, "). Log: ", log,
-            if (nzchar(detail)) paste0("\n", detail), call. = FALSE)
-    }
-    unlink(input)
-    invisible(filename)
+    mixedgp_save_application_plot(filename, plot, width, height, dpi, ...)
 }
 
 oai_replace_plot_device <- function(x) {
@@ -1065,10 +1047,11 @@ oai_resident_workers <- function(cores,phase,n_tasks,chains=4L) {
   phase<-match.arg(phase,c('fit','evaluate'))
   cores<-oai_integer(cores,'cores');chains<-oai_integer(chains,'chains')
   n_tasks<-oai_integer(n_tasks,'n_tasks',0L)
-  if (phase == 'evaluate') return(as.integer(min(1L, n_tasks)))
   # One resident job per chain-sized group in either phase; the shared pool
-  # lends unused CPU slots to other jobs, including a complete group.
-  as.integer(min(n_tasks,mixedgp_stage_workers(cores,phase,n_tasks,chains)))
+  # lends unused CPU slots to other jobs. Bound full-history evaluation at eight
+  # fits, even on machines whose CPU budget could start more fitting jobs.
+  jobs<-as.integer(min(n_tasks,mixedgp_stage_workers(cores,phase,n_tasks,chains)))
+  if(phase=='evaluate')min(jobs,8L)else jobs
 }
 
 oai_screen_phase <- function(tasks,phase,cores,api,FUN,status_dir,chains=4L,root=NULL,group='eivGP') {
@@ -1409,14 +1392,6 @@ oai_saved_functionals <- function(a) {
 
 # OAI application: render. Reuses package model and sampler functions.
 
-oai_render_plot <- function(args=commandArgs(TRUE)) {
-  stopifnot(length(args)==5L)
-  plot<-readRDS(args[1])
-  ggplot2::ggsave(args[2],plot,width=as.numeric(args[3]),height=as.numeric(args[4]),
-    dpi=as.numeric(args[5]),bg='white')
-  stopifnot(file.exists(args[2]),file.info(args[2])$size>1000)
-  invisible(args[2])
-}
 
 # OAI application: reporting. Reuses package model and sampler functions.
 

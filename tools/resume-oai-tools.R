@@ -450,7 +450,9 @@ resume_oai_main <- function(group, script, args = commandArgs(TRUE)) {
       flush.console()
       if (group == 'eivGP') {
         cat('Disk history: at most ', m$checkpoint_step,
-            ' new draws per chain in RAM; one fit at a time during full-history analysis.\n', sep = '')
+            ' new draws per chain in RAM; up to ',
+            api$oai_resident_workers(cores, 'evaluate', length(unlist(m$folds)) * length(unlist(m$cells)), 4L),
+            ' simultaneous full-history evaluations (maximum 8).\n', sep = '')
         flush.console()
       }
       launcher <- c(script, file.path(repo, 'tools/resume-oai-tools.R'))

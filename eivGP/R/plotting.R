@@ -2451,3 +2451,35 @@ mixedgp_save_scientific_trace_plots <- function(index,output_dir,formats=c("png"
   }
   invisible(paths)
 }
+
+# Shared fresh-process renderer for real-data application plots.
+mixedgp_save_application_plot <- function(filename, plot, width, height, dpi = 130, ...) {
+    input <- paste0(filename, ".plot.rds")
+    log <- paste0(filename, ".render.log")
+    saveRDS(plot, input)
+    # A long-running caller may use a different package version from the current
+    # application entrypoint. Render in a fresh R without reloading that entrypoint,
+    # using the caller's actual package library for any serialized namespaces.
+    libraries <- unique(c(dirname(getNamespaceInfo(asNamespace("eivGP"), "path")), .libPaths()))
+    code <- paste0("a<-commandArgs(TRUE);.libPaths(strsplit(a[6],.Platform$path.sep,fixed=TRUE)[[1]]);(",
+        paste(deparse(mixedgp_render_application_plot), collapse = "\n"), ")(a[1:5])")
+    args <- shQuote(c("--vanilla", "-e", code, input, filename, as.character(width), as.character(height),
+        as.character(dpi), paste(libraries, collapse = .Platform$path.sep)))
+    rc <- system2(file.path(R.home("bin"), "Rscript"), args, stdout = log, stderr = log)
+    if (rc != 0L || !file.exists(filename) || !isTRUE(file.info(filename)$size > 1000)) {
+        detail <- if (file.exists(log)) paste(tail(readLines(log, warn = FALSE), 12L), collapse = "\n") else ""
+        stop("Plot rendering failed (status ", rc, "). Log: ", log,
+            if (nzchar(detail)) paste0("\n", detail), call. = FALSE)
+    }
+    unlink(input)
+    invisible(filename)
+}
+
+mixedgp_render_application_plot <- function(args=commandArgs(TRUE)) {
+  stopifnot(length(args)==5L)
+  plot<-readRDS(args[1])
+  ggplot2::ggsave(args[2],plot,width=as.numeric(args[3]),height=as.numeric(args[4]),
+    dpi=as.numeric(args[5]),bg='white')
+  stopifnot(file.exists(args[2]),file.info(args[2])$size>1000)
+  invisible(args[2])
+}

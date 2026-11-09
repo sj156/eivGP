@@ -147,7 +147,10 @@ Rscript tools/resume-oai-competitors.r --action=run --profile=paper --cores=12 -
 As with the from-scratch entrypoint, `--cores=N` sets the shared CPU budget,
 capped at available CPU capacity. Each fit retains four chains; 4, 8 and 12
 cores permit one, two and three resident fits respectively. The default is
-four cores. Each competitor optimizer instead uses one core, with up to N
+four cores. Evaluation also uses one job per four cores, with a maximum of
+eight simultaneous jobs; `--cores=32` permits eight evaluations with four chain
+workers each. Each job loads one fit's full history, so reduce `--cores` to
+reduce evaluation RAM use. Each competitor optimizer instead uses one core, with up to N
 resident jobs for `--cores=N`. Competitors default to `results/oai_competitors`,
 while EIV-GP defaults to `results/oai`. These commands use the same action,
 profile, resource and path syntax as the from-scratch scripts; profile and

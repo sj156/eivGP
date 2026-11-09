@@ -65,14 +65,8 @@ study1_paper_workflow <- function(lane,args=list(),repo_root=getwd(),
 study1_lane_cli <- function(lane,script) {
   env<-new.env(parent=globalenv())
   sys.source(file.path(dirname(normalizePath(script)),"numerical-common.R"),envir=env)
-  args<-list()
-  for(x in commandArgs(TRUE)) {
-    if(!grepl("^--[^=]+=.+$",x))stop("Use --name=value")
-    k<-sub("^--([^=]+)=.*$","\\1",x)
-    if(k%in%names(args))stop("Repeated option: ",k)
-    args[[k]]<-sub("^--[^=]+=","",x)
-  }
   env$numerical_package_check()
+  args<-getFromNamespace('mixedgp_parse_cli_args','eivGP')(commandArgs(TRUE))
   result<-study1_paper_workflow(lane,args,env$NUMERICAL_REPO_ROOT)
   if(!is.null(result$report)) {
     if(!requireNamespace("rmarkdown",quietly=TRUE)||!rmarkdown::pandoc_available())

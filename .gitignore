@@ -30,6 +30,7 @@ litr/create-eivGP.knit.md
 /codes/*_cache/
 
 .RData
+Rplots.pdf
 /setup-sessionInfo.txt
 /codes/setup-sessionInfo.txt
 

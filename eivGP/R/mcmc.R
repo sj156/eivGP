@@ -1,4 +1,3 @@
-
 # ---- core/00_parallel_utils.R ----
 ############################################################
 ## Reproducible parallel utilities
@@ -188,61 +187,6 @@ mixedgp_restore_rng_state <- function(state) {
 }
 
 
-## Internal continuation support. Retained draws are not terminal states:
-## the last transition need not fall on the thinning schedule.
-mixedgp_checkpoint_hash <- function(object) {
-  cp <- object$checkpoint
-  path <- tempfile("eivgp-checkpoint-", fileext = ".rds")
-  on.exit(unlink(path), add = TRUE)
-  saveRDS(list(data = object$data, control = object$control, kernel = object$kernel,
-    samples = object$mcmc$samples_by_chain, states = cp$states,
-    arguments = cp$arguments, iteration = cp$iteration, burn = cp$burn,
-    thin = cp$thin, checkpoint_control = cp$control), path, compress = FALSE,
-    version = 2L)
-  unname(tools::md5sum(path))
-}
-
-
-mixedgp_resume_offset <- function(resume, n_iter, burn, thin, control) {
-  if (is.null(resume)) return(0L)
-  if (!identical(resume$version, 1L) || resume$iteration <= burn ||
-      resume$iteration >= n_iter || !identical(resume$burn, burn) ||
-      !identical(resume$thin, thin) || !identical(resume$control, control)) {
-    stop("Incompatible continuation checkpoint or changed sampler settings.")
-  }
-  resume$iteration
-}
-
-
-mixedgp_append_chain_samples <- function(chains, resume) {
-  if (is.null(resume)) return(chains)
-  for (i in seq_along(chains)) {
-    old <- resume$old_chains[[i]]
-    for (name in names(old)[startsWith(names(old), "samples_")]) {
-      a <- old[[name]]
-      b <- chains[[i]][[name]]
-      if (is.null(a)) next
-      if (length(dim(a)) == 3L) {
-        joined <- array(NA_real_, c(dim(a)[1L] + dim(b)[1L], dim(a)[-1L]))
-        joined[seq_len(dim(a)[1L]), , ] <- a
-        joined[dim(a)[1L] + seq_len(dim(b)[1L]), , ] <- b
-      } else if (is.matrix(a)) {
-        joined <- rbind(a, b)
-      } else {
-        joined <- c(a, b)
-      }
-      chains[[i]][[name]] <- joined
-    }
-    if (!is.null(old$initial_state)) chains[[i]]$initial_state <- old$initial_state
-    counters <- setdiff(names(old$stats), c("chain", "seed"))
-    for (name in counters) {
-      chains[[i]]$stats[[name]] <- chains[[i]]$stats[[name]] + old$stats[[name]]
-    }
-  }
-  chains
-}
-
-
 mixedgp_latent_anchor_status <- function(U_obs, calib_idx, d = NULL) {
   U_obs <- as.matrix(U_obs)
   if (is.null(d)) d <- ncol(U_obs)
@@ -269,16 +213,6 @@ mixedgp_latent_anchor_status <- function(U_obs, calib_idx, d = NULL) {
     n_calibrated = length(calib_idx)
   )
 }
-
-
-mixedgp_parallel_chains_enabled <- function(
-    parallel_level = c("chains", "replications", "none"),
-    n_cores = NULL) {
-  parallel_level <- match.arg(parallel_level)
-  if (parallel_level != "chains") return(FALSE)
-  identical(mixedgp_parallel_backend(n_cores)$backend, "fork")
-}
-
 
 
 # One process-wide budget inherited by forked workers. Waiting coordinators own
@@ -629,233 +563,52 @@ make_class <- function(u, tau) {
 }
 
 
-rtruncnorm_vec <- function(mean, sd, lower, upper) {
-  n <- max(length(mean), length(lower), length(upper))
-  mean <- rep(mean, length.out = n)
-  sd <- rep(sd, length.out = n)
-  lower <- rep(lower, length.out = n)
-  upper <- rep(upper, length.out = n)
-
-  if (any(!is.finite(mean)) || any(!is.finite(sd)) || any(sd <= 0) ||
-      anyNA(lower) || anyNA(upper) || any(lower >= upper)) {
-    stop("Invalid parameters in rtruncnorm_vec().")
-  }
-
-  a <- (lower - mean) / sd
-  b <- (upper - mean) / sd
-  z <- numeric(n)
-
-  ## Draw uniformly between two probabilities without subtracting nearly
-  ## equal CDF values.  Positive-tail intervals use survival probabilities;
-  ## negative-tail intervals use lower-tail probabilities.  qnorm(log.p=TRUE)
-  ## then remains accurate even when the ordinary probabilities underflow.
-  log_uniform_between <- function(log_lo, log_hi, size) {
-    ratio <- exp(log_lo - log_hi)
-    log_hi + log(ratio + runif(size) * (1 - ratio))
-  }
-
-  right <- a >= 0
-  if (any(right)) {
-    log_lo <- pnorm(b[right], lower.tail = FALSE, log.p = TRUE)
-    log_hi <- pnorm(a[right], lower.tail = FALSE, log.p = TRUE)
-    log_prob <- log_uniform_between(log_lo, log_hi, sum(right))
-    z[right] <- qnorm(log_prob, lower.tail = FALSE, log.p = TRUE)
-  }
-
-  left <- !right & b <= 0
-  if (any(left)) {
-    log_lo <- pnorm(a[left], log.p = TRUE)
-    log_hi <- pnorm(b[left], log.p = TRUE)
-    log_prob <- log_uniform_between(log_lo, log_hi, sum(left))
-    z[left] <- qnorm(log_prob, log.p = TRUE)
-  }
-
-  middle <- !right & !left
-  if (any(middle)) {
-    p_lo <- pnorm(a[middle])
-    p_hi <- pnorm(b[middle])
-    prob <- p_lo + runif(sum(middle)) * (p_hi - p_lo)
-    z[middle] <- qnorm(prob)
-  }
-
-  out <- mean + sd * z
-  tolerance <- 64 * .Machine$double.eps * pmax(1, abs(lower), abs(upper))
-  violates <- !is.finite(out) |
-    out < lower - tolerance | out > upper + tolerance
-  if (any(violates)) {
-    stop("Numerical failure in tail-stable truncated-normal sampling.")
-  }
-  pmin(pmax(out, lower), upper)
-}
-
-
-pairwise_sqdist <- function(a, b = NULL) {
-  a <- as.matrix(a)
-  if (is.null(b)) b <- a
-  b <- as.matrix(b)
-  
-  aa <- rowSums(a^2)
-  bb <- rowSums(b^2)
-  
-  out <- outer(aa, bb, "+") - 2 * tcrossprod(a, b)
-  pmax(out, 0)
-}
-
-
-solve_chol <- function(U, b) {
-  backsolve(U, forwardsolve(t(U), b))
-}
-
-
-rmvnorm_psd <- function(n, mean, Sigma, tolerance = NULL) {
-  mean <- as.numeric(mean)
-  Sigma <- as.matrix(Sigma)
-  if (!identical(dim(Sigma), c(length(mean), length(mean)))) {
-    stop("Sigma has incompatible dimensions in rmvnorm_psd().")
-  }
-  Sigma <- 0.5 * (Sigma + t(Sigma))
-  eig <- eigen(Sigma, symmetric = TRUE)
-  scale <- max(1, max(abs(eig$values)))
-  if (is.null(tolerance)) {
-    tolerance <- 100 * length(mean) * .Machine$double.eps * scale
-  }
-  if (min(eig$values) < -tolerance) {
-    stop("Predictive covariance is not positive semidefinite within tolerance.")
-  }
-  values <- pmax(eig$values, 0)
-  factor <- diag(sqrt(values), nrow = length(values)) %*% t(eig$vectors)
-  Z <- matrix(rnorm(as.integer(n) * length(mean)), as.integer(n), length(mean))
-  out <- sweep(Z %*% factor, 2, mean, "+")
-  attr(out, "psd_tolerance") <- tolerance
-  attr(out, "clipped_eigenvalues") <- sum(eig$values < 0)
-  out
-}
-
-
-bounded_slice_update_1d <- function(x0, logf, w = 1,
-                                 lower = -Inf, upper = Inf,
-                                 max_steps_out = 50,
-                                 max_iter = 200,
-                                 fail_on_limit = FALSE) {
-  if (length(w) != 1L || !is.finite(w) || w <= 0 ||
-      max_steps_out < 1L || max_iter < 1L) {
-    stop("Slice width and search budgets must be positive.")
-  }
-  if (upper <= lower) {
-    if (isTRUE(fail_on_limit)) stop("Slice interval is empty.")
-    return(list(x = x0, n_eval = 0))
-  }
-  
-  if (length(x0) != 1L || !is.finite(x0) || x0 < lower || x0 > upper) {
-    stop("Current slice state is outside its declared interval.")
-  }
-  
-  f0 <- logf(x0)
-  n_eval <- 1L
-  
-  if (!is.finite(f0)) {
-    if (isTRUE(fail_on_limit)) stop("Current slice state has non-finite density.")
-    return(list(x = x0, n_eval = n_eval))
-  }
-  
-  logy <- f0 + log(runif(1))
-  
-  L <- x0 - runif(1) * w
-  R <- L + w
-  
-  if (is.finite(lower)) L <- max(L, lower)
-  if (is.finite(upper)) R <- min(R, upper)
-  
-  J <- floor(runif(1) * max_steps_out)
-  K <- max_steps_out - 1L - J
-  
-  while (J > 0 && (!is.finite(lower) || L > lower)) {
-    fL <- logf(L)
-    n_eval <- n_eval + 1L
-    if (!is.finite(fL) || fL <= logy) break
-    L <- L - w
-    if (is.finite(lower)) L <- max(L, lower)
-    J <- J - 1L
-  }
-  
-  while (K > 0 && (!is.finite(upper) || R < upper)) {
-    fR <- logf(R)
-    n_eval <- n_eval + 1L
-    if (!is.finite(fR) || fR <= logy) break
-    R <- R + w
-    if (is.finite(upper)) R <- min(R, upper)
-    K <- K - 1L
-  }
-  
-  for (iter in seq_len(max_iter)) {
-    x1 <- runif(1, L, R)
-    f1 <- logf(x1)
-    n_eval <- n_eval + 1L
-    
-    if (is.finite(f1) && f1 >= logy) {
-      return(list(x = x1, n_eval = n_eval))
-    }
-    
-    if (x1 < x0) {
-      L <- x1
-    } else {
-      R <- x1
-    }
-  }
-  
-  if (isTRUE(fail_on_limit)) {
-    stop("Slice shrinkage exceeded max_iter.")
-  }
-  list(x = x0, n_eval = n_eval)
-}
-
-
 full_interval_slice_update <- function(x0, logf, lower, upper,
                                        max_iter = 200,
                                        fail_on_limit = FALSE) {
   if (!is.finite(lower) || !is.finite(upper)) {
     stop("full_interval_slice_update requires finite lower and upper bounds.")
   }
-  
+
   if (upper <= lower) {
     if (isTRUE(fail_on_limit)) stop("Full slice interval is empty.")
     return(list(x = x0, n_eval = 0))
   }
-  
+
   if (length(x0) != 1L || !is.finite(x0) || x0 < lower || x0 > upper) {
     stop("Current full-interval slice state is outside its declared interval.")
   }
-  
+
   f0 <- logf(x0)
   n_eval <- 1L
-  
+
   if (!is.finite(f0)) {
     if (isTRUE(fail_on_limit)) {
       stop("Current full-interval slice state has non-finite density.")
     }
     return(list(x = x0, n_eval = n_eval))
   }
-  
+
   logy <- f0 + log(runif(1))
   L <- lower
   R <- upper
-  
+
   for (iter in seq_len(max_iter)) {
     x1 <- runif(1, L, R)
     f1 <- logf(x1)
     n_eval <- n_eval + 1L
-    
+
     if (is.finite(f1) && f1 >= logy) {
       return(list(x = x1, n_eval = n_eval))
     }
-    
+
     if (x1 < x0) {
       L <- x1
     } else {
       R <- x1
     }
   }
-  
+
   if (isTRUE(fail_on_limit)) {
     stop("Full-interval slice shrinkage exceeded max_iter.")
   }
@@ -921,7 +674,7 @@ f0_1d <- function(x,
                   tau = c(-5 / 3, -10 / 9, 0, 10 / 9, 5 / 3),
                   heterogeneity_eta = 1) {
   scenario <- match.arg(scenario)
-  
+
   if (scenario == "inactive") {
     return(cos(0.9 * base::pi * u))
   }
@@ -951,7 +704,7 @@ f0_1d <- function(x,
         heterogeneity_eta * (continuous_effect - conditional_mean)
     )
   }
-  
+
   x_main + cos(0.9 * base::pi * u) +
     0.35 * (x / 2) * sin(0.9 * base::pi * u)
 }
@@ -995,7 +748,7 @@ simulate_1d_data <- function(n = 100,
                              heterogeneity_eta = 1) {
   scenario <- match.arg(scenario)
   threshold_design <- match.arg(threshold_design)
-  
+
   if (!is.null(seed)) {
     set.seed(seed)
   }
@@ -1013,22 +766,22 @@ simulate_1d_data <- function(n = 100,
       min_class_count < 0L) {
     stop("min_class_count must be one nonnegative integer.")
   }
-  
+
   repeat {
     x <- maximin_lhs_1d(n, lower = -2, upper = 2)
     u <- rnorm(n)
     c_ord <- make_class(u, tau_true)
-    
+
     if (min_class_count == 0L ||
         all(tabulate(c_ord, nbins = m) >= min_class_count)) break
   }
-  
+
   f <- f0_1d(
     x, u, scenario = scenario, c_ord = c_ord, tau = tau_true,
     heterogeneity_eta = heterogeneity_eta
   )
   y <- f + rnorm(n, mean = 0, sd = sigma_eps)
-  
+
   x_test <- runif(n_test, -2, 2)
   u_test <- rnorm(n_test)
   c_test <- make_class(u_test, tau_true)
@@ -1037,7 +790,7 @@ simulate_1d_data <- function(n = 100,
     heterogeneity_eta = heterogeneity_eta
   )
   y_test <- f_test + rnorm(n_test, mean = 0, sd = sigma_eps)
-  
+
   list(
     train = data.frame(
       x = x,
@@ -1075,13 +828,13 @@ make_nested_calibration_sets <- function(n, calib_grid, seed = NULL) {
   if (!is.null(seed)) {
     set.seed(seed)
   }
-  
+
   ord <- sample(seq_len(n))
-  
+
   out <- lapply(calib_grid, function(k) {
     if (k == 0L) integer(0) else sort(ord[seq_len(k)])
   })
-  
+
   names(out) <- as.character(calib_grid)
   out
 }
@@ -1107,826 +860,6 @@ make_theta_spec_multix <- function(p_x) {
 }
 
 
-new_gp_cache_1d <- function(use_blocks = TRUE) {
-  cache <- new.env(parent = emptyenv())
-  cache$entry <- NULL
-  cache$use_blocks <- isTRUE(use_blocks)
-  cache$full_factorizations <- 0L
-  cache$cache_hits <- 0L
-  cache$block_setups <- 0L
-  cache$block_evaluations <- 0L
-  cache$block_fallbacks <- 0L
-  class(cache) <- "eivgp_cache_1d"
-  cache
-}
-
-
-gp_cache_matches_1d <- function(cache, y, u, Dx_list, logtheta,
-                                theta_spec, kernel, matern_nu) {
-  if (is.null(cache)) return(FALSE)
-  if (!is.environment(cache) || !inherits(cache, "eivgp_cache_1d")) {
-    stop("gp_cache must be created by new_gp_cache_1d().")
-  }
-  entry <- cache$entry
-  !is.null(entry) && identical(entry$y, y) && identical(entry$u, u) &&
-    identical(entry$Dx_list, Dx_list) && identical(entry$logtheta, logtheta) &&
-    identical(entry$theta_spec, theta_spec) && identical(entry$kernel, kernel) &&
-    identical(entry$matern_nu, matern_nu)
-}
-
-
-gp_cache_store_1d <- function(cache, state, y, u, Dx_list, logtheta,
-                              theta_spec, kernel, matern_nu) {
-  if (!is.null(cache)) {
-    cache$entry <- list(state = state, y = y, u = u, Dx_list = Dx_list,
-                        logtheta = logtheta, theta_spec = theta_spec,
-                        kernel = kernel, matern_nu = matern_nu)
-  }
-  invisible(state)
-}
-
-
-gp_update_loglik_1d <- function(state, n, collapse_noise = FALSE,
-                                a_eps0 = 2, b_eps0 = 0.05) {
-  if (!collapse_noise) return(state$loglik)
-  ## A = I + rho^2 R and sigma2 ~ IG(a_eps0, b_eps0). Integrating
-  ## sigma2 removes neither the latent-input prior nor the theta prior.
-  ## The determinant and quadratic form are shared by dense/Schur caches.
-  -0.5 * (n * log(2 * base::pi) + state$logdetA) +
-    a_eps0 * log(b_eps0) - lgamma(a_eps0) + lgamma(a_eps0 + n / 2) -
-    (a_eps0 + n / 2) * log(b_eps0 + 0.5 * state$quad)
-}
-
-
-gp_state_1d <- function(y, u, Dx_list, logtheta, sigma2_eps,
-                        theta_spec = NULL,
-                        kernel = "se",
-                        matern_nu = 2.5,
-                        gp_cache = NULL,
-                        require_factor = TRUE) {
-  if (!is.list(Dx_list)) Dx_list <- list(as.matrix(Dx_list))
-  if (is.null(theta_spec)) {
-    theta_spec <- make_theta_spec_multix(length(Dx_list))
-  }
-  n <- length(y)
-  if (gp_cache_matches_1d(gp_cache, y, u, Dx_list, logtheta,
-                          theta_spec, kernel, matern_nu) &&
-      (!isTRUE(require_factor) || !is.null(gp_cache$entry$state$cholA))) {
-    state <- gp_cache$entry$state
-    gp_cache$cache_hits <- gp_cache$cache_hits + 1L
-    state$loglik <- -0.5 * (n * log(2 * base::pi * sigma2_eps) +
-                             state$logdetA + state$quad / sigma2_eps)
-    return(state)
-  }
-
-  rho <- exp(logtheta[1])
-  theta_x <- exp(logtheta[theta_spec$x_index])
-  theta_u <- exp(logtheta[theta_spec$u_index])
-
-  Du <- pairwise_sqdist(matrix(u, ncol = 1))
-  D2 <- weighted_distance_multix(Dx_list, theta_x) + theta_u * Du
-  R <- kernel_from_weighted_sqdist_1d(D2, kernel, matern_nu)
-  
-  A <- rho^2 * R + diag(n)
-  
-  U <- safe_chol_1d(A)
-  if (!is.null(gp_cache)) {
-    gp_cache$full_factorizations <- gp_cache$full_factorizations + 1L
-  }
-  Ainv_y <- solve_chol(U, y)
-  
-  logdetA <- 2 * sum(log(diag(U)))
-  quad <- sum(y * Ainv_y)
-  
-  loglik <- -0.5 * (
-    n * log(2 * base::pi * sigma2_eps) +
-      logdetA +
-      quad / sigma2_eps
-  )
-  
-  state <- list(
-    loglik = loglik,
-    R = R,
-    A = A,
-    cholA = U,
-    Ainv_y = Ainv_y,
-    logdetA = logdetA,
-    quad = quad
-  )
-  gp_cache_store_1d(gp_cache, state, y, u, Dx_list, logtheta,
-                    theta_spec, kernel, matern_nu)
-  state
-}
-
-
-gp_block_state_1d <- function(prepared, u_block, sigma2_eps, gp_cache) {
-  a <- prepared
-  if (length(u_block) != a$b || any(!is.finite(u_block))) {
-    stop("A GP block proposal has incompatible or nonfinite latent values.")
-  }
-  u_prop <- a$u
-  u_prop[a$block_idx] <- u_block
-  if (gp_cache_matches_1d(gp_cache, a$y, u_prop, a$Dx_list, a$logtheta,
-                          a$theta_spec, a$kernel, a$matern_nu)) {
-    return(gp_state_1d(
-      a$y, u_prop, a$Dx_list, a$logtheta, sigma2_eps, a$theta_spec,
-      a$kernel, a$matern_nu, gp_cache = gp_cache, require_factor = FALSE
-    ))
-  }
-  gp_cache$block_evaluations <- gp_cache$block_evaluations + 1L
-  ## Only the proposed rows/columns change. Factor the fixed complement once,
-  ## then evaluate the exact Gaussian conditional through its Schur complement.
-  candidate <- tryCatch({
-    cross <- a$rho2 * kernel_from_weighted_sqdist_1d(
-      a$Dx_cross + a$theta_u * pairwise_sqdist(matrix(u_block, ncol = 1),
-                                                matrix(a$u[a$rest], ncol = 1)),
-      a$kernel, a$matern_nu
-    )
-    block <- diag(a$b) + a$rho2 * kernel_from_weighted_sqdist_1d(
-      a$Dx_block + a$theta_u * pairwise_sqdist(matrix(u_block, ncol = 1)),
-      a$kernel, a$matern_nu
-    )
-    V <- forwardsolve(t(a$chol_rest), t(cross))
-    schur <- block - crossprod(V)
-    schur <- 0.5 * (schur + t(schur))
-    H <- chol(schur)
-    residual <- a$y[a$block_idx] - as.numeric(cross %*% a$alpha_rest)
-    quad <- a$quad_rest + sum(residual * solve_chol(H, residual))
-    logdet <- a$logdet_rest + 2 * sum(log(diag(H)))
-    if (!is.finite(quad) || quad < 0 || !is.finite(logdet)) {
-      stop("Nonfinite Schur-complement likelihood calculation.")
-    }
-    A <- a$A
-    A[a$block_idx, a$rest] <- cross
-    A[a$rest, a$block_idx] <- t(cross)
-    A[a$block_idx, a$block_idx] <- block
-    list(A = A, cholA = NULL, R = NULL, Ainv_y = NULL,
-         quad = quad, logdetA = logdet,
-         loglik = -0.5 * (a$n * log(2 * base::pi * sigma2_eps) +
-                           logdet + quad / sigma2_eps))
-  }, error = function(e) NULL)
-  if (is.null(candidate)) {
-    ## Retry the same covariance with the dense factorization. This does not
-    ## regularize the matrix or reject a proposal because the shortcut failed.
-    gp_cache$block_fallbacks <- gp_cache$block_fallbacks + 1L
-    return(gp_state_1d(
-      a$y, u_prop, a$Dx_list, a$logtheta, sigma2_eps, a$theta_spec,
-      a$kernel, a$matern_nu, gp_cache = gp_cache, require_factor = TRUE
-    ))
-  }
-  gp_cache_store_1d(gp_cache, candidate, a$y, u_prop, a$Dx_list, a$logtheta,
-                    a$theta_spec, a$kernel, a$matern_nu)
-  candidate
-}
-
-
-make_default_control <- function(n, n_mis,
-                                 preset = c("fast", "balanced", "thorough"),
-                                 p_x = 1L) {
-  preset <- match.arg(preset)
-  
-  if (preset == "fast") {
-    local_frac <- 0.03
-    theta_update_every <- 10L
-    block_ess_every <- 2L
-    n_blocks_per_iter <- 1L
-    global_ess_every <- 50L
-    full_local_every <- 100L
-  }
-  
-  if (preset == "balanced") {
-    local_frac <- 0.06
-    theta_update_every <- 5L
-    block_ess_every <- 1L
-    n_blocks_per_iter <- 1L
-    global_ess_every <- 25L
-    full_local_every <- 50L
-  }
-  
-  if (preset == "thorough") {
-    local_frac <- 0.10
-    theta_update_every <- 3L
-    block_ess_every <- 1L
-    n_blocks_per_iter <- 2L
-    global_ess_every <- 10L
-    full_local_every <- 25L
-  }
-  
-  local_per_iter <- min(
-    n_mis,
-    max(3L, ceiling(local_frac * max(n_mis, 1L)))
-  )
-  
-  ess_block_size <- min(
-    n_mis,
-    max(5L, ceiling(sqrt(max(n_mis, 1L))))
-  )
-  
-  list(
-    preset = preset,
-    local_per_iter = local_per_iter,
-    full_local_every = full_local_every,
-    ess_block_size = ess_block_size,
-    block_ess_every = block_ess_every,
-    n_blocks_per_iter = n_blocks_per_iter,
-    global_ess_every = global_ess_every,
-    theta_update_every = theta_update_every,
-    theta_slice_width_init = rep(1.0, p_x + 2L),
-    adapt_theta_width = TRUE,
-    adapt_every = 100L,
-    adapt_window = 500L,
-    theta_width_min = 0.20,
-    theta_width_max = 2.50
-  )
-}
-
-
-check_constraints_1d <- function(u, c_ord, tau) {
-  lower <- c(-Inf, tau)[c_ord]
-  upper <- c(tau, Inf)[c_ord]
-  
-  all(u > lower & u <= upper)
-}
-
-
-log_prior_logtheta <- function(logtheta, theta_spec = NULL,
-                               mean = NULL, sd = NULL, bounds = NULL) {
-  if (is.null(theta_spec)) {
-    p_x <- length(logtheta) - 2L
-    if (!is.finite(p_x) || p_x < 1L) {
-      stop("logtheta must have length p_x + 2")
-    }
-    theta_spec <- make_theta_spec_multix(p_x)
-  }
-  if (!is.null(mean)) theta_spec$prior_mean <- mean
-  if (!is.null(sd)) theta_spec$prior_sd <- sd
-  if (!is.null(bounds)) theta_spec$bounds <- bounds
-  if (any(logtheta < theta_spec$bounds[, 1]) ||
-      any(logtheta > theta_spec$bounds[, 2])) {
-    return(-Inf)
-  }
-  
-  sum(dnorm(
-    logtheta,
-    mean = theta_spec$prior_mean,
-    sd = theta_spec$prior_sd,
-    log = TRUE
-  ))
-}
-
-
-gp_loglik_with_constraints_1d <- function(y, u, Dx_list, c_ord, tau,
-                                          logtheta, sigma2_eps,
-                                          theta_spec = NULL,
-                                          kernel = "se",
-                                          matern_nu = 2.5,
-                                          gp_cache = NULL,
-                                          collapse_noise = FALSE) {
-  if (!is.list(Dx_list)) Dx_list <- list(as.matrix(Dx_list))
-  if (is.null(theta_spec)) {
-    theta_spec <- make_theta_spec_multix(length(Dx_list))
-  }
-  if (!check_constraints_1d(u, c_ord, tau)) {
-    return(-Inf)
-  }
-  
-  state <- gp_state_1d(
-    y, u, Dx_list, logtheta, if (collapse_noise) 1 else sigma2_eps, theta_spec,
-    kernel = kernel, matern_nu = matern_nu,
-    gp_cache = gp_cache, require_factor = FALSE
-  )
-  gp_update_loglik_1d(state, length(y), collapse_noise)
-}
-
-
-theta_logpost_1d <- function(y, u, Dx_list, logtheta, sigma2_eps,
-                             theta_spec = NULL,
-                             prior_mean = NULL, prior_sd = NULL, bounds = NULL,
-                             kernel = "se", matern_nu = 2.5,
-                             gp_cache = NULL,
-                             collapse_noise = FALSE) {
-  if (!is.list(Dx_list)) Dx_list <- list(as.matrix(Dx_list))
-  if (is.null(theta_spec)) {
-    theta_spec <- make_theta_spec_multix(length(Dx_list))
-  }
-  lp <- log_prior_logtheta(
-    logtheta, theta_spec,
-    mean = prior_mean, sd = prior_sd, bounds = bounds
-  )
-  
-  if (!is.finite(lp)) {
-    return(-Inf)
-  }
-  
-  state <- gp_state_1d(
-    y, u, Dx_list, logtheta, if (collapse_noise) 1 else sigma2_eps, theta_spec,
-    kernel = kernel, matern_nu = matern_nu,
-    gp_cache = gp_cache, require_factor = FALSE
-  )
-  gp_update_loglik_1d(state, length(y), collapse_noise) + lp
-}
-
-
-initialize_tau_1d <- function(c_ord, u_obs, calib_idx, m, tau_bound = 8) {
-  n <- length(c_ord)
-  
-  counts <- tabulate(c_ord, nbins = m)
-  probs <- cumsum(counts)[1:(m - 1)] / n
-  probs <- pmin(pmax(probs, 0.03), 0.97)
-  
-  tau <- qnorm(probs)
-  obs_c <- c_ord[calib_idx]
-  obs_u <- u_obs[calib_idx]
-  for (j in seq_len(m - 1)) {
-    lower <- max(c(-tau_bound, if (j > 1L) tau[j - 1L],
-                   obs_u[obs_c <= j]))
-    upper <- min(c(tau_bound, obs_u[obs_c > j]))
-    if (lower >= upper) {
-      stop("Calibrated u values are incompatible with ordinal labels or threshold bounds.")
-    }
-    ## An absolute inward margin can exceed a valid calibration gap. A
-    ## midpoint also leaves room for later thresholds sharing this gap.
-    if (!is.finite(tau[j]) || tau[j] <= lower || tau[j] >= upper) {
-      tau[j] <- lower + (upper - lower) / 2
-    }
-    if (tau[j] <= lower || tau[j] >= upper) {
-      stop("No representable interior value exists in a threshold initialization interval.")
-    }
-  }
-  
-  tau
-}
-
-
-update_tau_1d <- function(tau, u, c_ord, m, tau_bound = 8) {
-  tau_new <- tau
-  
-  for (j in seq_len(m - 1)) {
-    L <- max(
-      c(
-        -tau_bound,
-        if (j > 1) tau_new[j - 1] else -Inf,
-        u[c_ord <= j]
-      ),
-      na.rm = TRUE
-    )
-    
-    U <- min(
-      c(
-        tau_bound,
-        if (j < m - 1) tau_new[j + 1] else Inf,
-        u[c_ord > j]
-      ),
-      na.rm = TRUE
-    )
-    
-    if (!is.finite(L) || !is.finite(U) || L >= U) {
-      stop("Threshold Gibbs update encountered an empty conditional interval.")
-    }
-    tau_new[j] <- runif(1, L, U)
-  }
-  
-  tau_new
-}
-
-
-assert_threshold_state_1d <- function(u,
-                                      tau,
-                                      c_ord,
-                                      m,
-                                      calib_idx = integer(0),
-                                      u_obs = NULL,
-                                      logtheta = NULL,
-                                      sigma2_eps = NULL,
-                                      tolerance = 1e-10) {
-  if (length(u) != length(c_ord) || any(!is.finite(u)) ||
-      length(tau) != m - 1L || any(!is.finite(tau)) ||
-      is.unsorted(tau, strictly = TRUE)) {
-    stop("The deterministic-threshold sampler state is invalid.")
-  }
-  lower <- c(-Inf, tau)[c_ord]
-  upper <- c(tau, Inf)[c_ord]
-  if (any(u <= lower | u > upper)) {
-    stop("A latent input left the interval implied by its ordinal category.")
-  }
-  if (length(calib_idx) > 0L) {
-    if (is.null(u_obs) || anyNA(u_obs[calib_idx]) ||
-        any(u[calib_idx] != u_obs[calib_idx])) {
-      stop("A calibrated latent input moved away from its observed value.")
-    }
-  }
-  if (!is.null(logtheta) && any(!is.finite(logtheta))) {
-    stop("A GP hyperparameter is nonfinite.")
-  }
-  if (!is.null(sigma2_eps) &&
-      (length(sigma2_eps) != 1L || !is.finite(sigma2_eps) || sigma2_eps <= 0)) {
-    stop("The observation-noise variance is not positive and finite.")
-  }
-  invisible(TRUE)
-}
-
-
-sample_sigma2_eps_1d <- function(y, u, Dx_list, logtheta, theta_spec = NULL,
-                                 a_eps0 = 2, b_eps0 = 0.05,
-                                 kernel = "se", matern_nu = 2.5,
-                                 gp_cache = NULL) {
-  if (!is.list(Dx_list)) Dx_list <- list(as.matrix(Dx_list))
-  if (is.null(theta_spec)) {
-    theta_spec <- make_theta_spec_multix(length(Dx_list))
-  }
-  n <- length(y)
-  
-  ## The factor, determinant and quadratic form do not depend on sigma2.
-  quad <- gp_state_1d(
-    y, u, Dx_list, logtheta, sigma2_eps = 1, theta_spec = theta_spec,
-    kernel = kernel, matern_nu = matern_nu,
-    gp_cache = gp_cache, require_factor = FALSE
-  )$quad
-  
-  shape <- a_eps0 + n / 2
-  rate <- b_eps0 + 0.5 * quad
-  
-  1 / rgamma(1, shape = shape, rate = rate)
-}
-
-
-update_u_ess_block_1d <- function(y, u, Dx_list, c_ord, tau, logtheta,
-                                      sigma2_eps, theta_spec,
-                                      block_idx, max_try = 300L,
-                                      kernel = "se", matern_nu = 2.5,
-                                      gp_cache = NULL,
-                                      collapse_noise = FALSE) {
-  if (length(block_idx) == 0) {
-    return(list(u = u, n_eval = 0L, accepted = TRUE))
-  }
-  
-  u_block <- u[block_idx]
-  block_state <- prepare_gp_block_1d(
-    y, u, Dx_list, logtheta, theta_spec, block_idx,
-    kernel, matern_nu, gp_cache
-  )
-  
-  loglik_fun <- function(u_block_prop) {
-    u_prop <- u
-    u_prop[block_idx] <- u_block_prop
-    if (!is.null(block_state)) {
-      if (!check_constraints_1d(u_prop, c_ord, tau)) return(-Inf)
-      candidate <- gp_block_state_1d(
-        block_state, u_block_prop, if (collapse_noise) 1 else sigma2_eps, gp_cache
-      )
-      return(gp_update_loglik_1d(candidate, length(y), collapse_noise))
-    }
-    
-    gp_loglik_with_constraints_1d(
-      y = y,
-      u = u_prop,
-      Dx_list = Dx_list,
-      c_ord = c_ord,
-      tau = tau,
-      logtheta = logtheta,
-      sigma2_eps = sigma2_eps,
-      theta_spec = theta_spec,
-      kernel = kernel,
-      matern_nu = matern_nu,
-      gp_cache = gp_cache,
-      collapse_noise = collapse_noise
-    )
-  }
-  
-  loglik_cur <- loglik_fun(u_block)
-  
-  if (!is.finite(loglik_cur)) {
-    stop("Current latent state violates constraints or has invalid likelihood.")
-  }
-  
-  nu <- rnorm(length(u_block))
-  
-  logy <- loglik_cur + log(runif(1))
-  
-  angle <- runif(1, 0, 2 * base::pi)
-  angle_min <- angle - 2 * base::pi
-  angle_max <- angle
-  
-  n_eval <- 1L
-  
-  for (try_id in seq_len(max_try)) {
-    u_block_prop <- u_block * cos(angle) + nu * sin(angle)
-    
-    loglik_prop <- loglik_fun(u_block_prop)
-    n_eval <- n_eval + 1L
-    
-    if (is.finite(loglik_prop) && loglik_prop >= logy) {
-      u_new <- u
-      u_new[block_idx] <- u_block_prop
-      return(list(u = u_new, n_eval = n_eval, accepted = TRUE))
-    }
-    
-    if (angle < 0) {
-      angle_min <- angle
-    } else {
-      angle_max <- angle
-    }
-    
-    angle <- runif(1, angle_min, angle_max)
-  }
-  
-  stop("Elliptical-slice update exceeded max_try.")
-}
-
-
-update_u_local_z_slice_1d <- function(y, u, Dx_list, c_ord, tau,
-                                          logtheta, sigma2_eps, theta_spec,
-                                          update_idx,
-                                          kernel = "se", matern_nu = 2.5,
-                                          gp_cache = NULL,
-                                          collapse_noise = FALSE) {
-  n_eval_total <- 0L
-  update_idx <- update_idx[sample.int(length(update_idx))]
-  
-  for (i in update_idx) {
-    lower_u <- c(-Inf, tau)[c_ord[i]]
-    upper_u <- c(tau, Inf)[c_ord[i]]
-    block_state <- prepare_gp_block_1d(
-      y, u, Dx_list, logtheta, theta_spec, i,
-      kernel, matern_nu, gp_cache
-    )
-    local_gp_loglik <- function(value) {
-      if (!is.null(block_state)) {
-        candidate <- gp_block_state_1d(
-          block_state, value, if (collapse_noise) 1 else sigma2_eps, gp_cache
-        )
-        return(gp_update_loglik_1d(candidate, length(y), collapse_noise))
-      }
-      u_prop <- u
-      u_prop[i] <- value
-      candidate <- gp_state_1d(
-        y, u_prop, Dx_list, logtheta, if (collapse_noise) 1 else sigma2_eps, theta_spec,
-        kernel = kernel, matern_nu = matern_nu,
-        gp_cache = gp_cache, require_factor = FALSE
-      )
-      gp_update_loglik_1d(candidate, length(y), collapse_noise)
-    }
-    
-    z_lower <- pnorm(lower_u)
-    z_upper <- pnorm(upper_u)
-    
-    ## Choose the coordinate system using only the fixed category bounds,
-    ## not the current latent value. Infinite/tail/narrow intervals use an
-    ## ordinary u-scale slice including the normal prior. This retains the
-    ## whole interval instead of clipping its CDF tails or projecting u.
-    probability_scale <- is.finite(lower_u) && is.finite(upper_u) &&
-      z_lower > 1e-8 && z_upper < 1 - 1e-8 && z_upper - z_lower > 1e-8
-    if (!probability_scale) {
-      logf_u <- function(value) {
-        if (!is.finite(value) || value <= lower_u || value > upper_u) return(-Inf)
-        local_gp_loglik(value) + dnorm(value, log = TRUE)
-      }
-      width <- if (is.finite(lower_u) && is.finite(upper_u)) {
-        min(1, (upper_u - lower_u) / 2)
-      } else 1
-      ans <- bounded_slice_update_1d(
-        x0 = u[i], logf = logf_u, w = width,
-        lower = lower_u, upper = upper_u, max_steps_out = 30L,
-        max_iter = 200L, fail_on_limit = TRUE
-      )
-      n_eval_total <- n_eval_total + ans$n_eval
-      u[i] <- ans$x
-      next
-    }
-    z0 <- pnorm(u[i])
-    
-    logf_z <- function(z) {
-      if (z <= z_lower || z > z_upper) {
-        return(-Inf)
-      }
-      
-      u_prop_i <- qnorm(z)
-      
-      if (!(u_prop_i > lower_u && u_prop_i <= upper_u)) {
-        return(-Inf)
-      }
-      
-      local_gp_loglik(u_prop_i)
-    }
-    
-    ans <- full_interval_slice_update(
-      x0 = z0,
-      logf = logf_z,
-      lower = z_lower,
-      upper = z_upper,
-      max_iter = 200L,
-      fail_on_limit = TRUE
-    )
-    
-    n_eval_total <- n_eval_total + ans$n_eval
-    u[i] <- qnorm(ans$x)
-  }
-  
-  list(u = u, n_eval = n_eval_total)
-}
-
-
-update_logtheta_slice_1d <- function(y, u, Dx_list, logtheta, sigma2_eps,
-                                         theta_slice_width, theta_spec,
-                                         kernel = "se", matern_nu = 2.5,
-                                         gp_cache = NULL,
-                                         collapse_noise = FALSE) {
-  n_eval_total <- 0L
-  
-  for (j in seq_along(logtheta)) {
-    logf_j <- function(val) {
-      lt <- logtheta
-      lt[j] <- val
-      
-      theta_logpost_1d(
-        y, u, Dx_list, lt, sigma2_eps, theta_spec,
-        kernel = kernel, matern_nu = matern_nu, gp_cache = gp_cache,
-        collapse_noise = collapse_noise
-      )
-    }
-    
-    ans <- bounded_slice_update_1d(
-      x0 = logtheta[j],
-      logf = logf_j,
-      w = theta_slice_width[j],
-      lower = theta_spec$bounds[j, 1],
-      upper = theta_spec$bounds[j, 2],
-      max_steps_out = 30L,
-      max_iter = 100L,
-      fail_on_limit = TRUE
-    )
-    
-    logtheta[j] <- ans$x
-    n_eval_total <- n_eval_total + ans$n_eval
-  }
-  
-  list(logtheta = logtheta, n_eval = n_eval_total)
-}
-
-
-split_rhat_1d <- function(chain_list) {
-  chain_list <- lapply(chain_list, function(x) as.numeric(x[is.finite(x)]))
-  
-  lens <- vapply(chain_list, length, integer(1))
-  n0 <- min(lens)
-  
-  if (length(chain_list) < 2 || n0 < 20) {
-    return(NA_real_)
-  }
-  
-  chain_list <- lapply(chain_list, function(x) tail(x, n0))
-  
-  n_half <- floor(n0 / 2)
-  
-  if (n_half < 10) {
-    return(NA_real_)
-  }
-  
-  split_mat <- do.call(
-    rbind,
-    lapply(chain_list, function(x) {
-      rbind(
-        x[seq_len(n_half)],
-        x[(n0 - n_half + 1):n0]
-      )
-    })
-  )
-  
-  n_split <- ncol(split_mat)
-  
-  chain_means <- rowMeans(split_mat)
-  chain_vars <- apply(split_mat, 1, var)
-  
-  W <- mean(chain_vars)
-  B <- n_split * var(chain_means)
-  
-  if (!is.finite(W) || W <= 0) {
-    return(NA_real_)
-  }
-  
-  var_hat <- ((n_split - 1) / n_split) * W + B / n_split
-  
-  sqrt(var_hat / W)
-}
-
-
-aligned_chain_matrix <- function(chain_list) {
-  chain_list <- lapply(chain_list, as.numeric)
-  lens <- vapply(chain_list, length, integer(1))
-  n0 <- min(lens)
-  if (length(chain_list) < 2L || n0 < 4L) return(NULL)
-  do.call(cbind, lapply(chain_list, function(x) tail(x, n0)))
-}
-
-
-rank_rhat_1d <- function(chain_list) {
-  mat <- aligned_chain_matrix(chain_list)
-  if (is.null(mat)) return(NA_real_)
-  if (requireNamespace("posterior", quietly = TRUE)) {
-    return(as.numeric(posterior::rhat(mat)))
-  }
-  split_rhat_1d(chain_list)
-}
-
-
-bulk_ess_1d <- function(chain_list) {
-  mat <- aligned_chain_matrix(chain_list)
-  if (is.null(mat)) return(NA_real_)
-  if (requireNamespace("posterior", quietly = TRUE)) {
-    return(as.numeric(posterior::ess_bulk(mat)))
-  }
-  sum(vapply(chain_list, ess_ips_1d, numeric(1)))
-}
-
-
-tail_ess <- function(chain_list) {
-  mat <- aligned_chain_matrix(chain_list)
-  if (is.null(mat)) return(NA_real_)
-  if (requireNamespace("posterior", quietly = TRUE)) {
-    return(as.numeric(posterior::ess_tail(mat)))
-  }
-  NA_real_
-}
-
-
-ess_ips_1d <- function(x, max_lag = NULL) {
-  x <- as.numeric(x)
-  x <- x[is.finite(x)]
-  
-  n <- length(x)
-  
-  if (n < 5) {
-    return(NA_real_)
-  }
-  
-  sx <- sd(x)
-  
-  if (!is.finite(sx)) {
-    return(NA_real_)
-  }
-  
-  if (sx == 0) {
-    return(n)
-  }
-  
-  if (is.null(max_lag)) {
-    max_lag <- min(n - 1L, 1000L)
-  } else {
-    max_lag <- min(n - 1L, as.integer(max_lag))
-  }
-  
-  if (max_lag < 1L) {
-    return(n)
-  }
-  
-  ac <- tryCatch(
-    as.numeric(stats::acf(
-      x,
-      lag.max = max_lag,
-      plot = FALSE,
-      demean = TRUE
-    )$acf),
-    error = function(e) NA_real_
-  )
-  
-  if (length(ac) <= 1 || all(!is.finite(ac))) {
-    return(NA_real_)
-  }
-  
-  ac <- ac[-1]
-  ac <- ac[is.finite(ac)]
-  
-  if (length(ac) == 0) {
-    return(n)
-  }
-  
-  mm <- floor(length(ac) / 2)
-  
-  if (mm >= 1) {
-    pair_sums <- ac[2 * seq_len(mm) - 1] + ac[2 * seq_len(mm)]
-    first_nonpos <- which(pair_sums <= 0)[1]
-    
-    if (is.na(first_nonpos)) {
-      use_lag <- 2 * mm
-    } else {
-      use_lag <- 2 * (first_nonpos - 1)
-    }
-  } else {
-    use_lag <- ifelse(ac[1] > 0, 1, 0)
-  }
-  
-  if (use_lag > 0) {
-    tau_int <- 1 + 2 * sum(ac[seq_len(use_lag)])
-  } else {
-    tau_int <- 1
-  }
-  
-  tau_int <- max(tau_int, 1)
-  ess <- n / tau_int
-  min(max(ess, 1), n)
-}
-
-
 fit_eivgp_1d <- function(...) {
   if (!exists("fit_eivgp_1d_v030", mode = "function")) {
     stop("Install and load the current eivGP package before fitting.")
@@ -1945,44 +878,44 @@ gp_mle_fit_1d <- function(X, y, kernel = c("se", "matern"), matern_nu = 2.5,
   n <- nrow(X)
   d <- ncol(X)
   kernel_spec <- normalize_gp_kernel_1d(kernel, matern_nu)
-  
+
   Dlist <- lapply(seq_len(d), function(j) {
     pairwise_sqdist(X[, j, drop = FALSE])
   })
-  
+
   nll <- function(par) {
     log_sigma2 <- par[1]
     log_rho <- par[2]
     log_theta <- par[-c(1, 2)]
-    
+
     sigma2 <- exp(log_sigma2)
     rho <- exp(log_rho)
     theta <- exp(log_theta)
-    
+
     Rexp <- matrix(0, n, n)
-    
+
     for (j in seq_len(d)) {
       Rexp <- Rexp + theta[j] * Dlist[[j]]
     }
-    
+
     R <- kernel_from_weighted_sqdist_1d(
       Rexp, kernel_spec$name, kernel_spec$matern_nu
     )
     A <- rho^2 * R + diag(n)
-    
+
     U <- try(safe_chol_1d(A), silent = TRUE)
-    
+
     if (inherits(U, "try-error")) {
       return(1e20)
     }
-    
+
     Ainv_y <- solve_chol(U, y)
     logdetA <- 2 * sum(log(diag(U)))
     quad <- sum(y * Ainv_y)
-    
+
     0.5 * (n * log(2 * base::pi * sigma2) + logdetA + quad / sigma2)
   }
-  
+
   lower <- c(log(1e-5), log(0.05), rep(log(1e-4), d))
   upper <- c(log(5), log(100), rep(log(100), d))
   n_starts <- as.integer(n_starts)
@@ -2032,7 +965,7 @@ gp_mle_fit_1d <- function(X, y, kernel = c("se", "matern"), matern_nu = 2.5,
   }
   best <- valid[which.min(report$objective[valid])]
   opt <- attempts[[best]]
-  
+
   list(
     par = opt$par,
     value = opt$value,
@@ -2043,273 +976,6 @@ gp_mle_fit_1d <- function(X, y, kernel = c("se", "matern"), matern_nu = 2.5,
     y = y,
     kernel = kernel_spec
   )
-}
-
-
-gp_mle_fit_learned_embedding <- function(x, c_ord, y, m,
-                                         n_starts = 8L,
-                                         kernel = c("se", "matern"),
-                                         matern_nu = 2.5) {
-  n <- length(y)
-  x <- as_study1_numeric_matrix(x, "x", nrow_expected = n)
-  p_x <- ncol(x)
-  kernel_spec <- normalize_gp_kernel_1d(kernel, matern_nu)
-  Dx_list <- lapply(seq_len(p_x), function(j) {
-    pairwise_sqdist(x[, j, drop = FALSE])
-  })
-  idx_x <- 2L + seq_len(p_x)
-  idx_z <- p_x + 3L
-  idx_a <- if (m > 2L) seq.int(p_x + 4L, p_x + m + 1L) else integer(0)
-  
-  nll <- function(par) {
-    log_sigma2 <- par[1]
-    log_rho <- par[2]
-    log_theta_x <- par[idx_x]
-    log_theta_z <- par[idx_z]
-
-    a <- par[idx_a]
-    
-    sigma2 <- exp(log_sigma2)
-    rho <- exp(log_rho)
-    theta_x <- exp(log_theta_x)
-    theta_z <- exp(log_theta_z)
-    
-    z_scores <- make_monotone_scores_1d(a, m)
-    z <- z_scores[c_ord]
-    
-    Dz <- pairwise_sqdist(matrix(z, ncol = 1))
-    
-    D2 <- weighted_distance_multix(Dx_list, theta_x) + theta_z * Dz
-    R <- kernel_from_weighted_sqdist_1d(
-      D2, kernel_spec$name, kernel_spec$matern_nu
-    )
-    A <- rho^2 * R + diag(n)
-    
-    U <- try(safe_chol_1d(A), silent = TRUE)
-    
-    if (inherits(U, "try-error")) {
-      return(1e20)
-    }
-    
-    Ainv_y <- solve_chol(U, y)
-    logdetA <- 2 * sum(log(diag(U)))
-    quad <- sum(y * Ainv_y)
-    
-    0.5 * (n * log(2 * base::pi * sigma2) + logdetA + quad / sigma2)
-  }
-  
-  lower <- c(
-    log(1e-5),
-    log(0.05),
-    rep(log(1e-4), p_x),
-    log(1e-4),
-    rep(-6, max(m - 2, 0))
-  )
-  
-  upper <- c(
-    log(5),
-    log(100),
-    rep(log(100), p_x),
-    log(100),
-    rep(6, max(m - 2, 0))
-  )
-  
-  make_init <- function() {
-    c(
-      log(0.05),
-      log(3),
-      rep(log(0.5), p_x),
-      log(0.5),
-      rnorm(max(m - 2, 0), 0, 0.5)
-    )
-  }
-  
-  starts <- replicate(n_starts, make_init(), simplify = FALSE)
-  
-  opts <- lapply(starts, function(init) {
-    optim(
-      par = init,
-      fn = nll,
-      method = "L-BFGS-B",
-      lower = lower,
-      upper = upper,
-      control = list(maxit = 500)
-    )
-  })
-  
-  best_id <- which.min(vapply(opts, function(z) z$value, numeric(1)))
-  opt <- opts[[best_id]]
-  
-  z_scores <- make_monotone_scores_1d(opt$par[idx_a], m)
-  
-  list(
-    par = opt$par[seq_len(idx_z)],
-    a = opt$par[idx_a],
-    z_scores = z_scores,
-    value = opt$value,
-    convergence = opt$convergence,
-    x = x,
-    c_ord = c_ord,
-    y = y,
-    m = m,
-    kernel = kernel_spec
-  )
-}
-
-
-fit_embedding_baselines <- function(x_raw, y_raw, c_ord, m,
-                                    n_starts_learned = 8L,
-                                    kernel = c("se", "matern"),
-                                    matern_nu = 2.5) {
-  x_raw <- as_study1_numeric_matrix(
-    x_raw, "x_raw", nrow_expected = length(y_raw)
-  )
-  kernel_spec <- normalize_gp_kernel_1d(kernel, matern_nu)
-  x_center <- colMeans(x_raw)
-  x_scale <- apply(x_raw, 2, sd)
-  if (any(!is.finite(x_scale) | x_scale <= 0)) {
-    stop("Every x_raw column must have positive finite variation")
-  }
-  x <- sweep(sweep(x_raw, 2, x_center, "-"), 2, x_scale, "/")
-  
-  y_center <- mean(y_raw)
-  y_scale <- sd(y_raw)
-  if (!is.finite(y_scale) || y_scale <= 0) {
-    stop("y_raw must have positive finite variation.")
-  }
-  y <- as.numeric((y_raw - y_center) / y_scale)
-  
-  z_gauss <- qnorm(c_ord / (m + 1))
-  
-  fit_gauss <- gp_mle_fit_1d(
-    X = cbind(x, z_gauss),
-    y = y,
-    kernel = kernel_spec$name,
-    matern_nu = kernel_spec$matern_nu
-  )
-  
-  z_cm_scores <- conditional_mean_scores(c_ord, m)
-  z_cm <- z_cm_scores[c_ord]
-  
-  fit_cm <- gp_mle_fit_1d(
-    X = cbind(x, z_cm),
-    y = y,
-    kernel = kernel_spec$name,
-    matern_nu = kernel_spec$matern_nu
-  )
-  
-  fit_learned <- gp_mle_fit_learned_embedding(
-    x = x,
-    c_ord = c_ord,
-    y = y,
-    m = m,
-    n_starts = n_starts_learned,
-    kernel = kernel_spec$name,
-    matern_nu = kernel_spec$matern_nu
-  )
-  
-  list(
-    x_center = x_center,
-    x_scale = x_scale,
-    y_center = y_center,
-    y_scale = y_scale,
-    predictor_names = colnames(x_raw),
-    kernel = kernel_spec,
-    fit_gauss = fit_gauss,
-    fit_cm = fit_cm,
-    fit_learned = fit_learned,
-    z_cm_scores = z_cm_scores
-  )
-}
-
-
-crps_sample_one <- function(draws, y) {
-  draws <- sort(as.numeric(draws))
-  S <- length(draws)
-  
-  term1 <- mean(abs(draws - y))
-  
-  weights <- 2 * seq_len(S) - S - 1
-  mean_abs_pair <- 2 * sum(weights * draws) / S^2
-  
-  term1 - 0.5 * mean_abs_pair
-}
-
-
-crps_sample_matrix <- function(draw_mat, y) {
-  vapply(seq_along(y), function(j) {
-    crps_sample_one(draw_mat[, j], y[j])
-  }, numeric(1))
-}
-
-
-normal_mixture_nlpd <- function(y_true,
-                                component_means,
-                                component_vars) {
-  y_true <- as.numeric(y_true)
-  if (is.null(component_means) || is.null(component_vars)) {
-    missing <- c(
-      if (is.null(component_means)) "conditional_means" else NULL,
-      if (is.null(component_vars)) "conditional_vars" else NULL
-    )
-    return(list(
-      value = NA_real_,
-      pointwise = rep(NA_real_, length(y_true)),
-      reason = paste0(
-        "predictive normal-mixture components unavailable: ",
-        paste(missing, collapse = " and ")
-      )
-    ))
-  }
-
-  component_means <- as.matrix(component_means)
-  component_vars <- as.matrix(component_vars)
-  if (ncol(component_means) != length(y_true) ||
-      ncol(component_vars) != length(y_true)) {
-    stop("Predictive mixture components must have one column per test case.")
-  }
-  n_component <- max(nrow(component_means), nrow(component_vars))
-  if (nrow(component_means) == 1L && n_component > 1L) {
-    component_means <- component_means[
-      rep(1L, n_component), , drop = FALSE
-    ]
-  }
-  if (nrow(component_vars) == 1L && n_component > 1L) {
-    component_vars <- component_vars[
-      rep(1L, n_component), , drop = FALSE
-    ]
-  }
-  if (nrow(component_means) != n_component ||
-      nrow(component_vars) != n_component || n_component < 1L) {
-    stop("Predictive component means and variances have incompatible rows.")
-  }
-  if (any(!is.finite(component_means)) ||
-      any(!is.finite(component_vars)) || any(component_vars < 0)) {
-    stop("Predictive normal-mixture components must have finite, nonnegative variances.")
-  }
-  if (any(component_vars == 0)) {
-    return(list(
-      value = NA_real_,
-      pointwise = rep(NA_real_, length(y_true)),
-      reason = paste0(
-        "continuous NLPD undefined: predictive mixture contains ",
-        "zero-variance components"
-      )
-    ))
-  }
-
-  pointwise <- vapply(seq_along(y_true), function(j) {
-    log_component <- stats::dnorm(
-      y_true[j],
-      mean = component_means[, j],
-      sd = sqrt(component_vars[, j]),
-      log = TRUE
-    )
-    largest <- max(log_component)
-    if (is.infinite(largest) && largest < 0) return(Inf)
-    -(largest + log(mean(exp(log_component - largest))))
-  }, numeric(1L))
-  list(value = mean(pointwise), pointwise = pointwise, reason = "")
 }
 
 
@@ -2369,14 +1035,14 @@ sample_oracle_y_star <- function(x_star, c_star, tau_true,
                                  heterogeneity_eta = 1) {
   lower <- c(-Inf, tau_true)[c_star]
   upper <- c(tau_true, Inf)[c_star]
-  
+
   u_star <- rtruncnorm_vec(
     mean = rep(0, n_draw),
     sd = 1,
     lower = rep(lower, n_draw),
     upper = rep(upper, n_draw)
   )
-  
+
   f_star <- f0_1d(
     x_star,
     u_star,
@@ -2385,7 +1051,7 @@ sample_oracle_y_star <- function(x_star, c_star, tau_true,
     tau = tau_true,
     heterogeneity_eta = heterogeneity_eta
   )
-  
+
   out <- f_star + rnorm(n_draw, 0, sigma_eps)
   ## Conditional on each Monte Carlo draw of U*, the DGM predictive law is
   ## exactly Gaussian.  Retain those components so that log predictive density
@@ -2409,7 +1075,7 @@ sample_oracle_test_y <- function(x_test,
   out <- matrix(NA_real_, nrow = n_draw, ncol = n_test)
   conditional_means <- matrix(NA_real_, nrow = n_draw, ncol = n_test)
   conditional_vars <- matrix(NA_real_, nrow = n_draw, ncol = n_test)
-  
+
   for (j in seq_len(n_test)) {
     draw_j <- sample_oracle_y_star(
       x_star = x_test[j],
@@ -2450,7 +1116,7 @@ sample_eiv_test_y <- function(x_test_raw,
   samples_tau <- fit_obj$mcmc$samples_tau
   samples_logtheta <- fit_obj$mcmc$samples_logtheta
   samples_sigma2 <- fit_obj$mcmc$samples_sigma2
-  
+
   x_train <- fit_obj$data$x
   y_train <- fit_obj$data$y
   y_center <- fit_obj$data$y_center
@@ -2503,22 +1169,22 @@ sample_eiv_test_y <- function(x_test_raw,
     stop("n_per_draw must be one positive integer.")
   }
   n_draw <- length(draw_ids) * n_per_draw
-  
+
   out <- matrix(NA_real_, nrow = n_draw, ncol = n_test)
   conditional_means <- matrix(NA_real_, nrow = n_draw, ncol = n_test)
   conditional_vars <- matrix(NA_real_, nrow = n_draw, ncol = n_test)
-  
+
   row_id <- 0L
-  
+
   for (s in draw_ids) {
     for (rr in seq_len(n_per_draw)) {
       row_id <- row_id + 1L
-      
+
       tau_s <- samples_tau[s, ]
-      
+
       lower <- c(-Inf, tau_s)[c_test]
       upper <- c(tau_s, Inf)[c_test]
-      
+
       u_star <- rtruncnorm_vec(
         mean = rep(0, n_test),
         sd = 1,
@@ -2526,7 +1192,7 @@ sample_eiv_test_y <- function(x_test_raw,
         upper = upper
       )
       if (length(observed_u) > 0L) u_star[observed_u] <- u_test_model[observed_u]
-      
+
       pred <- gp_predict_draw(
         x_train = x_train,
         u_train = samples_u[s, ],
@@ -2942,7 +1608,6 @@ sample_eiv_u_given_c_1d <- function(c_new,
 }
 
 
-
 # ---- core/00_study2_functions.R ----
 ############################################################
 ## 00_study2_functions.R
@@ -2952,43 +1617,29 @@ sample_eiv_u_given_c_1d <- function(c_new,
 ############################################################
 
 
-require_study2_reporting_packages <- function(packages, context) {
-  missing <- packages[
-    !vapply(packages, requireNamespace, logical(1), quietly = TRUE)
-  ]
-  if (length(missing) > 0L) {
-    stop(
-      "The ", context, " requires optional package(s): ",
-      paste(missing, collapse = ", ")
-    )
-  }
-  invisible(TRUE)
-}
-
-
 ############################################################
 ## Configurations
 ############################################################
 
 study2_config_settings <- function(config = c("quick", "balanced", "thorough")) {
   config <- match.arg(config)
-  
+
   if (config == "quick") {
     return(list(
       config = config,
       n_test = 150L,
       n_rep = 2L,
-      
+
       rep_n_iter = 800L,
       rep_burn = 300L,
       rep_thin = 1L,
       rep_n_chains = 2L,
-      
+
       mc_n_iter = 700L,
       mc_burn = 300L,
       mc_thin = 1L,
       mc_n_chains = 1L,
-      
+
       n_pred_draw = 120L,
       n_density_draw = 200L,
       predictive_latent_sampler = "minimax_tilting",
@@ -2999,23 +1650,23 @@ study2_config_settings <- function(config = c("quick", "balanced", "thorough")) 
       preset = "fast"
     ))
   }
-  
+
   if (config == "balanced") {
     return(list(
       config = config,
       n_test = 400L,
       n_rep = 10L,
-      
+
       rep_n_iter = 6000L,
       rep_burn = 2000L,
       rep_thin = 1L,
       rep_n_chains = 12L,
-      
+
       mc_n_iter = 2500L,
       mc_burn = 800L,
       mc_thin = 1L,
       mc_n_chains = 12L,
-      
+
       n_pred_draw = 400L,
       n_density_draw = 800L,
       predictive_latent_sampler = "minimax_tilting",
@@ -3026,22 +1677,22 @@ study2_config_settings <- function(config = c("quick", "balanced", "thorough")) 
       preset = "balanced"
     ))
   }
-  
+
   list(
     config = config,
     n_test = 500L,
     n_rep = 50L,
-    
+
     rep_n_iter = 6000L,
     rep_burn = 2000L,
     rep_thin = 1L,
     rep_n_chains = 12L,
-    
+
     mc_n_iter = 5000L,
     mc_burn = 1500L,
     mc_thin = 1L,
     mc_n_chains = 12L,
-    
+
     n_pred_draw = 600L,
     n_density_draw = 1200L,
     predictive_latent_sampler = "minimax_tilting",
@@ -3050,93 +1701,6 @@ study2_config_settings <- function(config = c("quick", "balanced", "thorough")) 
     n_oracle_pool = 300000L,
     n_starts_learned = 6L,
     preset = "thorough"
-  )
-}
-
-
-make_default_control_ordprobit <- function(n,
-                                           n_mis,
-                                           preset = c("fast", "balanced", "thorough"),
-                                           d = 2L) {
-  preset <- match.arg(preset)
-  
-  if (preset == "fast") {
-    theta_update_every <- 8L
-    n_u_blocks_per_iter <- 1L
-    u_block_size <- min(n_mis, max(8L, ceiling(sqrt(max(n_mis, 1L)))))
-    global_u_every <- 50L
-    joint_local_blocks_per_iter <- 1L
-    joint_global_every <- 10L
-    joint_collapsed_every <- 10L
-    marginal_measurement_every <- 5L
-  }
-  
-  if (preset == "balanced") {
-    theta_update_every <- 4L
-    n_u_blocks_per_iter <- 2L
-    u_block_size <- min(n_mis, max(10L, ceiling(1.5 * sqrt(max(n_mis, 1L)))))
-    global_u_every <- 25L
-    joint_local_blocks_per_iter <- 2L
-    joint_global_every <- 5L
-    joint_collapsed_every <- 5L
-    marginal_measurement_every <- 2L
-  }
-  
-  if (preset == "thorough") {
-    theta_update_every <- 2L
-    n_u_blocks_per_iter <- 3L
-    u_block_size <- min(n_mis, max(12L, ceiling(2.0 * sqrt(max(n_mis, 1L)))))
-    global_u_every <- 15L
-    joint_local_blocks_per_iter <- 3L
-    joint_global_every <- 3L
-    joint_collapsed_every <- 3L
-    marginal_measurement_every <- 1L
-  }
-  
-  list(
-    preset = preset,
-    
-    ## Main MCMC knobs.
-    theta_update_every = theta_update_every,
-    n_u_blocks_per_iter = n_u_blocks_per_iter,
-    u_block_size = u_block_size,
-    global_u_every = global_u_every,
-
-    ## Exact partially collapsed/interwoven transition frequencies.
-    joint_local_blocks_per_iter = joint_local_blocks_per_iter,
-    joint_theta_every = 1L,
-    joint_global_every = joint_global_every,
-    joint_collapsed_every = joint_collapsed_every,
-    marginal_measurement_every = marginal_measurement_every,
-    ## Optional prior-Gaussianized joint loading/cut-point row ESS. Zero
-    ## retains the scalar marginal measurement update for paired ablations.
-    joint_measurement_every = 0L,
-    ## Optional score-conditioned loading/missing-U transport, disabled
-    ## unless requested. This is an exact reparameterized posterior move.
-    loading_transport_every = 0L,
-    ## NULL chooses Schur at n >= 120; TRUE/FALSE explicitly force the route.
-    ## Both paths evaluate the identical dense-GP target.
-    gp_use_block_schur = NULL,
-    
-    ## Ordinal-probit update frequencies.
-    score_update_every = 1L,
-    A_update_every = 1L,
-    tau_update_every = 1L,
-    
-    ## Slice sampler knobs for GP hyperparameters.
-    theta_slice_width_init = rep(0.8, 1L + d + 10L), # trimmed inside fitter
-    adapt_theta_width = TRUE,
-    adapt_every = 100L,
-    adapt_window = 500L,
-    theta_width_min = 0.15,
-    theta_width_max = 2.50,
-    
-    ## Measurement-model prior and constraints.
-    tau_bound = 6,
-    s_A = 2.5,
-    
-    ## Elliptical-slice safeguard.
-    max_ess_try = 5000L
   )
 }
 
@@ -3189,10 +1753,10 @@ pairwise_sqdist <- function(a, b = NULL) {
   a <- as.matrix(a)
   if (is.null(b)) b <- a
   b <- as.matrix(b)
-  
+
   aa <- rowSums(a^2)
   bb <- rowSums(b^2)
-  
+
   out <- outer(aa, bb, "+") - 2 * tcrossprod(a, b)
   pmax(out, 0)
 }
@@ -3241,10 +1805,10 @@ rmvnorm_rows_common <- function(mean_mat, Sigma) {
   mean_mat <- as.matrix(mean_mat)
   n <- nrow(mean_mat)
   d <- ncol(mean_mat)
-  
+
   U <- safe_chol(Sigma)
   Z <- matrix(rnorm(n * d), n, d)
-  
+
   mean_mat + Z %*% U
 }
 
@@ -3361,14 +1925,14 @@ pattern_key <- function(C) {
 combine_chain_arrays <- function(arr_list) {
   dims <- dim(arr_list[[1]])
   total <- sum(vapply(arr_list, function(a) dim(a)[1], integer(1)))
-  
+
   out <- array(NA_real_, dim = c(total, dims[-1]))
-  
+
   pos <- 0L
   for (a in arr_list) {
     ns <- dim(a)[1]
     idx <- pos + seq_len(ns)
-    
+
     if (length(dims) == 3L) {
       out[idx, , ] <- a
     } else if (length(dims) == 4L) {
@@ -3378,10 +1942,10 @@ combine_chain_arrays <- function(arr_list) {
     } else {
       out[idx] <- a
     }
-    
+
     pos <- pos + ns
   }
-  
+
   out
 }
 
@@ -3408,10 +1972,10 @@ flatten_tau <- function(tau_list) {
 unflatten_tau <- function(tau_vec, m_vec) {
   tau_list <- vector("list", length(m_vec))
   pos <- 0L
-  
+
   for (j in seq_along(m_vec)) {
     len <- m_vec[j] - 1L
-    
+
     if (len > 0L) {
       tau_list[[j]] <- tau_vec[pos + seq_len(len)]
       pos <- pos + len
@@ -3419,7 +1983,7 @@ unflatten_tau <- function(tau_vec, m_vec) {
       tau_list[[j]] <- numeric(0)
     }
   }
-  
+
   tau_list
 }
 
@@ -3428,95 +1992,18 @@ unflatten_tau <- function(tau_vec, m_vec) {
 ## Slice sampler
 ############################################################
 
-bounded_slice_update <- function(x0, logf, w = 1,
-                                 lower = -Inf, upper = Inf,
-                                 max_steps_out = 50,
-                                 max_iter = 200,
-                                 fail_on_limit = FALSE) {
-  if (upper <= lower) {
-    if (isTRUE(fail_on_limit)) stop("Slice interval is empty.")
-    return(list(x = x0, n_eval = 0L))
-  }
-  
-  eps <- 1e-12
-  if (is.finite(lower)) x0 <- max(x0, lower + eps)
-  if (is.finite(upper)) x0 <- min(x0, upper - eps)
-  
-  f0 <- logf(x0)
-  n_eval <- 1L
-  
-  if (!is.finite(f0)) {
-    if (isTRUE(fail_on_limit)) stop("Current slice state has non-finite density.")
-    return(list(x = x0, n_eval = n_eval))
-  }
-  
-  logy <- f0 + log(runif(1))
-  
-  L <- x0 - runif(1) * w
-  R <- L + w
-  
-  if (is.finite(lower)) L <- max(L, lower)
-  if (is.finite(upper)) R <- min(R, upper)
-  
-  J <- floor(runif(1) * max_steps_out)
-  K <- max_steps_out - 1L - J
-  
-  while (J > 0 && (!is.finite(lower) || L > lower)) {
-    fL <- logf(L)
-    n_eval <- n_eval + 1L
-    
-    if (!is.finite(fL) || fL <= logy) break
-    
-    L <- L - w
-    if (is.finite(lower)) L <- max(L, lower)
-    J <- J - 1L
-  }
-  
-  while (K > 0 && (!is.finite(upper) || R < upper)) {
-    fR <- logf(R)
-    n_eval <- n_eval + 1L
-    
-    if (!is.finite(fR) || fR <= logy) break
-    
-    R <- R + w
-    if (is.finite(upper)) R <- min(R, upper)
-    K <- K - 1L
-  }
-  
-  for (iter in seq_len(max_iter)) {
-    x1 <- runif(1, L, R)
-    f1 <- logf(x1)
-    n_eval <- n_eval + 1L
-    
-    if (is.finite(f1) && f1 >= logy) {
-      return(list(x = x1, n_eval = n_eval))
-    }
-    
-    if (x1 < x0) {
-      L <- x1
-    } else {
-      R <- x1
-    }
-  }
-  
-  if (isTRUE(fail_on_limit)) {
-    stop("Slice shrinkage exceeded max_iter.")
-  }
-  list(x = x0, n_eval = n_eval)
-}
-
 
 score_ordinal_matrix <- function(C, level_scores) {
   C <- as.matrix(C)
   n <- nrow(C)
   q <- ncol(C)
-  
+
   Z <- matrix(NA_real_, n, q)
-  
+
   for (j in seq_len(q)) {
     Z[, j] <- level_scores[[j]][C[, j]]
   }
-  
+
   Z
 }
 
@@ -3524,30 +2011,30 @@ score_ordinal_matrix <- function(C, level_scores) {
 initialize_tau_ord <- function(C, m_vec, tau_bound = 6) {
   C <- as.matrix(C)
   q <- ncol(C)
-  
+
   tau <- vector("list", q)
-  
+
   for (j in seq_len(q)) {
     m_j <- m_vec[j]
-    
+
     if (m_j <= 1L) {
       tau[[j]] <- numeric(0)
       next
     }
-    
+
     counts <- tabulate(C[, j], nbins = m_j)
-    
+
     ## Add small smoothing to handle empty levels at initialization.
     counts_s <- counts + 0.5
     probs <- cumsum(counts_s)[seq_len(m_j - 1L)] / sum(counts_s)
     probs <- pmin(pmax(probs, 0.02), 0.98)
-    
+
     tau_j <- qnorm(probs)
     tau_j <- pmin(pmax(tau_j, -tau_bound + 1e-3), tau_bound - 1e-3)
-    
+
     tau[[j]] <- tau_j
   }
-  
+
   tau
 }
 
@@ -3560,47 +2047,47 @@ init_U_from_ordinal <- function(C,
   C <- as.matrix(C)
   n <- nrow(C)
   q <- ncol(C)
-  
+
   level_scores <- empirical_normal_scores(C, m_vec = m_vec)
   Z <- score_ordinal_matrix(C, level_scores)
-  
+
   Zs <- scale(Z)
   Zs[!is.finite(Zs)] <- 0
-  
+
   pc <- prcomp(Zs, center = FALSE, scale. = FALSE)
-  
+
   U_work <- matrix(0, n, d)
-  
+
   k <- min(d, ncol(pc$x))
-  
+
   if (k > 0L) {
     U_work[, seq_len(k)] <- pc$x[, seq_len(k), drop = FALSE]
   }
-  
+
   if (d > k) {
     U_work[, (k + 1L):d] <- matrix(rnorm(n * (d - k)), n, d - k)
   }
-  
+
   U_work <- scale(U_work)
   U_work[!is.finite(U_work)] <- 0
-  
+
   calib_idx <- sort(as.integer(calib_idx))
-  
+
   if (length(calib_idx) >= d + 1L && !is.null(U_obs_full)) {
     X_cal <- cbind(1, U_work[calib_idx, , drop = FALSE])
     Y_cal <- U_obs_full[calib_idx, , drop = FALSE]
-    
+
     ridge <- diag(c(0, rep(1e-4, d)), d + 1L)
-    
+
     Beta <- solve(crossprod(X_cal) + ridge, crossprod(X_cal, Y_cal))
-    
+
     U_work <- cbind(1, U_work) %*% Beta
   }
-  
+
   if (length(calib_idx) > 0L && !is.null(U_obs_full)) {
     U_work[calib_idx, ] <- U_obs_full[calib_idx, ]
   }
-  
+
   U_work
 }
 
@@ -3611,44 +2098,44 @@ initialize_A_ord <- function(C,
                              m_vec,
                              ident = c("lower_triangular", "none")) {
   ident <- match.arg(ident)
-  
+
   C <- as.matrix(C)
   U <- as.matrix(U)
-  
+
   n <- nrow(C)
   q <- ncol(C)
   d <- ncol(U)
-  
+
   A <- matrix(0, q, d)
   Z <- matrix(NA_real_, n, q)
-  
+
   for (j in seq_len(q)) {
     tau_j <- tau[[j]]
-    
+
     lower <- c(-Inf, tau_j)[C[, j]]
     upper <- c(tau_j, Inf)[C[, j]]
-    
+
     denom <- pnorm(upper) - pnorm(lower)
     numer <- dnorm(lower) - dnorm(upper)
-    
+
     Z[, j] <- numer / pmax(denom, .Machine$double.eps)
   }
-  
+
   for (j in seq_len(q)) {
     fit <- try(lm.fit(x = cbind(1, U), y = Z[, j]), silent = TRUE)
-    
+
     if (!inherits(fit, "try-error")) {
       A[j, ] <- fit$coefficients[-1]
     } else {
       A[j, ] <- rnorm(d, 0, 0.2)
     }
   }
-  
+
   if (ident == "lower_triangular") {
     if (q < d) {
       stop("lower_triangular identification requires q >= d.")
     }
-    
+
     for (j in seq_len(d)) {
       if (j < d) {
         A[j, (j + 1L):d] <- 0
@@ -3656,86 +2143,24 @@ initialize_A_ord <- function(C,
       A[j, j] <- max(abs(A[j, j]), 0.2)
     }
   }
-  
+
   A[!is.finite(A)] <- 0
   A
-}
-
-
-assert_ordprobit_state <- function(C,
-                                   U,
-                                   S,
-                                   A,
-                                   tau,
-                                   m_vec,
-                                   ident,
-                                   calib_idx = integer(0),
-                                   U_obs = NULL,
-                                   logtheta = NULL,
-                                   sigma2_eps = NULL,
-                                   tolerance = 1e-10) {
-  C <- as.matrix(C)
-  U <- as.matrix(U)
-  S <- as.matrix(S)
-  A <- as.matrix(A)
-  n <- nrow(C)
-  q <- ncol(C)
-  d <- ncol(U)
-  if (!identical(dim(S), c(n, q)) || nrow(U) != n ||
-      !identical(dim(A), c(q, d)) || length(tau) != q ||
-      any(!is.finite(c(U, S, A)))) {
-    stop("Ordinal-probit sampler state has incompatible or nonfinite values.")
-  }
-  for (j in seq_len(q)) {
-    tau_j <- as.numeric(tau[[j]])
-    if (length(tau_j) != m_vec[j] - 1L || any(!is.finite(tau_j)) ||
-        is.unsorted(tau_j, strictly = TRUE)) {
-      stop("Ordinal-probit cut points are not finite and strictly ordered.")
-    }
-    lower <- c(-Inf, tau_j)[C[, j]]
-    upper <- c(tau_j, Inf)[C[, j]]
-    if (any(S[, j] < lower - tolerance | S[, j] > upper + tolerance)) {
-      stop("Ordinal-probit scores left their observed-category rectangles.")
-    }
-  }
-  if (ident == "lower_triangular") {
-    for (j in seq_len(d)) {
-      if (A[j, j] <= 0) stop("A constrained diagonal loading is not positive.")
-      if (j < d && any(abs(A[j, (j + 1L):d]) > tolerance)) {
-        stop("A violates the lower-triangular identification constraint.")
-      }
-    }
-  }
-  if (length(calib_idx) > 0L) {
-    if (is.null(U_obs) ||
-        max(abs(U[calib_idx, , drop = FALSE] -
-                  U_obs[calib_idx, , drop = FALSE])) > tolerance) {
-      stop("A calibrated latent input moved away from its observed value.")
-    }
-  }
-  if (!is.null(logtheta) && any(!is.finite(logtheta))) {
-    stop("A GP hyperparameter is nonfinite.")
-  }
-  if (!is.null(sigma2_eps) &&
-      (length(sigma2_eps) != 1L || !is.finite(sigma2_eps) || sigma2_eps <= 0)) {
-    stop("The observation-noise variance is not positive and finite.")
-  }
-  invisible(TRUE)
 }
 
 
 update_tau_ord <- function(tau, S, C, m_vec, tau_bound = 6) {
   tau_new <- tau
   q <- ncol(C)
-  
+
   for (j in seq_len(q)) {
     m_j <- m_vec[j]
-    
+
     if (m_j <= 1L) next
-    
+
     for (r in seq_len(m_j - 1L)) {
       tau_j <- tau_new[[j]]
-      
+
       L <- max(
         c(
           -tau_bound,
@@ -3744,7 +2169,7 @@ update_tau_ord <- function(tau, S, C, m_vec, tau_bound = 6) {
         ),
         na.rm = TRUE
       )
-      
+
       U <- min(
         c(
           tau_bound,
@@ -3753,16 +2178,16 @@ update_tau_ord <- function(tau, S, C, m_vec, tau_bound = 6) {
         ),
         na.rm = TRUE
       )
-      
+
       if (!is.finite(L) || !is.finite(U) || L >= U) {
         stop("Cut-point Gibbs update encountered an empty conditional interval.")
       }
       tau_j[r] <- runif(1, L, U)
-      
+
       tau_new[[j]] <- tau_j
     }
   }
-  
+
   tau_new
 }
 
@@ -3770,28 +2195,28 @@ update_tau_ord <- function(tau, S, C, m_vec, tau_bound = 6) {
 rmvnorm_single_truncated_last_positive <- function(mean, Sigma) {
   mean <- as.numeric(mean)
   r <- length(mean)
-  
+
   if (r == 1L) {
     return(rtruncnorm_one(mean[1], sqrt(Sigma[1, 1]), lower = 0, upper = Inf))
   }
-  
+
   idx_minus <- seq_len(r - 1L)
   idx_last <- r
-  
+
   mu_l <- mean[idx_last]
   var_l <- Sigma[idx_last, idx_last]
-  
+
   beta_l <- rtruncnorm_one(mu_l, sqrt(var_l), lower = 0, upper = Inf)
-  
+
   mu_m <- mean[idx_minus]
   Sigma_mm <- Sigma[idx_minus, idx_minus, drop = FALSE]
   Sigma_ml <- Sigma[idx_minus, idx_last, drop = FALSE]
-  
+
   cond_mean <- mu_m + as.numeric(Sigma_ml) / var_l * (beta_l - mu_l)
   cond_cov <- Sigma_mm - Sigma_ml %*% t(Sigma_ml) / var_l
-  
+
   beta_m <- as.numeric(rmvnorm_chol(1, cond_mean, cond_cov))
-  
+
   c(beta_m, beta_l)
 }
 
@@ -3801,32 +2226,32 @@ update_A_ord <- function(S,
                          s_A = 2.5,
                          ident = c("lower_triangular", "none")) {
   ident <- match.arg(ident)
-  
+
   S <- as.matrix(S)
   U <- as.matrix(U)
-  
+
   q <- ncol(S)
   d <- ncol(U)
-  
+
   if (ident == "lower_triangular" && q < d) {
     stop("lower_triangular identification requires q >= d.")
   }
-  
+
   A <- matrix(0, q, d)
   prior_prec <- 1 / s_A^2
-  
+
   for (j in seq_len(q)) {
     if (ident == "lower_triangular" && j <= d) {
       active <- seq_len(j)
       Xj <- U[, active, drop = FALSE]
-      
+
       Vj <- solve(crossprod(Xj) + prior_prec * diag(length(active)))
       mj <- as.numeric(Vj %*% crossprod(Xj, S[, j]))
-      
+
       beta <- rmvnorm_single_truncated_last_positive(mj, Vj)
-      
+
       A[j, active] <- beta
-      
+
       if (j < d) {
         A[j, (j + 1L):d] <- 0
       }
@@ -3834,11 +2259,11 @@ update_A_ord <- function(S,
       Xj <- U
       Vj <- solve(crossprod(Xj) + prior_prec * diag(d))
       mj <- as.numeric(Vj %*% crossprod(Xj, S[, j]))
-      
+
       A[j, ] <- rmvnorm_chol(1, mj, Vj)
     }
   }
-  
+
   A
 }
 
@@ -3846,12 +2271,12 @@ update_A_ord <- function(S,
 latent_reference_params <- function(S, A) {
   S <- as.matrix(S)
   A <- as.matrix(A)
-  
+
   d <- ncol(A)
-  
+
   V <- solve(diag(d) + crossprod(A))
   M <- S %*% A %*% V
-  
+
   list(mean = M, V = V)
 }
 
@@ -3863,34 +2288,6 @@ latent_reference_params <- function(S, A) {
 a_eps0 <- 2
 
 b_eps0 <- 0.05
-
-
-make_gp_prior <- function(p, d) {
-  npar <- 1L + p + d
-  
-  list(
-    mean = c(log(3), rep(log(0.5), p + d)),
-    sd = c(1.5, rep(1.5, p + d)),
-    lower = c(log(0.05), rep(log(1e-4), p + d)),
-    upper = c(log(100), rep(log(100), p + d))
-  )
-}
-
-
-log_prior_logtheta_gp <- function(logtheta, gp_prior) {
-  if (length(logtheta) != length(gp_prior$mean)) return(-Inf)
-  
-  if (any(logtheta < gp_prior$lower) || any(logtheta > gp_prior$upper)) {
-    return(-Inf)
-  }
-  
-  sum(dnorm(
-    logtheta,
-    mean = gp_prior$mean,
-    sd = gp_prior$sd,
-    log = TRUE
-  ))
-}
 
 
 weighted_sqdist_general <- function(X_a,
@@ -3934,241 +2331,9 @@ weighted_sqdist_general <- function(X_a,
 }
 
 
-gp_corr_general <- function(X,
-                            U,
-                            logtheta,
-                            kernel = "se",
-                            matern_nu = 2.5) {
-  X <- as.matrix(X)
-  U <- as.matrix(U)
-  
-  p <- ncol(X)
-  d <- ncol(U)
-  
-  expected_len <- 1L + p + d
-  
-  if (length(logtheta) != expected_len) {
-    stop("logtheta has wrong length.")
-  }
-  
-  rho <- exp(logtheta[1])
-  theta_x <- exp(logtheta[1L + seq_len(p)])
-  theta_u <- exp(logtheta[1L + p + seq_len(d)])
-  
-  D2 <- weighted_sqdist_general(X, U, theta_x, theta_u)
-  kernel_spec <- normalize_gp_kernel(kernel, matern_nu)
-  
-  list(
-    R = kernel_from_weighted_sqdist(
-      D2,
-      kernel = kernel_spec$name,
-      matern_nu = kernel_spec$matern_nu
-    ),
-    rho = rho,
-    theta_x = theta_x,
-    theta_u = theta_u,
-    kernel = kernel_spec
-  )
-}
-
-
-gp_state_general <- function(y,
-                             X,
-                             U,
-                             logtheta,
-                             sigma2_eps,
-                             kernel = "se",
-                             matern_nu = 2.5) {
-  n <- length(y)
-  
-  cc <- gp_corr_general(X, U, logtheta, kernel, matern_nu)
-  A_mat <- diag(n) + cc$rho^2 * cc$R
-  
-  Uchol <- safe_chol(A_mat)
-  Ainv_y <- solve_chol(Uchol, y)
-  
-  logdetA <- 2 * sum(log(diag(Uchol)))
-  quad <- sum(y * Ainv_y)
-  
-  loglik <- -0.5 * (
-    n * log(2 * base::pi * sigma2_eps) +
-      logdetA +
-      quad / sigma2_eps
-  )
-  
-  list(
-    loglik = loglik,
-    R = cc$R,
-    A = A_mat,
-    cholA = Uchol,
-    Ainv_y = Ainv_y,
-    logdetA = logdetA,
-    quad = quad
-  )
-}
-
-
-theta_logpost_integrated_general <- function(y,
-                                             X,
-                                             U,
-                                             logtheta,
-                                             gp_prior,
-                                             kernel = "se",
-                                             matern_nu = 2.5) {
-  lp <- log_prior_logtheta_gp(logtheta, gp_prior)
-  if (!is.finite(lp)) return(-Inf)
-
-  lp + gp_loglik_integrated_general(
-    y, X, U, logtheta,
-    kernel = kernel,
-    matern_nu = matern_nu
-  )
-}
-
-
-gp_loglik_integrated_general <- function(y,
-                                         X,
-                                         U,
-                                         logtheta,
-                                         kernel = "se",
-                                         matern_nu = 2.5) {
-  n <- length(y)
-  
-  cc <- gp_corr_general(X, U, logtheta, kernel, matern_nu)
-  A_mat <- diag(n) + cc$rho^2 * cc$R
-  
-  ## A_mat is positive definite under the stated covariance model. A failure
-  ## here is therefore a numerical failure, not an out-of-support proposal;
-  ## abort rather than silently changing the transition kernel.
-  Uchol <- safe_chol(A_mat)
-  
-  Ainv_y <- solve_chol(Uchol, y)
-  
-  logdetA <- 2 * sum(log(diag(Uchol)))
-  quad <- sum(y * Ainv_y)
-  
-  -0.5 * logdetA -
-    (a_eps0 + n / 2) * log(b_eps0 + 0.5 * quad)
-}
-
-
-gp_loglik_from_moments_general <- function(state, sigma2_eps = NULL) {
-  if (is.null(sigma2_eps)) {
-    return(-0.5 * state$logdet -
-      (a_eps0 + state$n / 2) * log(b_eps0 + 0.5 * state$quad))
-  }
-  -0.5 * (state$n * log(2 * base::pi * sigma2_eps) +
-            state$logdet + state$quad / sigma2_eps)
-}
-
-
 ## Per-chain exact likelihood evaluator. The accepted cache contains sufficient
 ## GP moments; changing scores/loadings/thresholds does not invalidate it.
 ## A fixed-theta local proposal changes only the selected covariance rows.
-make_gp_evaluator_general <- function(y, X, calib_idx = integer(0),
-                                      U_obs = NULL, kernel = "se",
-                                      matern_nu = 2.5,
-                                      use_block_schur = TRUE) {
-  n <- length(y)
-  accepted <- NULL
-  counts <- c(gp_dense_evaluations = 0L, gp_block_evaluations = 0L,
-              gp_cache_hits = 0L, gp_full_cholesky = 0L,
-              gp_block_setup_cholesky = 0L, gp_schur_cholesky = 0L)
-  increment <- function(name) counts[name] <<- counts[name] + 1L
-  assert_calibration <- function(U) {
-    if (length(calib_idx) &&
-        (is.null(U_obs) ||
-         any(U[calib_idx, , drop = FALSE] != U_obs[calib_idx, , drop = FALSE]))) {
-      stop("A calibrated latent input changed before a target evaluation.")
-    }
-    invisible(TRUE)
-  }
-  validate_block <- function(block_idx) {
-    if (anyNA(block_idx) || anyDuplicated(block_idx) ||
-        any(block_idx < 1L | block_idx > n) ||
-        any(block_idx %in% calib_idx)) {
-      stop("A latent update block contains an invalid or calibrated row.")
-    }
-    invisible(TRUE)
-  }
-  correlation <- function(Xa, Ua, Xb = Xa, Ub = Ua, logtheta) {
-    p <- ncol(X)
-    kernel_from_weighted_sqdist(
-      weighted_sqdist_general(Xa, Ua,
-        exp(logtheta[1L + seq_len(p)]),
-        exp(logtheta[1L + p + seq_len(ncol(Ua))]), Xb, Ub),
-      kernel, matern_nu)
-  }
-  dense <- function(U, logtheta) {
-    increment("gp_dense_evaluations")
-    B <- diag(n) + exp(2 * logtheta[1L]) *
-      correlation(X, U, logtheta = logtheta)
-    increment("gp_full_cholesky")
-    R <- safe_chol(B)
-    list(n = n, logdet = 2 * sum(log(diag(R))),
-         quad = sum(y * solve_chol(R, y)), U = U, logtheta = logtheta)
-  }
-  prepare_block <- function(U, logtheta, block_idx) {
-    assert_calibration(U)
-    validate_block(block_idx)
-    b <- length(block_idx)
-    if (!isTRUE(use_block_schur) || b == 0L || b >= n / 2) return(NULL)
-    rest <- setdiff(seq_len(n), block_idx)
-    rho2 <- exp(2 * logtheta[1L])
-    B_rest <- diag(length(rest)) + rho2 * correlation(
-      X[rest, , drop = FALSE], U[rest, , drop = FALSE], logtheta = logtheta)
-    increment("gp_block_setup_cholesky")
-    R_rest <- safe_chol(B_rest)
-    alpha_rest <- solve_chol(R_rest, y[rest])
-    list(idx = block_idx, rest = rest, U_rest = U[rest, , drop = FALSE],
-         R_rest = R_rest, alpha_rest = alpha_rest,
-         quad_rest = sum(y[rest] * alpha_rest),
-         logdet_rest = 2 * sum(log(diag(R_rest))),
-         logtheta = logtheta, rho2 = rho2)
-  }
-  evaluate <- function(U, logtheta, block = NULL) {
-    assert_calibration(U)
-    if (!is.null(accepted) && identical(U, accepted$U) &&
-        identical(logtheta, accepted$logtheta)) {
-      increment("gp_cache_hits")
-      return(accepted)
-    }
-    if (is.null(block)) return(dense(U, logtheta))
-    if (!identical(logtheta, block$logtheta) ||
-        !identical(U[block$rest, , drop = FALSE], block$U_rest)) {
-      stop("A Schur likelihood cache was used after its fixed inputs changed.")
-    }
-    increment("gp_block_evaluations")
-    idx <- block$idx
-    cross <- block$rho2 * correlation(
-      X[idx, , drop = FALSE], U[idx, , drop = FALSE],
-      X[block$rest, , drop = FALSE], block$U_rest, logtheta)
-    diagonal <- diag(length(idx)) + block$rho2 * correlation(
-      X[idx, , drop = FALSE], U[idx, , drop = FALSE], logtheta = logtheta)
-    W <- forwardsolve(t(block$R_rest), t(cross))
-    H <- diagonal - crossprod(W)
-    increment("gp_schur_cholesky")
-    R_H <- safe_chol(0.5 * (H + t(H)))
-    residual <- y[idx] - as.numeric(cross %*% block$alpha_rest)
-    list(n = n,
-      logdet = block$logdet_rest + 2 * sum(log(diag(R_H))),
-      quad = block$quad_rest + sum(residual * solve_chol(R_H, residual)),
-      U = U, logtheta = logtheta)
-  }
-  accept <- function(state) {
-    assert_calibration(state$U)
-    if (!is.finite(state$logdet) || !is.finite(state$quad) || state$quad < 0) {
-      stop("Cannot cache non-finite or invalid accepted GP moments.")
-    }
-    accepted <<- state
-    invisible(NULL)
-  }
-  list(evaluate = evaluate, accept = accept, prepare_block = prepare_block,
-       assert_calibration = assert_calibration, validate_block = validate_block,
-       snapshot = function() accepted,
-       restore = function(state) { accepted <<- state; invisible(NULL) },
-       counts = function() counts)
-}
 
 
 logspace_sub <- function(log_x, log_y) {
@@ -4245,325 +2410,9 @@ ordinal_loglik_marginal <- function(C, U, A, tau) {
 }
 
 
-sample_sigma2_eps_general <- function(y,
-                                      X,
-                                      U,
-                                      logtheta,
-                                      kernel = "se",
-                                      matern_nu = 2.5,
-                                      gp_evaluator = NULL) {
-  n <- length(y)
-  if (!is.null(gp_evaluator)) {
-    state <- gp_evaluator$evaluate(U, logtheta)
-    gp_evaluator$accept(state)
-    return(1 / rgamma(1, shape = a_eps0 + n / 2,
-                     rate = b_eps0 + 0.5 * state$quad))
-  }
-  
-  cc <- gp_corr_general(X, U, logtheta, kernel, matern_nu)
-  A_mat <- diag(n) + cc$rho^2 * cc$R
-  
-  Uchol <- safe_chol(A_mat)
-  Ainv_y <- solve_chol(Uchol, y)
-  
-  quad <- sum(y * Ainv_y)
-  
-  shape <- a_eps0 + n / 2
-  rate <- b_eps0 + 0.5 * quad
-  
-  1 / rgamma(1, shape = shape, rate = rate)
-}
-
-
-update_logtheta_slice_general <- function(y,
-                                          X,
-                                          U,
-                                          logtheta,
-                                          theta_slice_width,
-                                          gp_prior,
-                                          kernel = "se",
-                                          matern_nu = 2.5,
-                                          gp_evaluator = NULL) {
-  n_eval_total <- 0L
-  candidate_gp <- NULL
-  
-  for (j in seq_along(logtheta)) {
-    logf_j <- function(val) {
-      lt <- logtheta
-      lt[j] <- val
-      if (!is.null(gp_evaluator)) {
-        lp <- log_prior_logtheta_gp(lt, gp_prior)
-        if (!is.finite(lp)) return(-Inf)
-        candidate_gp <<- gp_evaluator$evaluate(U, lt)
-        return(lp + gp_loglik_from_moments_general(candidate_gp))
-      }
-      theta_logpost_integrated_general(
-        y, X, U, lt, gp_prior,
-        kernel = kernel,
-        matern_nu = matern_nu
-      )
-    }
-    
-    ans <- bounded_slice_update(
-      x0 = logtheta[j],
-      logf = logf_j,
-      w = theta_slice_width[j],
-      lower = gp_prior$lower[j],
-      upper = gp_prior$upper[j],
-      max_steps_out = 30L,
-      max_iter = 100L,
-      fail_on_limit = TRUE
-    )
-    
-    logtheta[j] <- ans$x
-    if (!is.null(gp_evaluator)) gp_evaluator$accept(candidate_gp)
-    n_eval_total <- n_eval_total + ans$n_eval
-  }
-  
-  list(logtheta = logtheta, n_eval = n_eval_total)
-}
-
-
 ############################################################
 ## Latent U update
 ############################################################
-
-update_U_ess_block_general <- function(y,
-                                       X,
-                                       U_curr,
-                                       S,
-                                       A,
-                                       logtheta,
-                                       sigma2_eps,
-                                       block_idx,
-                                       max_try = 200L,
-                                       kernel = "se",
-                                       matern_nu = 2.5,
-                                       gp_evaluator = NULL,
-                                       score_reference = NULL) {
-  block_idx <- as.integer(block_idx)
-  if (!is.null(gp_evaluator)) gp_evaluator$validate_block(block_idx)
-  
-  if (length(block_idx) == 0L) {
-    return(list(U = U_curr, n_eval = 0L, accepted = TRUE))
-  }
-  
-  ref <- if (is.null(score_reference)) latent_reference_params(S, A) else score_reference
-  
-  Mref <- ref$mean
-  Vref <- ref$V
-  
-  U_block <- U_curr[block_idx, , drop = FALSE]
-  M_block <- Mref[block_idx, , drop = FALSE]
-  block_cache <- if (!is.null(gp_evaluator)) {
-    gp_evaluator$prepare_block(U_curr, logtheta, block_idx)
-  } else NULL
-  candidate_gp <- NULL
-  
-  loglik_fun <- function(U_block_prop) {
-    U_prop <- U_curr
-    U_prop[block_idx, ] <- U_block_prop
-    if (!is.null(gp_evaluator)) {
-      candidate_gp <<- gp_evaluator$evaluate(U_prop, logtheta, block_cache)
-      return(gp_loglik_from_moments_general(candidate_gp, sigma2_eps))
-    }
-    gp_state_general(
-      y, X, U_prop, logtheta, sigma2_eps,
-      kernel = kernel,
-      matern_nu = matern_nu
-    )$loglik
-  }
-  
-  loglik_cur <- loglik_fun(U_block)
-  
-  if (!is.finite(loglik_cur)) {
-    stop("Current state has a non-finite density in latent ESS update.")
-  }
-  
-  Nu <- rmvnorm_rows_common(
-    mean_mat = matrix(0, nrow = length(block_idx), ncol = ncol(U_curr)),
-    Sigma = Vref
-  )
-  
-  Zcur <- U_block - M_block
-  
-  logy <- loglik_cur + log(runif(1))
-  
-  angle <- runif(1, 0, 2 * base::pi)
-  angle_min <- angle - 2 * base::pi
-  angle_max <- angle
-  
-  n_eval <- 1L
-  
-  for (try_id in seq_len(max_try)) {
-    U_prop_block <- M_block + Zcur * cos(angle) + Nu * sin(angle)
-    
-    loglik_prop <- loglik_fun(U_prop_block)
-    
-    n_eval <- n_eval + 1L
-    
-    if (is.finite(loglik_prop) && loglik_prop >= logy) {
-      U_new <- U_curr
-      U_new[block_idx, ] <- U_prop_block
-      if (!is.null(gp_evaluator)) gp_evaluator$accept(candidate_gp)
-      
-      return(list(U = U_new, n_eval = n_eval, accepted = TRUE))
-    }
-    
-    if (angle < 0) {
-      angle_min <- angle
-    } else {
-      angle_max <- angle
-    }
-    
-    angle <- runif(1, angle_min, angle_max)
-  }
-  
-  stop("Latent elliptical-slice update exceeded max_try.")
-}
-
-
-update_U_theta_ess_integrated_general <- function(y,
-                                                  X,
-                                                  C,
-                                                  U_curr,
-                                                  logtheta_curr,
-                                                  gp_prior,
-                                                  block_idx,
-                                                  reference = c("score", "prior"),
-                                                  S = NULL,
-                                                  A = NULL,
-                                                  tau = NULL,
-                                                  update_theta = TRUE,
-                                                  max_try = 5000L,
-                                                  kernel = "se",
-                                                  matern_nu = 2.5,
-                                                  gp_evaluator = NULL,
-                                                  score_reference = NULL) {
-  reference <- match.arg(reference)
-  block_idx <- as.integer(block_idx)
-  d <- ncol(U_curr)
-  if (!is.null(gp_evaluator)) gp_evaluator$validate_block(block_idx)
-
-  if (reference == "score" && length(block_idx) > 0L) {
-    if (is.null(S) || is.null(A)) {
-      stop("S and A are required for a score-reference update.")
-    }
-    ref <- if (is.null(score_reference)) latent_reference_params(S, A) else score_reference
-    M_block <- ref$mean[block_idx, , drop = FALSE]
-    V_block <- ref$V
-  } else if (reference == "prior") {
-    if (is.null(A) || is.null(tau)) {
-      stop("A and tau are required for a prior-reference update.")
-    }
-    M_block <- matrix(0, nrow = length(block_idx), ncol = d)
-    V_block <- diag(d)
-  } else {
-    M_block <- matrix(numeric(0), 0L, d)
-    V_block <- diag(d)
-  }
-
-  U_block <- U_curr[block_idx, , drop = FALSE]
-  theta_mean <- if (isTRUE(update_theta)) gp_prior$mean else numeric(0)
-  theta_sd <- if (isTRUE(update_theta)) gp_prior$sd else numeric(0)
-  block_cache <- if (!is.null(gp_evaluator) && !isTRUE(update_theta)) {
-    gp_evaluator$prepare_block(U_curr, logtheta_curr, block_idx)
-  } else NULL
-  candidate_gp <- NULL
-
-  residual_log_density <- function(U_block_prop, logtheta_prop) {
-    if (any(logtheta_prop < gp_prior$lower) ||
-        any(logtheta_prop > gp_prior$upper)) {
-      return(-Inf)
-    }
-
-    U_prop <- U_curr
-    if (length(block_idx) > 0L) {
-      U_prop[block_idx, ] <- U_block_prop
-    }
-
-    out <- if (is.null(gp_evaluator)) {
-      gp_loglik_integrated_general(y, X, U_prop, logtheta_prop,
-        kernel = kernel, matern_nu = matern_nu)
-    } else {
-      candidate_gp <<- gp_evaluator$evaluate(U_prop, logtheta_prop, block_cache)
-      gp_loglik_from_moments_general(candidate_gp)
-    }
-    if (!is.finite(out)) return(-Inf)
-
-    if (reference == "prior") {
-      out <- out + ordinal_loglik_marginal(C, U_prop, A, tau)
-    }
-
-    out
-  }
-
-  loglik_cur <- residual_log_density(U_block, logtheta_curr)
-  if (!is.finite(loglik_cur)) {
-    stop("Current state has a non-finite density in joint ESS update.")
-  }
-
-  Nu_U <- if (length(block_idx) > 0L) {
-    rmvnorm_rows_common(
-      mean_mat = matrix(0, nrow = length(block_idx), ncol = d),
-      Sigma = V_block
-    )
-  } else {
-    matrix(numeric(0), nrow = 0L, ncol = d)
-  }
-  Nu_theta <- if (isTRUE(update_theta)) {
-    rnorm(length(logtheta_curr), 0, theta_sd)
-  } else {
-    numeric(0)
-  }
-
-  Z_U <- U_block - M_block
-  Z_theta <- if (isTRUE(update_theta)) logtheta_curr - theta_mean else numeric(0)
-  logy <- loglik_cur + log(runif(1))
-
-  angle <- runif(1, 0, 2 * base::pi)
-  angle_min <- angle - 2 * base::pi
-  angle_max <- angle
-  n_eval <- 1L
-
-  for (try_id in seq_len(max_try)) {
-    U_prop_block <- M_block + Z_U * cos(angle) + Nu_U * sin(angle)
-    logtheta_prop <- if (isTRUE(update_theta)) {
-      theta_mean + Z_theta * cos(angle) + Nu_theta * sin(angle)
-    } else {
-      logtheta_curr
-    }
-
-    loglik_prop <- residual_log_density(U_prop_block, logtheta_prop)
-    n_eval <- n_eval + 1L
-
-    if (is.finite(loglik_prop) && loglik_prop >= logy) {
-      U_new <- U_curr
-      if (length(block_idx) > 0L) {
-        U_new[block_idx, ] <- U_prop_block
-      }
-      if (!is.null(gp_evaluator)) gp_evaluator$accept(candidate_gp)
-
-      return(list(
-        U = U_new,
-        logtheta = logtheta_prop,
-        n_eval = n_eval,
-        accepted = TRUE,
-        angle = angle,
-        reference = reference
-      ))
-    }
-
-    if (angle < 0) {
-      angle_min <- angle
-    } else {
-      angle_max <- angle
-    }
-    angle <- runif(1, angle_min, angle_max)
-  }
-
-  stop("Joint elliptical-slice update exceeded max_try.")
-}
 
 
 ## Exact Gaussian reference for one measurement row. The original prior is
@@ -4571,290 +2420,11 @@ update_U_theta_ess_integrated_general <- function(y,
 ## uniform on -B < tau_1 < ... < tau_K < B. Independent Beta(1,K-r+1)
 ## stick fractions generate exactly the latter ordered-uniform distribution.
 ## No logistic-normal cut-point prior is introduced by this reparameterization.
-measurement_row_active <- function(j, d, ident) {
-  if (ident == "lower_triangular" && j <= d) seq_len(j) else seq_len(d)
-}
-
-
-measurement_row_to_gaussian <- function(A_row, tau_row, j, ident,
-                                         s_A = 2.5, tau_bound = 6) {
-  active <- measurement_row_active(j, length(A_row), ident)
-  z_A <- A_row[active] / s_A
-  if (ident == "lower_triangular" && j <= length(A_row)) {
-    if (A_row[j] <= 0) stop("A diagonal must be strictly positive.")
-    ## A^2/s_A^2 is chi-square(1). This avoids subtracting two nearly
-    ## equal normal probabilities when a positive diagonal is near zero.
-    lower_tail <- A_row[j] / s_A < 1
-    z_A[j] <- qnorm(pchisq((A_row[j] / s_A)^2, df = 1,
-      lower.tail = lower_tail, log.p = TRUE), lower.tail = lower_tail, log.p = TRUE)
-  }
-  K <- length(tau_row)
-  if (K && (any(!is.finite(tau_row)) ||
-            any(diff(c(-tau_bound, tau_row, tau_bound)) <= 0))) {
-    stop("Cut points must be strictly ordered inside their prior bounds.")
-  }
-  z_tau <- numeric(K)
-  previous <- -tau_bound
-  for (r in seq_len(K)) {
-    fraction <- (tau_row[r] - previous) / (tau_bound - previous)
-    log_remainder <- if (fraction < 0.5) log1p(-fraction) else {
-      log(tau_bound - tau_row[r]) - log(tau_bound - previous)
-    }
-    z_tau[r] <- qnorm((K - r + 1L) * log_remainder,
-                      lower.tail = FALSE, log.p = TRUE)
-    previous <- tau_row[r]
-  }
-  z <- c(z_A, z_tau)
-  if (any(!is.finite(z))) stop("Current measurement row has no finite Gaussian coordinates.")
-  if (is.null(measurement_row_from_gaussian(z, j, length(A_row), K, ident,
-                                           s_A, tau_bound))) {
-    stop("Current measurement row cannot be represented without boundary rounding.")
-  }
-  z
-}
-
-
-measurement_row_from_gaussian <- function(z, j, d, K, ident,
-                                           s_A = 2.5, tau_bound = 6) {
-  active <- measurement_row_active(j, d, ident)
-  k_A <- length(active)
-  if (length(z) != k_A + K || any(!is.finite(z))) return(NULL)
-  A_row <- numeric(d)
-  A_row[active] <- s_A * z[seq_len(k_A)]
-  log_jacobian <- k_A * log(s_A)
-  if (ident == "lower_triangular" && j <= d) {
-    lower_tail <- z[j] < 0
-    A_row[j] <- s_A * sqrt(qchisq(pnorm(z[j], lower.tail = lower_tail, log.p = TRUE),
-      df = 1, lower.tail = lower_tail, log.p = TRUE))
-    if (!is.finite(A_row[j]) || A_row[j] <= 0) return(NULL)
-    log_jacobian <- log_jacobian + dnorm(z[j], log = TRUE) -
-      dnorm(A_row[j] / s_A, log = TRUE) - log(2)
-  }
-  tau_row <- numeric(K)
-  previous <- -tau_bound
-  for (r in seq_len(K)) {
-    fraction <- -expm1(pnorm(z[k_A + r], lower.tail = FALSE, log.p = TRUE) /
-                       (K - r + 1L))
-    tau_row[r] <- previous + (tau_bound - previous) * fraction
-    previous <- tau_row[r]
-  }
-  if (any(!is.finite(A_row)) || (K &&
-      any(diff(c(-tau_bound, tau_row, tau_bound)) <= 0))) return(NULL)
-  if (K) log_jacobian <- log_jacobian +
-    sum(dnorm(z[k_A + seq_len(K)], log = TRUE)) -
-    lgamma(K + 1L) + K * log(2 * tau_bound)
-  list(A = A_row, tau = tau_row, log_jacobian = log_jacobian)
-}
-
-
-ordinal_row_loglik_marginal <- function(C_row, U, A_row, tau_row) {
-  mu <- as.numeric(U %*% A_row)
-  lower <- c(-Inf, tau_row)[C_row] - mu
-  upper <- c(tau_row, Inf)[C_row] - mu
-  lp <- log_normal_interval_prob(lower, upper)
-  if (any(!is.finite(lp))) -Inf else sum(lp)
-}
-
-
-update_measurement_joint_ess <- function(C, U, A, tau, m_vec,
-                                         s_A = 2.5, tau_bound = 6,
-                                         ident = c("lower_triangular", "none"),
-                                         max_try = 5000L) {
-  ident <- match.arg(ident)
-  n_eval <- 0L
-  angles <- numeric(nrow(A))
-  for (j in seq_len(nrow(A))) {
-    K <- m_vec[j] - 1L
-    z <- measurement_row_to_gaussian(A[j, ], tau[[j]], j, ident, s_A, tau_bound)
-    current <- ordinal_row_loglik_marginal(C[, j], U, A[j, ], tau[[j]])
-    n_eval <- n_eval + 1L
-    if (!is.finite(current)) stop("Current joint measurement density is non-finite.")
-    nu <- rnorm(length(z))
-    log_height <- current + log(runif(1))
-    angle <- runif(1, 0, 2 * base::pi)
-    lower <- angle - 2 * base::pi
-    upper <- angle
-    accepted <- FALSE
-    for (attempt in seq_len(max_try)) {
-      candidate <- measurement_row_from_gaussian(z * cos(angle) + nu * sin(angle),
-        j, ncol(A), K, ident, s_A, tau_bound)
-      proposed <- if (is.null(candidate)) -Inf else {
-        ordinal_row_loglik_marginal(C[, j], U, candidate$A, candidate$tau)
-      }
-      n_eval <- n_eval + 1L
-      if (is.finite(proposed) && proposed >= log_height) {
-        A[j, ] <- candidate$A
-        tau[[j]] <- candidate$tau
-        angles[j] <- angle
-        accepted <- TRUE
-        break
-      }
-      if (angle < 0) lower <- angle else upper <- angle
-      angle <- runif(1, lower, upper)
-    }
-    if (!accepted) stop("Joint measurement ESS exceeded max_try.")
-  }
-  list(A = A, tau = tau, n_eval = n_eval, n_rows = nrow(A), angles = angles)
-}
 
 
 ## Score-conditioned Gaussian noncentering of the missing latent rows. With
 ## P=I+A'A and R=chol(P), U=M+W R^{-T}, M=S A P^{-1}; W has iid N(0,1)
 ## entries in the measurement model. Calibration is never transported.
-loading_transport_reference <- function(S, A) {
-  precision_chol <- safe_chol(diag(ncol(A)) + crossprod(A))
-  mean <- t(solve_chol(precision_chol, t(S %*% A)))
-  list(mean = mean, precision_chol = precision_chol)
-}
-
-
-update_loading_transport_ess <- function(y, X, U_curr, S, A_curr,
-                                          logtheta, miss_idx, s_A = 2.5,
-                                          ident = c("lower_triangular", "none"),
-                                          max_try = 5000L, kernel = "se",
-                                          matern_nu = 2.5, gp_evaluator = NULL) {
-  ident <- match.arg(ident)
-  miss_idx <- as.integer(miss_idx)
-  if (anyNA(miss_idx) || anyDuplicated(miss_idx) ||
-      any(miss_idx < 1L | miss_idx > nrow(U_curr))) {
-    stop("miss_idx must index distinct missing rows.")
-  }
-  if (!is.null(gp_evaluator)) gp_evaluator$validate_block(miss_idx)
-  q <- nrow(A_curr)
-  d <- ncol(A_curr)
-  row_length <- vapply(seq_len(q), function(j)
-    length(measurement_row_active(j, d, ident)), integer(1))
-  row_end <- cumsum(row_length)
-  row_start <- row_end - row_length + 1L
-  z <- unlist(lapply(seq_len(q), function(j)
-    measurement_row_to_gaussian(A_curr[j, ], numeric(0), j, ident, s_A)),
-    use.names = FALSE)
-  ref <- loading_transport_reference(S, A_curr)
-  W <- (U_curr[miss_idx, , drop = FALSE] - ref$mean[miss_idx, , drop = FALSE]) %*%
-    t(ref$precision_chol)
-  candidate_gp <- NULL
-  evaluate <- function(A, U) {
-    gp <- if (is.null(gp_evaluator)) {
-      gp_loglik_integrated_general(y, X, U, logtheta, kernel, matern_nu)
-    } else {
-      candidate_gp <<- gp_evaluator$evaluate(U, logtheta)
-      gp_loglik_from_moments_general(candidate_gp)
-    }
-    gp + loading_transport_score_loglik(S, U, A, miss_idx)
-  }
-  current <- evaluate(A_curr, U_curr)
-  if (!is.finite(current)) stop("Current loading-transport density is non-finite.")
-  log_height <- current + log(runif(1))
-  nu <- rnorm(length(z))
-  angle <- runif(1, 0, 2 * base::pi)
-  lower <- angle - 2 * base::pi
-  upper <- angle
-  n_eval <- 1L
-  for (attempt in seq_len(max_try)) {
-    z_prop <- z * cos(angle) + nu * sin(angle)
-    A_prop <- A_curr
-    valid <- TRUE
-    for (j in seq_len(q)) {
-      row <- measurement_row_from_gaussian(z_prop[row_start[j]:row_end[j]],
-        j, d, 0L, ident, s_A)
-      if (is.null(row)) {
-        valid <- FALSE
-        break
-      }
-      A_prop[j, ] <- row$A
-    }
-    U_prop <- U_curr
-    proposed <- -Inf
-    if (valid) {
-      ref_prop <- loading_transport_reference(S, A_prop)
-      if (length(miss_idx)) {
-        U_prop[miss_idx, ] <- ref_prop$mean[miss_idx, , drop = FALSE] +
-          t(backsolve(ref_prop$precision_chol, t(W)))
-      }
-      proposed <- evaluate(A_prop, U_prop)
-    }
-    n_eval <- n_eval + 1L
-    if (is.finite(proposed) && proposed >= log_height) {
-      if (!is.null(gp_evaluator)) gp_evaluator$accept(candidate_gp)
-      return(list(A = A_prop, U = U_prop, n_eval = n_eval, angle = angle))
-    }
-    if (angle < 0) lower <- angle else upper <- angle
-    angle <- runif(1, lower, upper)
-  }
-  stop("Loading transport ESS exceeded max_try.")
-}
-
-
-update_measurement_marginal_slice <- function(C,
-                                              U,
-                                              A,
-                                              tau,
-                                              m_vec,
-                                              s_A = 2.5,
-                                              tau_bound = 6,
-                                              ident = c("lower_triangular", "none"),
-                                              A_width = 0.5,
-                                              tau_width = 0.5) {
-  ident <- match.arg(ident)
-  q <- nrow(A)
-  d <- ncol(A)
-  n_eval <- 0L
-
-  active_A <- lapply(seq_len(q), function(j) {
-    if (ident == "lower_triangular" && j <= d) seq_len(j) else seq_len(d)
-  })
-
-  for (j in seq_len(q)) {
-    for (k in active_A[[j]]) {
-      lower <- if (ident == "lower_triangular" && j == k && j <= d) 0 else -Inf
-      logf <- function(value) {
-        A_prop <- A
-        A_prop[j, k] <- value
-        ordinal_loglik_marginal(C, U, A_prop, tau) -
-          0.5 * sum(A_prop^2) / s_A^2
-      }
-      ans <- bounded_slice_update(
-        x0 = A[j, k],
-        logf = logf,
-        w = A_width,
-        lower = lower,
-        upper = Inf,
-        max_steps_out = 50L,
-        max_iter = 500L,
-        fail_on_limit = TRUE
-      )
-      A[j, k] <- ans$x
-      n_eval <- n_eval + ans$n_eval
-    }
-  }
-
-  for (j in seq_len(q)) {
-    if (m_vec[j] <= 1L) next
-    for (r in seq_len(m_vec[j] - 1L)) {
-      lower <- max(-tau_bound, if (r > 1L) tau[[j]][r - 1L] else -Inf)
-      upper <- min(tau_bound, if (r < m_vec[j] - 1L) tau[[j]][r + 1L] else Inf)
-      logf <- function(value) {
-        tau_prop <- tau
-        tau_prop[[j]][r] <- value
-        ordinal_loglik_marginal(C, U, A, tau_prop)
-      }
-      ans <- bounded_slice_update(
-        x0 = tau[[j]][r],
-        logf = logf,
-        w = tau_width,
-        lower = lower,
-        upper = upper,
-        max_steps_out = 50L,
-        max_iter = 500L,
-        fail_on_limit = TRUE
-      )
-      tau[[j]][r] <- ans$x
-      n_eval <- n_eval + ans$n_eval
-    }
-  }
-
-  list(A = A, tau = tau, n_eval = n_eval)
-}
 
 
 ############################################################
@@ -4865,14 +2435,14 @@ split_rhat <- function(chain_list) {
   chain_list <- lapply(chain_list, function(x) as.numeric(x[is.finite(x)]))
   lens <- vapply(chain_list, length, integer(1))
   n0 <- min(lens)
-  
+
   if (length(chain_list) < 2 || n0 < 20) return(NA_real_)
-  
+
   chain_list <- lapply(chain_list, function(x) tail(x, n0))
-  
+
   n_half <- floor(n0 / 2)
   if (n_half < 10) return(NA_real_)
-  
+
   split_mat <- do.call(
     rbind,
     lapply(chain_list, function(x) {
@@ -4882,19 +2452,19 @@ split_rhat <- function(chain_list) {
       )
     })
   )
-  
+
   n_split <- ncol(split_mat)
-  
+
   chain_means <- rowMeans(split_mat)
   chain_vars <- apply(split_mat, 1, var)
-  
+
   W <- mean(chain_vars)
   B <- n_split * var(chain_means)
-  
+
   if (!is.finite(W) || W <= 0) return(NA_real_)
-  
+
   var_hat <- ((n_split - 1) / n_split) * W + B / n_split
-  
+
   sqrt(var_hat / W)
 }
 
@@ -4941,22 +2511,22 @@ tail_ess <- function(chain_list) {
 ess_ips <- function(x, max_lag = NULL) {
   x <- as.numeric(x)
   x <- x[is.finite(x)]
-  
+
   n <- length(x)
   if (n < 5) return(NA_real_)
-  
+
   sx <- sd(x)
   if (!is.finite(sx)) return(NA_real_)
   if (sx == 0) return(n)
-  
+
   if (is.null(max_lag)) {
     max_lag <- min(n - 1L, 1000L)
   } else {
     max_lag <- min(n - 1L, as.integer(max_lag))
   }
-  
+
   if (max_lag < 1L) return(n)
-  
+
   ac <- tryCatch(
     as.numeric(stats::acf(
       x,
@@ -4966,20 +2536,20 @@ ess_ips <- function(x, max_lag = NULL) {
     )$acf),
     error = function(e) NA_real_
   )
-  
+
   if (length(ac) <= 1 || all(!is.finite(ac))) return(NA_real_)
-  
+
   ac <- ac[-1]
   ac <- ac[is.finite(ac)]
-  
+
   if (length(ac) == 0) return(n)
-  
+
   mm <- floor(length(ac) / 2)
-  
+
   if (mm >= 1) {
     pair_sums <- ac[2 * seq_len(mm) - 1] + ac[2 * seq_len(mm)]
     first_nonpos <- which(pair_sums <= 0)[1]
-    
+
     if (is.na(first_nonpos)) {
       use_lag <- 2 * mm
     } else {
@@ -4988,15 +2558,15 @@ ess_ips <- function(x, max_lag = NULL) {
   } else {
     use_lag <- ifelse(ac[1] > 0, 1, 0)
   }
-  
+
   if (use_lag > 0) {
     tau_int <- 1 + 2 * sum(ac[seq_len(use_lag)])
   } else {
     tau_int <- 1
   }
-  
+
   tau_int <- max(tau_int, 1)
-  
+
   ess <- n / tau_int
   min(max(ess, 1), n)
 }
@@ -5022,11 +2592,11 @@ sample_u_given_c_ordprobit <- function(C_new,
                                        U_init = NULL) {
   C_new <- as.matrix(C_new)
   A <- as.matrix(A)
-  
+
   N <- nrow(C_new)
   q <- ncol(C_new)
   d <- ncol(A)
-  
+
   if (nrow(A) != q || length(m_vec) != q || length(tau) != q) {
     stop("m_vec has wrong length.")
   }
@@ -5038,7 +2608,7 @@ sample_u_given_c_ordprobit <- function(C_new,
   if (length(n_gibbs) != 1L || is.na(n_gibbs) || n_gibbs < 1L) {
     stop("n_gibbs must be a positive integer.")
   }
-  
+
   if (is.null(U_init)) {
     U <- matrix(rnorm(N * d), N, d)
   } else {
@@ -5049,26 +2619,26 @@ sample_u_given_c_ordprobit <- function(C_new,
       ncol_expected = d
     )
   }
-  
+
   S <- matrix(0, N, q)
   V <- solve(diag(d) + crossprod(A))
-  
+
   for (gg in seq_len(n_gibbs)) {
     for (j in seq_len(q)) {
       mu <- as.numeric(U %*% A[j, ])
-      
+
       tau_j <- tau[[j]]
-      
+
       lower <- c(-Inf, tau_j)[C_new[, j]]
       upper <- c(tau_j, Inf)[C_new[, j]]
-      
+
       S[, j] <- rtruncnorm_vec(mu, 1, lower, upper)
     }
-    
+
     M <- S %*% A %*% V
     U <- rmvnorm_rows_common(M, V)
   }
-  
+
   U
 }
 
@@ -5364,22 +2934,22 @@ sample_eiv_test_y_ordprobit_fb <- function(X_test_raw,
   latent_sampler <- match.arg(latent_sampler)
   U_input_scale <- match.arg(U_input_scale)
   if (!is.null(seed)) set.seed(seed)
-  
+
   samples_U <- fit_obj$mcmc$samples_U
   samples_A <- fit_obj$mcmc$samples_A
   samples_tau <- fit_obj$mcmc$samples_tau
   samples_logtheta <- fit_obj$mcmc$samples_logtheta
   samples_sigma2 <- fit_obj$mcmc$samples_sigma2
-  
+
   X_train <- fit_obj$data$X
   y_train <- fit_obj$data$y
-  
+
   y_center <- fit_obj$data$y_center
   y_scale <- fit_obj$data$y_scale
-  
+
   X_center <- fit_obj$data$X_center
   X_scale <- fit_obj$data$X_scale
-  
+
   m_vec <- fit_obj$data$m_vec
   d <- fit_obj$data$d
   q <- fit_obj$data$q
@@ -5479,27 +3049,27 @@ sample_eiv_test_y_ordprobit_fb <- function(X_test_raw,
   if (length(n_per_draw) != 1L || is.na(n_per_draw) || n_per_draw < 1L) {
     stop("n_per_draw must be a positive integer.")
   }
-  
+
   X_test <- sweep(sweep(X_test_raw, 2, X_center, "-"), 2, X_scale, "/")
   n_draw <- length(draw_ids) * n_per_draw
-  
+
   out <- matrix(NA_real_, nrow = n_draw, ncol = n_test)
   conditional_means <- matrix(NA_real_, nrow = n_draw, ncol = n_test)
   conditional_vars <- matrix(NA_real_, nrow = n_draw, ncol = n_test)
   latent_acceptance <- rep(NA_real_, n_draw)
   latent_candidates <- integer(n_draw)
-  
+
   row_id <- 0L
-  
+
   for (s in draw_ids) {
     A_s <- matrix(samples_A[s, , ], nrow = q, ncol = d)
     tau_s <- unflatten_tau(samples_tau[s, ], m_vec)
-    
+
     U_train_s <- matrix(samples_U[s, , ], nrow = n_train, ncol = d)
-    
+
     for (rr in seq_len(n_per_draw)) {
       row_id <- row_id + 1L
-      
+
       missing_test <- setdiff(seq_len(n_test), U_test_complete)
       U_star <- U_test_standardized
       if (length(missing_test) > 0L) {
@@ -5523,7 +3093,7 @@ sample_eiv_test_y_ordprobit_fb <- function(X_test_raw,
         U_star[U_test_complete, ] <-
           U_test_standardized[U_test_complete, , drop = FALSE]
       }
-      
+
       pred <- gp_predict_draw_general(
         X_train = X_train,
         U_train = U_train_s,
@@ -5537,7 +3107,7 @@ sample_eiv_test_y_ordprobit_fb <- function(X_test_raw,
         matern_nu = kernel_spec$matern_nu,
         return_cov = isTRUE(joint)
       )
-      
+
       if (isTRUE(joint)) {
         y_std <- as.numeric(rmvnorm_psd(1L, pred$mean, pred$cov))
       } else {
@@ -5548,7 +3118,7 @@ sample_eiv_test_y_ordprobit_fb <- function(X_test_raw,
       conditional_vars[row_id, ] <- y_scale^2 * pred$var
     }
   }
-  
+
   attr(out, "predictive_target") <- predictive_target
   attr(out, "joint") <- isTRUE(joint)
   attr(out, "latent_sampler") <- latent_sampler
@@ -6242,12 +3812,12 @@ f0_2d <- function(X, U, scenario = "primary") {
   X <- as.matrix(X)
   U <- as.matrix(U)
   spec <- study2_scenario_spec(scenario)
-  
+
   x1 <- X[, 1]
   x2 <- X[, 2]
   u1 <- U[, 1]
   u2 <- U[, 2]
-  
+
   f_main <- 0.65 * tanh(1.10 * u1) +
     0.50 * tanh(0.90 * u2) +
     0.30 * x1 -
@@ -6278,7 +3848,7 @@ simulate_study2_data <- function(n = 120,
   if (n < 1L || n_test < 1L) {
     stop("n and n_test must be positive integers.")
   }
-  
+
   seed <- if (is.null(seed)) sample.int(.Machine$integer.max, 1L) else as.integer(seed)
   pars <- make_study2_true_params(scenario = scenario, q = q, m = m)
   A <- pars$A
@@ -6287,7 +3857,7 @@ simulate_study2_data <- function(n = 120,
   d <- pars$d
 
   if (is.null(sigma_eps)) sigma_eps <- pars$sigma_eps
-  
+
   ## Generate exactly once.  The experiment must retain naturally sparse
   ## realized patterns rather than condition on a favorable category count.
   set.seed(seed + 1L)
@@ -6307,7 +3877,7 @@ simulate_study2_data <- function(n = 120,
   Zeta <- draw_study2_score_errors(n, pars)
   S <- U %*% t(A) + lambda * Zeta
   C <- ordinal_from_scores_matrix_tau(S, tau)
-  
+
   f <- f0_2d(X, U, scenario = scenario)
   y <- f + eps_y
 
@@ -6315,10 +3885,10 @@ simulate_study2_data <- function(n = 120,
   Zeta_test <- draw_study2_score_errors(n_test, pars)
   S_test <- U_test %*% t(A) + lambda * Zeta_test
   C_test <- ordinal_from_scores_matrix_tau(S_test, tau)
-  
+
   f_test <- f0_2d(X_test, U_test, scenario = scenario)
   y_test <- f_test + eps_y_test
-  
+
   list(
     train = list(
       X = X,
@@ -6372,7 +3942,7 @@ make_stratified_calibration_sets_2d <- function(C,
                                                 calib_grid = c(0, 10, 25, 50, 80),
                                                 seed = NULL) {
   if (!is.null(seed)) set.seed(seed)
-  
+
   C <- as.matrix(C)
   n <- nrow(C)
   calib_grid <- as.integer(calib_grid)
@@ -6393,12 +3963,12 @@ make_stratified_calibration_sets_2d <- function(C,
   idx_by_stratum <- lapply(idx_by_stratum, function(idx) {
     if (length(idx) <= 1L) idx else sample(idx, size = length(idx), replace = FALSE)
   })
-  
+
   ordering <- integer(0)
-  
+
   repeat {
     added <- FALSE
-    
+
     for (ss in seq_along(idx_by_stratum)) {
       if (length(idx_by_stratum[[ss]]) > 0) {
         ordering <- c(ordering, idx_by_stratum[[ss]][1])
@@ -6406,10 +3976,10 @@ make_stratified_calibration_sets_2d <- function(C,
         added <- TRUE
       }
     }
-    
+
     if (!added) break
   }
-  
+
   out <- lapply(calib_grid, function(k) {
     if (k == 0) integer(0) else sort(ordering[seq_len(k)])
   })
@@ -6419,32 +3989,7 @@ make_stratified_calibration_sets_2d <- function(C,
     all(ordering %in% seq_len(n)),
     all(vapply(out, function(idx) length(idx) == length(unique(idx)), logical(1)))
   )
-  
-  names(out) <- as.character(calib_grid)
-  out
-}
 
-
-make_nested_calibration_sets_2d <- function(C,
-                                            calib_grid,
-                                            seed = NULL,
-                                            scheme = c("random", "anchor_stratified")) {
-  scheme <- match.arg(scheme)
-  C <- as.matrix(C)
-  n <- nrow(C)
-  calib_grid <- as.integer(calib_grid)
-  if (anyNA(calib_grid) || any(calib_grid < 0L | calib_grid > n)) {
-    stop("Calibration sizes must lie between zero and the training size.")
-  }
-  if (scheme == "anchor_stratified") {
-    return(make_stratified_calibration_sets_2d(C, calib_grid, seed))
-  }
-
-  if (!is.null(seed)) set.seed(seed)
-  ordering <- sample.int(n)
-  out <- lapply(calib_grid, function(k) {
-    if (k == 0L) integer(0) else sort(ordering[seq_len(k)])
-  })
   names(out) <- as.character(calib_grid)
   out
 }
@@ -6474,21 +4019,21 @@ make_oracle_pool_2d <- function(true_params,
                                 n_pool = 200000L,
                                 seed = NULL) {
   if (!is.null(seed)) set.seed(seed)
-  
+
   A <- true_params$A
   tau <- true_params$tau
   lambda <- true_params$lambda
-  
+
   d <- true_params$d
   U <- matrix(rnorm(n_pool * d), n_pool, d)
   Zeta <- draw_study2_score_errors(n_pool, true_params)
-  
+
   S <- U %*% t(A) + lambda * Zeta
   C <- ordinal_from_scores_matrix_tau(S, tau)
-  
+
   key <- pattern_key(C)
   split_idx <- split(seq_len(n_pool), key)
-  
+
   list(
     U = U,
     C = C,
@@ -6496,47 +4041,6 @@ make_oracle_pool_2d <- function(true_params,
     split_idx = split_idx,
     provenance = study2_oracle_pool_provenance(true_params)
   )
-}
-
-
-sample_oracle_u_rejection <- function(c_star,
-                                      true_params,
-                                      n_draw,
-                                      max_batches = 100L,
-                                      batch_size = 20000L) {
-  A <- true_params$A
-  tau <- true_params$tau
-  lambda <- true_params$lambda
-  
-  d <- true_params$d
-  U_keep <- matrix(NA_real_, 0, d)
-  key_star <- paste(c_star, collapse = "_")
-  
-  for (bb in seq_len(max_batches)) {
-    U <- matrix(rnorm(batch_size * d), batch_size, d)
-    Zeta <- draw_study2_score_errors(batch_size, true_params)
-    S <- U %*% t(A) + lambda * Zeta
-    C <- ordinal_from_scores_matrix_tau(S, tau)
-    
-    idx <- which(pattern_key(C) == key_star)
-    
-    if (length(idx) > 0) {
-      U_keep <- rbind(U_keep, U[idx, , drop = FALSE])
-    }
-    
-    if (nrow(U_keep) >= n_draw) break
-  }
-  
-  if (nrow(U_keep) < n_draw) {
-    stop(
-      "Oracle rejection sampling produced only ", nrow(U_keep), " of ",
-      n_draw, " required draws for ordinal pattern ",
-      key_star,
-      ". Increase max_batches or batch_size; do not bootstrap a short pool."
-    )
-  }
-  
-  U_keep[seq_len(n_draw), , drop = FALSE]
 }
 
 
@@ -6828,7 +4332,7 @@ sample_oracle_test_y_2d <- function(X_test,
       U_draw,
       scenario = true_params$scenario
     )
-    
+
     out[, j] <- f_draw + rnorm(n_draw, 0, sigma_eps)
     conditional_means[, j] <- f_draw
   }
@@ -6870,40 +4374,40 @@ gp_mle_fit <- function(X,
       length(maxit) != 1L || is.na(maxit) || maxit < 0L) {
     stop("n_starts, seed, and maxit must be finite nonnegative integers, with n_starts >= 1.")
   }
-  
+
   Dlist <- lapply(seq_len(d), function(j) {
     pairwise_sqdist(X[, j, drop = FALSE])
   })
-  
+
   nll <- function(par) {
     log_sigma2 <- par[1]
     log_rho <- par[2]
     log_theta <- par[-c(1, 2)]
-    
+
     sigma2 <- exp(log_sigma2)
     rho <- exp(log_rho)
     theta <- exp(log_theta)
-    
+
     Rexp <- matrix(0, n, n)
-    
+
     for (j in seq_len(d)) {
       Rexp <- Rexp + theta[j] * Dlist[[j]]
     }
-    
+
     R <- exp(-Rexp)
     A_mat <- rho^2 * R + diag(n)
-    
+
     Uchol <- try(safe_chol(A_mat), silent = TRUE)
     if (inherits(Uchol, "try-error")) return(1e20)
-    
+
     Ainv_y <- solve_chol(Uchol, y)
-    
+
     logdetA <- 2 * sum(log(diag(Uchol)))
     quad <- sum(y * Ainv_y)
-    
+
     0.5 * (n * log(2 * base::pi * sigma2) + logdetA + quad / sigma2)
   }
-  
+
   lower <- c(log(1e-5), log(0.05), rep(log(1e-4), d))
   upper <- c(log(5), log(100), rep(log(100), d))
 
@@ -7029,225 +4533,6 @@ gp_mle_fit <- function(X,
 }
 
 
-gp_mle_fit_learned_embedding_ord <- function(X,
-                                             C_ord,
-                                             y,
-                                             m_vec,
-                                             n_starts = 4L) {
-  X <- as.matrix(X)
-  C_ord <- as.matrix(C_ord)
-  
-  n <- nrow(X)
-  p <- ncol(X)
-  q <- ncol(C_ord)
-  
-  n_feat <- p + q
-  n_embed <- sum(pmax(m_vec - 2L, 0L))
-  
-  nll <- function(par) {
-    log_sigma2 <- par[1]
-    log_rho <- par[2]
-    log_theta <- par[3:(2 + n_feat)]
-    
-    sigma2 <- exp(log_sigma2)
-    rho <- exp(log_rho)
-    theta <- exp(log_theta)
-    
-    embed_par <- if (n_embed > 0L) {
-      par[(3 + n_feat):length(par)]
-    } else {
-      numeric(0)
-    }
-    
-    Z <- matrix(NA_real_, n, q)
-    
-    pos <- 0L
-    for (j in seq_len(q)) {
-      mj <- m_vec[j]
-      
-      if (mj > 2L) {
-        a_j <- embed_par[pos + seq_len(mj - 2L)]
-        pos <- pos + (mj - 2L)
-      } else {
-        a_j <- numeric(0)
-      }
-      
-      z_scores <- make_monotone_scores(a_j, mj)
-      Z[, j] <- z_scores[C_ord[, j]]
-    }
-    
-    X_aug <- cbind(X, Z)
-    
-    Rexp <- matrix(0, n, n)
-    
-    for (j in seq_len(n_feat)) {
-      Rexp <- Rexp + theta[j] * pairwise_sqdist(X_aug[, j, drop = FALSE])
-    }
-    
-    R <- exp(-Rexp)
-    A_mat <- rho^2 * R + diag(n)
-    
-    Uchol <- try(safe_chol(A_mat), silent = TRUE)
-    if (inherits(Uchol, "try-error")) return(1e20)
-    
-    Ainv_y <- solve_chol(Uchol, y)
-    
-    logdetA <- 2 * sum(log(diag(Uchol)))
-    quad <- sum(y * Ainv_y)
-    
-    0.5 * (n * log(2 * base::pi * sigma2) + logdetA + quad / sigma2)
-  }
-  
-  lower <- c(
-    log(1e-5),
-    log(0.05),
-    rep(log(1e-4), n_feat),
-    rep(-6, n_embed)
-  )
-  
-  upper <- c(
-    log(5),
-    log(100),
-    rep(log(100), n_feat),
-    rep(6, n_embed)
-  )
-  
-  make_init <- function() {
-    c(
-      log(0.05),
-      log(3),
-      rep(log(0.5), n_feat),
-      rnorm(n_embed, 0, 0.5)
-    )
-  }
-  
-  starts <- replicate(n_starts, make_init(), simplify = FALSE)
-  
-  opts <- lapply(starts, function(init) {
-    optim(
-      par = init,
-      fn = nll,
-      method = "L-BFGS-B",
-      lower = lower,
-      upper = upper,
-      control = list(maxit = 500)
-    )
-  })
-  
-  best_id <- which.min(vapply(opts, function(z) z$value, numeric(1)))
-  opt <- opts[[best_id]]
-  
-  embed_par <- if (n_embed > 0L) {
-    opt$par[(3 + n_feat):length(opt$par)]
-  } else {
-    numeric(0)
-  }
-  
-  z_scores_list <- vector("list", q)
-  
-  pos <- 0L
-  for (j in seq_len(q)) {
-    mj <- m_vec[j]
-    
-    if (mj > 2L) {
-      a_j <- embed_par[pos + seq_len(mj - 2L)]
-      pos <- pos + (mj - 2L)
-    } else {
-      a_j <- numeric(0)
-    }
-    
-    z_scores_list[[j]] <- make_monotone_scores(a_j, mj)
-  }
-  
-  Z <- matrix(NA_real_, n, q)
-  for (j in seq_len(q)) {
-    Z[, j] <- z_scores_list[[j]][C_ord[, j]]
-  }
-  
-  list(
-    par = opt$par[1:(2 + n_feat)],
-    embed_par = embed_par,
-    z_scores_list = z_scores_list,
-    value = opt$value,
-    convergence = opt$convergence,
-    X_aug = cbind(X, Z),
-    X = X,
-    C_ord = C_ord,
-    y = y,
-    m_vec = m_vec
-  )
-}
-
-
-fit_embedding_baselines_ord <- function(X_raw,
-                                        y_raw,
-                                        C_ord,
-                                        m_vec,
-                                        n_starts_learned = 4L) {
-  X_raw <- as.matrix(X_raw)
-  C_ord <- as.matrix(C_ord)
-  
-  X_center <- colMeans(X_raw)
-  X_scale <- apply(X_raw, 2, sd)
-  X_scale[!is.finite(X_scale) | X_scale <= 0] <- 1
-  
-  X <- sweep(sweep(X_raw, 2, X_center, "-"), 2, X_scale, "/")
-  
-  y_center <- mean(y_raw)
-  y_scale <- sd(y_raw)
-  
-  y <- as.numeric((y_raw - y_center) / y_scale)
-  
-  q <- ncol(C_ord)
-  
-  Z_gauss <- matrix(NA_real_, nrow(C_ord), q)
-  
-  for (j in seq_len(q)) {
-    Z_gauss[, j] <- qnorm(C_ord[, j] / (m_vec[j] + 1))
-  }
-  
-  fit_gauss <- gp_mle_fit(
-    X = cbind(X, Z_gauss),
-    y = y
-  )
-  
-  z_cm_scores <- lapply(seq_len(q), function(j) {
-    conditional_mean_scores_ord(C_ord[, j], m_vec[j])
-  })
-  
-  Z_cm <- matrix(NA_real_, nrow(C_ord), q)
-  
-  for (j in seq_len(q)) {
-    Z_cm[, j] <- z_cm_scores[[j]][C_ord[, j]]
-  }
-  
-  fit_cm <- gp_mle_fit(
-    X = cbind(X, Z_cm),
-    y = y
-  )
-  
-  fit_learned <- gp_mle_fit_learned_embedding_ord(
-    X = X,
-    C_ord = C_ord,
-    y = y,
-    m_vec = m_vec,
-    n_starts = n_starts_learned
-  )
-  
-  list(
-    X_center = X_center,
-    X_scale = X_scale,
-    y_center = y_center,
-    y_scale = y_scale,
-    fit_gauss = fit_gauss,
-    fit_cm = fit_cm,
-    fit_learned = fit_learned,
-    z_cm_scores = z_cm_scores,
-    m_vec = m_vec
-  )
-}
-
-
 ############################################################
 ## Predictive scoring
 ############################################################
@@ -7255,12 +4540,12 @@ fit_embedding_baselines_ord <- function(X_raw,
 crps_sample_one <- function(draws, y) {
   draws <- sort(as.numeric(draws))
   S <- length(draws)
-  
+
   term1 <- mean(abs(draws - y))
-  
+
   weights <- 2 * seq_len(S) - S - 1
   mean_abs_pair <- 2 * sum(weights * draws) / S^2
-  
+
   term1 - 0.5 * mean_abs_pair
 }
 
@@ -7480,17 +4765,6 @@ summarize_study2_latent_draws <- function(draws,
 ## MCMC review helpers for ordinal-probit EIV-GP
 ############################################################
 
-classify_parameter_block <- function(parameter) {
-  out <- rep("other", length(parameter))
-  
-  out[grepl("^sigma|^rho|^theta", parameter)] <- "GP/noise"
-  out[grepl("^A\\[|^A[0-9]", parameter)] <- "loading A"
-  out[grepl("^tau\\[|^tau", parameter)] <- "cutpoints"
-  out[grepl("^U\\[", parameter)] <- "latent U"
-  
-  out
-}
-
 
 summarise_rhat_block <- function(rhat_df) {
   mixedgp_block_summary(rhat_df, "rhat", function(x) data.frame(
@@ -7504,249 +4778,6 @@ summarise_ess_block <- function(ess_df) {
   mixedgp_block_summary(ess_df, "ess", function(x) data.frame(
     n = length(x), median = median(x), q10 = unname(quantile(x, .10)),
     q25 = unname(quantile(x, .25)), min = min(x)))
-}
-
-
-make_mcmc_review_ordprobit <- function(fit,
-                                       label = "fit",
-                                       out_dir = NULL,
-                                       save_plots = TRUE,
-                                       save_csvs = TRUE) {
-  stopifnot(!is.null(fit$diagnostics))
-  required <- "ggplot2" # Review returns plot objects even when file export is disabled.
-  require_study2_reporting_packages(required, "MCMC review")
-  
-  rhat_parts <- list()
-  
-  if (!is.null(fit$diagnostics$rhat_hyper)) {
-    rhat_parts$hyper <- mixedgp_tag_block(fit$diagnostics$rhat_hyper, "GP/noise")
-  }
-  
-  if (!is.null(fit$diagnostics$rhat_A)) {
-    rhat_parts$A <- mixedgp_tag_block(fit$diagnostics$rhat_A, "loading A")
-  }
-  
-  if (!is.null(fit$diagnostics$rhat_tau)) {
-    rhat_parts$tau <- mixedgp_tag_block(fit$diagnostics$rhat_tau, "cutpoints")
-  }
-  
-  if (!is.null(fit$diagnostics$rhat_U)) {
-    rhat_parts$U <- mixedgp_tag_block(fit$diagnostics$rhat_U, "latent U")
-  }
-  
-  rhat_df <- mixedgp_bind_rows(rhat_parts)
-  
-  if (!"block" %in% names(rhat_df)) {
-    rhat_df$block <- classify_parameter_block(rhat_df$parameter)
-  }
-  
-  rhat_summary <- summarise_rhat_block(rhat_df)
-  
-  ess_df <- fit$diagnostics$ess_key
-  
-  if (!is.null(ess_df) && nrow(ess_df) > 0L) {
-    ess_df$block <- classify_parameter_block(ess_df$parameter)
-    ess_summary <- summarise_ess_block(ess_df)
-  } else {
-    ess_summary <- data.frame()
-  }
-  
-  chain_stats <- fit$mcmc$chain_stats
-  
-  if (!is.null(chain_stats) && nrow(chain_stats) > 0L) {
-    chain_stats <- transform(chain_stats,
-        u_ess_accept_rate = u_ess_accept_total / pmax(u_ess_total, 1),
-        global_u_accept_rate = global_u_accept_total / pmax(global_u_total, 1),
-        u_eval_per_update = u_ess_eval_total / pmax(u_ess_total, 1),
-        global_u_eval_per_update = global_u_eval_total / pmax(global_u_total, 1),
-        theta_eval_per_update = theta_eval_total / pmax(theta_update_total, 1)
-      )
-  }
-  
-  if (!is.null(out_dir)) {
-    dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
-    
-    if (save_csvs) {
-      utils::write.csv(
-        rhat_df,
-        file.path(out_dir, paste0(label, "_rhat_all.csv")),
-        row.names = FALSE
-      )
-      
-      utils::write.csv(
-        rhat_summary,
-        file.path(out_dir, paste0(label, "_rhat_summary_by_block.csv")),
-        row.names = FALSE
-      )
-      
-      if (!is.null(ess_df) && nrow(ess_df) > 0L) {
-        utils::write.csv(
-          ess_df,
-          file.path(out_dir, paste0(label, "_ess_all.csv")),
-          row.names = FALSE
-        )
-        
-        utils::write.csv(
-          ess_summary,
-          file.path(out_dir, paste0(label, "_ess_summary_by_block.csv")),
-          row.names = FALSE
-        )
-      }
-      
-      if (!is.null(chain_stats) && nrow(chain_stats) > 0L) {
-        utils::write.csv(
-          chain_stats,
-          file.path(out_dir, paste0(label, "_chain_update_stats.csv")),
-          row.names = FALSE
-        )
-      }
-    }
-  }
-  
-  plots <- list()
-  
-  if (nrow(rhat_df) > 0L) {
-    if (nrow(rhat_df) > 0L) {
-      rhat_plot_df <- rhat_df[is.finite(rhat_df$rhat), , drop = FALSE]
-      
-      rhat_ref <- data.frame(
-        xintercept = c(1.01, 1.05, 1.10),
-        ref = factor(
-          c("1.01", "1.05", "1.10"),
-          levels = c("1.01", "1.05", "1.10")
-        )
-      )
-      
-      plots$rhat_hist <- ggplot2::ggplot(
-        rhat_plot_df,
-        ggplot2::aes(x = rhat)
-      ) +
-        ggplot2::geom_histogram(
-          bins = 40,
-          fill = "steelblue",
-          color = "white",
-          alpha = 0.85
-        ) +
-        ggplot2::geom_vline(
-          data = rhat_ref,
-          ggplot2::aes(
-            xintercept = xintercept,
-            color = ref,
-            linetype = ref
-          ),
-          inherit.aes = FALSE,
-          linewidth = 0.6
-        ) +
-        ggplot2::scale_color_manual(
-          values = c(
-            "1.01" = "grey30",
-            "1.05" = "orange3",
-            "1.10" = "red3"
-          ),
-          name = "Reference"
-        ) +
-        ggplot2::scale_linetype_manual(
-          values = c(
-            "1.01" = "dotted",
-            "1.05" = "dashed",
-            "1.10" = "solid"
-          ),
-          name = "Reference"
-        ) +
-        ggplot2::facet_wrap(~block, scales = "free_y") +
-        ggplot2::labs(
-          x = expression(hat(R)),
-          y = "Count",
-          title = paste0("MCMC review: R-hat distribution by block, ", label),
-          subtitle = "Vertical lines: 1.01, 1.05, 1.10"
-        ) +
-        ggplot2::theme(legend.position = "bottom")
-    }
-  }
-  
-  if (!is.null(ess_df) && nrow(ess_df) > 0L) {
-    plots$ess_box <- ggplot2::ggplot(
-      ess_df[is.finite(ess_df$ess) & ess_df$ess > 0, , drop = FALSE],
-      ggplot2::aes(x = block, y = ess, fill = block)
-    ) +
-      ggplot2::geom_boxplot(alpha = 0.80, outlier.alpha = 0.45) +
-      ggplot2::scale_y_log10() +
-      ggplot2::labs(
-        x = NULL,
-        y = "ESS, log scale",
-        title = paste0("MCMC review: ESS distribution by block, ", label)
-      ) +
-      ggplot2::theme(legend.position = "none")
-  }
-  
-  if (!is.null(chain_stats) && nrow(chain_stats) > 0L) {
-    
-    chain_stat_cols <- c(
-      "u_ess_accept_rate",
-      "global_u_accept_rate",
-      "u_eval_per_update",
-      "global_u_eval_per_update",
-      "theta_eval_per_update"
-    )
-    
-    chain_stat_cols <- intersect(chain_stat_cols, names(chain_stats))
-    
-    chain_long <- chain_stats[, c("chain", chain_stat_cols), drop = FALSE] |>
-      mixedgp_pivot_longer(
-        cols = chain_stat_cols,
-        names_to = "statistic",
-        values_to = "value"
-      )
-    
-    plots$chain_update_stats <- ggplot2::ggplot(
-      chain_long, ggplot2::aes(x = factor(chain), y = value)
-    ) +
-      ggplot2::geom_col(fill = "steelblue", alpha = 0.85) +
-      ggplot2::facet_wrap(~statistic, scales = "free_y", ncol = 3) +
-      ggplot2::labs(
-        x = "Chain",
-        y = NULL,
-        title = paste0("MCMC review: chain update statistics, ", label)
-      )
-  }
-  
-  if (!is.null(out_dir) && save_plots) {
-    if (!is.null(plots$rhat_hist)) {
-      ggplot2::ggsave(
-        file.path(out_dir, paste0(label, "_rhat_hist_by_block.pdf")),
-        plots$rhat_hist,
-        width = 10,
-        height = 6
-      )
-    }
-    
-    if (!is.null(plots$ess_box)) {
-      ggplot2::ggsave(
-        file.path(out_dir, paste0(label, "_ess_box_by_block.pdf")),
-        plots$ess_box,
-        width = 8,
-        height = 5
-      )
-    }
-    
-    if (!is.null(plots$chain_update_stats)) {
-      ggplot2::ggsave(
-        file.path(out_dir, paste0(label, "_chain_update_stats.pdf")),
-        plots$chain_update_stats,
-        width = 10,
-        height = 6
-      )
-    }
-  }
-  
-  list(
-    rhat_df = rhat_df,
-    rhat_summary = rhat_summary,
-    ess_df = ess_df,
-    ess_summary = ess_summary,
-    chain_stats = chain_stats,
-    plots = plots
-  )
 }
 
 
@@ -7827,7 +4858,6 @@ mixedgp_reference_task <- function(stage, computation) {
   tryCatch(list(value=force(computation), status=data.frame(stage=stage,status="success",message="")),
     error=function(e) list(value=NULL,status=data.frame(stage=stage,status="failed",message=conditionMessage(e))))
 }
-
 
 
 # ---- core/00_sampler_v030.R ----
@@ -8754,7 +5784,6 @@ mixedgp_v030_fit <- function(X, y, C, U_obs, m_vec,
 }
 
 
-
 # ---- core/00_sampler_v030_api.R ----
 ## General-purpose adapters for the 0.3.1 collapsed sampler.
 ## Existing prediction helpers use an algebraically equivalent covariance:
@@ -9107,7 +6136,6 @@ fit_eivgp_ordprobit_v030 <- function(X_raw, y_raw, C_ord, U_obs = NULL,
     m_vec = ordinal$m_vec, q = ncol(ordinal$C), d = d, p = ncol(xy$X), ident = ident))
   mixedgp_v030_fit_object(result, data, "multivariate", kernel, matern_nu, .resume)
 }
-
 
 
 # ---- core/03_study2_published_competitors.R ----
@@ -10011,8 +7039,6 @@ mixedgp_adapter_ezgp <- function(X_train,y_train,C_train,X_test,C_test,m_vec,n_d
 study2_adapter_ucgp_qian <- mixedgp_adapter_ucgp
 
 
-
-
 # ---- core/00_public_api.R ----
 ############################################################
 ## Package-ready public fitting interface
@@ -10878,7 +7904,6 @@ fit_mixedgp_competitor <- function(method, ...) {
 }
 
 
-
 # ---- core/00_diagnostics.R ----
 ## Shared export protocol; never recomputes diagnostics or changes their gates.
 mixedgp_write_diagnostic_tables <- function(summary, detail, output_dir,
@@ -11326,7 +8351,6 @@ mixedgp_study2_target_series <- function(fit, X, C, U = NULL,
   }
   mixedgp_mark_diagnostic_window(series, attr(series, "draw_window_complete"))
 }
-
 
 
 # ---- core/00_mcmc_workflow.R ----

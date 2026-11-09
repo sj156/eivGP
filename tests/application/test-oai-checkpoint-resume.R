@@ -71,7 +71,7 @@ testthat::test_that('HMC and ESS recover exact chains after warm-up and full-fit
   identity<-tools::md5sum(e$oai_path(args$output,'workflow_identity.rds'))
   args$run_folds<-'2';suppressWarnings(e$oai_method_run(repo,args,'eivGP'))
   testthat::expect_identical(tools::md5sum(e$oai_path(args$output,'workflow_identity.rds')),identity)
-  split<-args$output;args$output<-file.path(root,'batch');args$run_folds<-NULL
+  split<-args$output;args$output<-file.path(root,'batch');args$run_folds<-NULL;args$cores<-8L
   suppressWarnings(e$oai_method_run(repo,args,'eivGP'))
   for(fold in 1:2) {
     task<-list(fold=fold,cell='O20')
@@ -81,6 +81,13 @@ testthat::test_that('HMC and ESS recover exact chains after warm-up and full-fit
     testthat::expect_identical(one$checkpoint$states,batch$checkpoint$states)
     metric<-function(out)e$oai_path(out,'S24/analysis',sprintf('fold%02d',fold),'O20/prediction_metrics.csv')
     testthat::expect_identical(read.csv(metric(split)),read.csv(metric(args$output)))
+    for(name in c('U_metrics.csv','PROSPECTIVE_U_metrics.csv','PROSPECTIVE_U_predictions.csv')) {
+      output<-function(out)e$oai_path(out,'S24/analysis',sprintf('fold%02d',fold),'O20',name)
+      testthat::expect_identical(read.csv(output(split)),read.csv(output(args$output)))
+    }
+    science<-function(out)readRDS(e$oai_path(out,sprintf('eiv_fold%02d_O20',fold),
+      'scientific-diagnostics.rds'))$scientific_ess$target_series
+    testthat::expect_identical(science(split),science(args$output))
   }
 })
 

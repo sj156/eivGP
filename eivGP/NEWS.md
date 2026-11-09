@@ -1,5 +1,11 @@
 # Unreleased
 
+- Remove unreachable pre-0.3.1 sampler/pilot-baseline helpers and duplicate
+  numerical definitions. Preserve public APIs, dynamically selected study
+  constructors/reports, current samplers and checkpoint compatibility.
+  Share application plot rendering and numerical CLI argument parsing.
+  Allow up to eight concurrent OAI evaluations within the shared core budget.
+
 - Keep disk-index checksums stable when a recorded do.call() contains a
   versioned package namespace. Validate legacy archives with their original
   package and retain their exact bytes, draw checksums and completed receipts.

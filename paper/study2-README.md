@@ -10,6 +10,11 @@ can run on different machines, not old and new experiments.
 | `study2-competitors.R` | Original UC-GP, LVGP, EzGP; all three calibration-aware complete-case versions |
 | `study2.R` / `study2.Rmd` | Read saved results; no fitting |
 
+For existing experiments, see the [competitor resume guide](study2-competitors-README.md),
+[disk-backed continuation guide](study2-disk-continuation-README.md), and
+[ESS/HMC/HYBRID screen guide](study2-sampler-pilot-README.md). Continuation and
+sampler screens use separate sensitivity roots from the fixed-budget paper runs.
+
 ## Fresh replication
 
 Install this checkout on each machine with `Rscript tools/setup_numerical.R`.

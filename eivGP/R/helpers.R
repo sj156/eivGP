@@ -3372,7 +3372,7 @@ mixedgp_cached_competitors <- function(X_train, y_train, C_train, X_test, C_test
       seed = as.integer(seed + j), controls = controls[[method]],
       package_version = if (available) as.character(utils::packageVersion(package)) else "missing",
       R_version = paste(R.version$major, R.version$minor, R.version$platform),
-      adapter_md5 = eivgp_module_identity())
+      adapter_md5 = mixedgp_followup_checkpoint_modules())
     key <- mixedgp_competitor_hash(identity)
     path <- file.path(cache_root, method, paste0(key, ".rds"))
     cached <- if (file.exists(path)) readRDS(path) else NULL
@@ -6607,28 +6607,27 @@ mixedgp_output_completeness_gates <- function(result, config) {
     eiv_surface_actual <- filter_expected_methods(
       result$outputs$surface_recovery, "EIV-GP"
     )
-    ablation_surface_spec <- list(
-      `PI-GP` = positive_calibs,
-      `CC-GP` = positive_calibs,
-      `Full-U GP` = NA_integer_
-    )
-    ablation_surface_expected <- mixedgp_expected_method_keys(
-      cell, ablation_surface_spec
-    )
-    ablation_surface_actual <- filter_expected_methods(
-      result$outputs$ablation_surface_recovery,
-      names(ablation_surface_spec)
-    )
     rows[[length(rows) + 1L]] <- mixedgp_completeness_gate_row(
       cell$id, "latent_surface_eiv_output_completeness",
       eiv_surface_expected, eiv_surface_actual,
       c("rep", "method", "n_calib")
     )
-    rows[[length(rows) + 1L]] <- mixedgp_completeness_gate_row(
-      cell$id, "latent_surface_benchmark_output_completeness",
-      ablation_surface_expected, ablation_surface_actual,
-      c("rep", "method", "n_calib")
-    )
+    if (isTRUE(cell$run_ablations)) {
+      ablation_surface_spec <- list(
+        `PI-GP` = positive_calibs,
+        `CC-GP` = positive_calibs,
+        `Full-U GP` = NA_integer_
+      )
+      ablation_surface_expected <- mixedgp_expected_method_keys(cell, ablation_surface_spec)
+      ablation_surface_actual <- filter_expected_methods(
+        result$outputs$ablation_surface_recovery, names(ablation_surface_spec)
+      )
+      rows[[length(rows) + 1L]] <- mixedgp_completeness_gate_row(
+        cell$id, "latent_surface_benchmark_output_completeness",
+        ablation_surface_expected, ablation_surface_actual,
+        c("rep", "method", "n_calib")
+      )
+    }
   }
 
   if (isTRUE(cell$evaluate_u)) {
@@ -6649,9 +6648,10 @@ mixedgp_output_completeness_gates <- function(result, config) {
       )
     } else {
       targets <- c("training_missing_U", "prospective_U_given_C")
+      latent_methods <- c("EIV-GP", if (isTRUE(cell$run_ablations)) "RF-OM")
       latent_expected <- expand.grid(
         rep = seq_len(cell$n_rep),
-        method = c("EIV-GP", "RF-OM"),
+        method = latent_methods,
         n_calib = calibs,
         target = targets,
         KEEP.OUT.ATTRS = FALSE,
@@ -6661,7 +6661,7 @@ mixedgp_output_completeness_gates <- function(result, config) {
       if (is.data.frame(latent_actual) && nrow(latent_actual) > 0L) {
         latent_actual$method <- mixedgp_normalize_rf_method(latent_actual$method)
         latent_actual <- latent_actual[
-          latent_actual$method %in% c("EIV-GP", "RF-OM") &
+          latent_actual$method %in% latent_methods &
             latent_actual$target %in% targets, , drop = FALSE
         ]
       }
@@ -10792,13 +10792,20 @@ cc_evaluate <- function(method,train,test,cal,us,cfg,seed,path) {
 }
 normal_abs <- function(a,s) {s<-pmax(s,1e-12);2*s*dnorm(a/s)+a*(2*pnorm(a/s)-1)}
 mixture_score <- function(y,mu,v) {
-  if(any(!is.finite(c(y,mu,v)))||any(v< -1e-10))stop("Invalid predictive components")
+  if(length(y)!=1L||!length(mu)||length(mu)!=length(v)||
+     any(!is.finite(c(y,mu,v)))||any(v< -1e-10))stop("Invalid predictive components")
   v<-pmax(v,1e-14);sd<-sqrt(v);lp<-dnorm(y,mu,sd,log=TRUE);mx<-max(lp)
   q<-function(p)uniroot(function(x)mean(pnorm(x,mu,sd))-p,c(min(mu-12*sd),max(mu+12*sd)),tol=1e-8)$root
   lo<-q(.025);hi<-q(.975)
-  # Block pairwise calculation bounds memory for CC mixtures (64*64 components).
-  pair<-0;for(ids in split(seq_along(mu),ceiling(seq_along(mu)/128)))
-    pair<-pair+sum(normal_abs(outer(mu[ids],mu,"-"),sqrt(outer(v[ids],v,"+"))))
+  # Bound both axes of the exact pairwise CRPS calculation. Symmetric blocks
+  # avoid duplicate work and keep each temporary vector at most 64*64 entries.
+  blocks<-split(seq_along(mu),ceiling(seq_along(mu)/64L));pair<-0
+  for(i in seq_along(blocks))for(j in seq.int(i,length(blocks))) {
+    left<-blocks[[i]];right<-blocks[[j]]
+    delta<-rep(mu[left],times=length(right))-rep(mu[right],each=length(left))
+    scale<-sqrt(rep(v[left],times=length(right))+rep(v[right],each=length(left)))
+    pair<-pair+(if(i==j)1 else 2)*sum(normal_abs(delta,scale))
+  }
   c(sq_error=(mean(mu)-y)^2,crps=mean(normal_abs(y-mu,sd))-.5*pair/length(mu)^2,
     nlpd=-(mx+log(mean(exp(lp-mx)))),coverage=as.numeric(y>=lo&&y<=hi),width=hi-lo)
 }
@@ -10812,11 +10819,11 @@ score_result <- function(pred,dat,cal,truth,method) {
     z$seen_in_complete_cases<-if(nrow(z)==length(cc_support))cc_support else NA
     rows[[length(rows)+1L]]<<-z
   }
-  add("y",do.call(rbind,mixedgp_stage_lapply(seq_along(test$y),function(i)mixture_score(test$y[i],pred$y_mean[i,],pred$y_var[i,]))))
+  add("y",do.call(rbind,lapply(seq_along(test$y),function(i)mixture_score(test$y[i],pred$y_mean[i,],pred$y_var[i,]))))
   mp<-if(!is.null(pred$m_point))pred$m_point else rowMeans(pred$m_mean)
   add("m",data.frame(sq_error=(mp-truth$m)^2,crps=NA_real_,nlpd=NA_real_,coverage=NA_real_,width=NA_real_))
   if(!is.null(pred$f_mean)) {
-    add("f",do.call(rbind,mixedgp_stage_lapply(seq_along(truth$f),function(i)mixture_score(truth$f[i],pred$f_mean[i,],pred$f_var[i,]))))
+    add("f",do.call(rbind,lapply(seq_along(truth$f),function(i)mixture_score(truth$f[i],pred$f_mean[i,],pred$f_var[i,]))))
     # m intervals use GP covariance under integration, with finite-L approximation.
     rows[[2]]$coverage<-vapply(seq_along(truth$m),function(i)mixture_score(truth$m[i],pred$m_mean[i,],pred$m_var[i,])["coverage"],numeric(1))
     rows[[2]]$width<-vapply(seq_along(truth$m),function(i)mixture_score(truth$m[i],pred$m_mean[i,],pred$m_var[i,])["width"],numeric(1))
@@ -10839,6 +10846,17 @@ score_result <- function(pred,dat,cal,truth,method) {
     }
   }
   out<-do.call(rbind,rows);out$method<-method;out
+}
+score_cached_cc <- function(folder,dat,cal,truth_path,method) {
+  paths<-file.path(folder,c("predictions.rds","diagnostics.rds"))
+  if(!grepl("-CC$",method)||!all(file.exists(c(paths,truth_path))))return(FALSE)
+  # CC predictions contain all scoring inputs. Do not re-enter measurement or
+  # optimizer stages after an interruption between prediction and scoring.
+  pred<-readRDS(paths[1L])
+  scores<-stage_time(folder,"scoring",score_result(pred,dat,cal,readRDS(truth_path),method))
+  atomic_rds(scores,file.path(folder,"scores.rds"))
+  unlink(file.path(folder,"failure.rds"))
+  TRUE
 }
 aggregate_scores <- function(jobs,root) {
   rows<-list();status<-list()
@@ -10989,7 +11007,16 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
     full_map_hash=if(nzchar(cfg$full_fit_map))unname(tools::md5sum(cfg$full_fit_map))else NULL)
   manifest<-file.path(cfg$output,"protocol.rds")
   if(file.exists(manifest)&&!mixedgp_followup_identity_equal(readRDS(manifest),identity))stop("Configuration/code changed: use a new output directory")
+  if(action=="run") {
+    release_run_lock<-mixedgp_followup_lock(file.path(cfg$output,"RUN.lock"))
+    on.exit(release_run_lock(),add=TRUE)
+  }
   if(!file.exists(manifest))atomic_rds(identity,manifest)
+  if(action=="run" && !identical(readRDS(manifest),identity)) {
+    # Retain the original protocol. Record the audited execution change alongside it.
+    receipt<-file.path(cfg$output,"resume-runtime",paste0(hash_object(identity),".rds"))
+    if(!file.exists(receipt))atomic_rds(identity,receipt)
+  }
   capture.output(sessionInfo(),file=file.path(cfg$output,"sessionInfo.txt"))
   revision<-tryCatch(system2("git",c("-C",shQuote(NUMERICAL_REPO_ROOT),"rev-parse","HEAD"),stdout=TRUE,stderr=FALSE),error=function(e)"unavailable")
   writeLines(revision,file.path(cfg$output,"git_revision.txt"))
@@ -11003,10 +11030,6 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
   registry<-file.path(cfg$output,"job_registry.rds")
   alljobs<-if(file.exists(registry))unique(rbind(readRDS(registry),jobs))else jobs
   if(action=="report")return(aggregate_scores(alljobs,cfg$output))
-  runlock<-file.path(cfg$output,"RUN.lock")
-  if(!dir.create(runlock,showWarnings=FALSE))stop("Run already locked: ",runlock)
-  on.exit(unlink(runlock,recursive=TRUE),add=TRUE)
-  writeLines(as.character(Sys.getpid()),file.path(runlock,"pid"))
   atomic_rds(alljobs,registry)
   allocation <- mixedgp_followup_allocation(cfg$cores,length(cfg$reps))
   timing <- mixedgp_batch_timing(file.path(cfg$output,"timing"),jobs$job,groups=jobs$method,workers=allocation$workers)
@@ -11020,9 +11043,7 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
       timing(j,"cached"); next
     }
     dir.create(folder,recursive=TRUE,showWarnings=FALSE)
-    # Atomic lock prevents two workers writing the same job. Remove only after checking no process owns it.
-    lock<-paste0(folder,".lock");if(!dir.create(lock,showWarnings=FALSE))stop("Job locked: ",lock)
-    writeLines(as.character(Sys.getpid()),file.path(lock,"pid"))
+    release_job_lock<-mixedgp_followup_lock(paste0(folder,".lock"))
     message("Running ",job$job)
     timing(j,"running"); job_started <- proc.time()[["elapsed"]]
     tryCatch({
@@ -11030,6 +11051,11 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
       stopifnot(artifact$study=="study2",artifact$scenario=="primary",artifact$design$q==4,artifact$design$d==2)
       cal<-artifact$calibration_sets[[as.character(job$calib)]];stopifnot(length(cal)==job$calib)
       if(qr(cbind(1,dat$train$U[cal,,drop=FALSE]))$rank<3L)stop("Calibration fails affine-rank anchoring")
+      shared<-file.path(cfg$output,sprintf("shared-rep%03d-cal%02d",job$rep,job$calib))
+      if(score_cached_cc(folder,dat,cal,file.path(shared,"truth.rds"),job$method)) {
+        timing(j,"complete",proc.time()[["elapsed"]]-job_started)
+        next
+      }
       Uobs<-matrix(NA_real_,nrow(dat$train$U),2);Uobs[cal,]<-dat$train$U[cal,]
       base_seed<-cfg$seed+job$rep*1000L+job$calib
       shared<-file.path(cfg$output,sprintf("shared-rep%03d-cal%02d",job$rep,job$calib));dir.create(shared,showWarnings=FALSE)
@@ -11119,14 +11145,16 @@ run_mechanism <- function(cfg,action="plan",script_path=NULL) {
         stability$difference<-stability$m_second-stability$m_first
         write.csv(stability,file.path(folder,"integration_stability.csv"),row.names=FALSE)
       }
+      # Preserve predictions even if scoring fails. Full imputation draws remain
+      # in the source fit/measurement trace and are only needed in memory to score U.
+      cached_prediction<-pred;cached_prediction$U<-NULL
+      atomic_rds(cached_prediction,file.path(folder,"predictions.rds"))
+      rm(cached_prediction)
+      # Scoring stays serial within a job; replicate jobs already run in parallel.
       scores<-stage_time(folder,"scoring",score_result(pred,dat,cal,truth,job$method))
-      # Imputation summaries are in scores; full draws remain in the source fit
-      # or shared measurement trace, so do not duplicate them per prediction file.
-      pred$U<-NULL
-      atomic_rds(pred,file.path(folder,"predictions.rds"))
       atomic_rds(scores,scorefile);unlink(file.path(folder,"failure.rds"))
       timing(j,"complete",proc.time()[["elapsed"]]-job_started)
-    },error=function(e){timing(j,"failed",proc.time()[["elapsed"]]-job_started);failed<<-failed+1L;atomic_rds(list(message=conditionMessage(e),stage=if(is.null(e$stage))"unknown"else e$stage,time=Sys.time()),file.path(folder,"failure.rds"));message("FAILED: ",conditionMessage(e))},finally=unlink(lock,recursive=TRUE))
+    },error=function(e){timing(j,"failed",proc.time()[["elapsed"]]-job_started);failed<<-failed+1L;atomic_rds(list(message=conditionMessage(e),stage=if(is.null(e$stage))"unknown"else e$stage,time=Sys.time()),file.path(folder,"failure.rds"));message("FAILED: ",conditionMessage(e))},finally=release_job_lock())
   }
   failed
   }
@@ -11252,8 +11280,9 @@ mixedgp_study1_cc_workflow <- function(args,repo_root,root,data_root,action) {
         }
         passes<-passes&&(is.null(pred$optimization_status)||!grepl("nonconverged",pred$optimization_status))
         truth<-list(m=m0_1d(d$test$x,d$test$c,tau=d$tau_true,scenario="heterogeneity_continuum"))
+        api$atomic_rds(pred,file.path(folder,"predictions.rds"))
         scores<-api$stage_time(folder,"scoring",api$score_result(pred,dat,cal,truth,job$method))
-        api$atomic_rds(pred,file.path(folder,"predictions.rds"));api$atomic_rds(scores,scorefile)
+        api$atomic_rds(scores,scorefile)
         api$atomic_rds(list(pass=passes,optimizer_status=pred$optimization_status,
           measurement_pass=if(grepl("-CC$",job$method))api$diagnostic_pass(meas$diagnostics)else NA),file.path(folder,"diagnostics.rds"));unlink(file.path(folder,"failure.rds"))
       },error=function(err){failures<<-failures+1L;api$atomic_rds(list(message=conditionMessage(err),stage=if(is.null(err$stage))"unknown"else err$stage,time=Sys.time()),file.path(folder,"failure.rds"));message("FAILED: ",conditionMessage(err))})
@@ -11337,13 +11366,23 @@ run_paper_study <- function(study=c("study1","study2"), args=list(), repo_root=g
     config<-study_config(study,profile,output_root=file.path(root,"core"),data_root=data,cores=as.integer(get("cores","4")))
     methods<-strsplit(get("competitors","UC-GP,LVGP,EzGP"),",",fixed=TRUE)[[1]]
     if(!length(methods)||anyDuplicated(methods)||any(!methods%in%c("UC-GP","LVGP","EzGP")))stop("Invalid original competitors")
-    if(action=="plan")return(run_numerical_study(config,"plan",competitors=character()))
+    if(action=="plan") {
+      planned<-do.call(rbind,lapply(config$cells,function(cell) {
+        z<-expand.grid(rep=seq_len(cell$n_rep),method=methods,stringsAsFactors=FALSE)
+        z$cell_id<-cell$id;z
+      }))
+      counts<-as.data.frame(table(planned$cell_id,planned$method),stringsAsFactors=FALSE)
+      names(counts)<-c("cell_id","method","fits_or_caches")
+      print(counts,row.names=FALSE)
+      cat(nrow(planned),"original competitor fits/caches; no EIV-GP fits.\n")
+      return(invisible(list(jobs=planned)))
+    }
     if(action%in%c("data","run")) {
       prepared<-run_numerical_study(config,"data",competitors=character())
       if(action=="data")return(prepared)
     }
     return(mixedgp_run_competitor_workflow(config,file.path(root,"original-competitors"),
-      workers=as.integer(get("cores","4")),methods=methods,action=if(action=="report")"export"else"run"))
+      workers=as.integer(get("cores","4")),methods=methods,action=if(action=="report")"export"else"retry"))
   }
   if(component%in%c("all","core")) {
     config<-study_config(study,profile,output_root=file.path(root,"core"),data_root=data,cores=as.integer(get("cores","4")))
@@ -11409,11 +11448,9 @@ mixedgp_sampler_disk <- function(identity) {
   directory <- file.path(root, unname(tools::md5sum(tmp)))
   dir.create(directory, recursive=TRUE, showWarnings=FALSE)
   lock <- file.path(directory, "LOCK")
-  if (!dir.create(lock, showWarnings=FALSE)) stop(
-    "Checkpoint is locked: ", lock,
-    ". Check owner.csv; remove this lock directory only after its process has stopped.")
+  release_lock <- mixedgp_followup_lock(lock)
   ok <- FALSE
-  on.exit(if(!ok) unlink(lock,recursive=TRUE), add=TRUE)
+  on.exit(if(!ok) release_lock(), add=TRUE)
   utils::write.csv(data.frame(pid=Sys.getpid(),host=Sys.info()[["nodename"]],
     started_utc=format(Sys.time(),tz="UTC",usetz=TRUE)), file.path(lock,"owner.csv"),row.names=FALSE)
   manifest <- file.path(directory,"identity.rds")
@@ -11587,39 +11624,91 @@ mixedgp_followup_apply <- function(groups, fun, allocation) {
   unlist(ans,use.names=FALSE)
 }
 
+# A dead worker can leave a lock after a native crash. Only a verified dead
+# local owner qualifies for recovery; archive its metadata instead of deleting it.
+mixedgp_followup_process_alive <- function(pid) {
+  exists<-isTRUE(tools::pskill(pid,0L))
+  ps<-Sys.which("ps")
+  if(!nzchar(ps))return(if(exists)TRUE else NA)
+  state<-suppressWarnings(tryCatch(system2(ps,c("-p",as.character(pid),"-o","stat="),
+    stdout=TRUE,stderr=FALSE),error=function(e)NULL))
+  if(is.null(state))return(if(exists)TRUE else NA)
+  status<-attr(state,"status");if(is.null(status))status<-0L
+  if(status==1L && !length(state))return(FALSE)
+  if(status!=0L || length(state)!=1L || !nzchar(trimws(state)))return(if(exists)TRUE else NA)
+  !grepl("^[ZXx]",trimws(state))
+}
+
+mixedgp_followup_lock <- function(path,alive=mixedgp_followup_process_alive) {
+  snapshot<-function() {
+    files<-list.files(path,all.files=TRUE,no..=TRUE,full.names=TRUE)
+    if(!length(files)||any(dir.exists(files)))stop("Cannot verify lock contents: ",path)
+    setNames(lapply(files,function(p)readBin(p,"raw",n=file.info(p)$size)),basename(files))
+  }
+  if(!dir.create(path,showWarnings=FALSE)) {
+    before<-snapshot()
+    owner<-if("owner.rds"%in%names(before))tryCatch(readRDS(file.path(path,"owner.rds")),error=function(e)NULL)else
+      if("owner.csv"%in%names(before))tryCatch(read.csv(file.path(path,"owner.csv")),error=function(e)NULL)else
+      if("pid"%in%names(before))list(pid=suppressWarnings(as.integer(readLines(file.path(path,"pid"),warn=FALSE))))else NULL
+    pid<-owner$pid
+    if(length(pid)!=1L||is.na(pid)||!is.finite(pid)||pid<1||pid!=floor(pid)||pid>.Machine$integer.max)
+      stop("Cannot verify lock owner: ",path)
+    host<-owner$host
+    if(!is.null(host) && (length(host)!=1L||is.na(host)||!identical(as.character(host),unname(Sys.info()[["nodename"]]))))
+      stop("Cannot recover lock from another host: ",path)
+    state<-alive(as.integer(pid))
+    if(!identical(state,FALSE))stop("Lock owner is active or cannot be verified: ",path," (PID ",pid,")")
+    if(!identical(before,snapshot()))stop("Lock ownership changed during recovery: ",path)
+    archive<-tempfile(paste0(basename(path),"-stale-"),tmpdir=dirname(path))
+    if(!file.rename(path,archive))stop("Cannot archive stale lock: ",path)
+    if(!identical(before,setNames(lapply(file.path(archive,names(before)),function(p)readBin(p,"raw",n=file.info(p)$size)),names(before)))) {
+      if(!dir.exists(path))file.rename(archive,path)
+      stop("Lock ownership changed while archiving: ",path)
+    }
+    message("Recovered stale lock from PID ",pid,": ",path)
+    if(!dir.create(path,showWarnings=FALSE))stop("Another process acquired the recovered lock: ",path)
+  }
+  token<-basename(tempfile("owner-"))
+  owner<-list(pid=Sys.getpid(),host=unname(Sys.info()[["nodename"]]),token=token,
+    started_utc=format(Sys.time(),tz="UTC",usetz=TRUE))
+  tryCatch({saveRDS(owner,file.path(path,"owner.rds"));writeLines(as.character(owner$pid),file.path(path,"pid"))},
+    error=function(e){unlink(path,recursive=TRUE);stop(e)})
+  function()mixedgp_release_competitor_lock(path,token)
+}
+
+mixedgp_followup_compatibility <- function() {
+  path<-system.file("followup-scheduler-compatibility.csv",package="eivGP")
+  if(nzchar(path))utils::read.csv(path,stringsAsFactors=FALSE)else data.frame(field=character(),old=character(),new=character())
+}
+
+mixedgp_followup_normalize <- function(x,compat) {
+  # Follow explicit audited aliases transitively; never ignore an unknown hash.
+  for(pass in seq_len(nrow(compat)+1L)) {
+    before<-x
+    for(i in seq_len(nrow(compat))) {
+      row<-compat[i,]
+      if(row$field=="helpers.R" && identical(unname(x$package_manifest["helpers.R"]),row$new))
+        x$package_manifest["helpers.R"]<-row$old
+      if(row$field=="mechanism" && identical(unname(x$code["mechanism"]),row$new))
+        x$code["mechanism"]<-row$old
+    }
+    if(identical(before,x))return(x)
+  }
+  stop("Cyclic follow-up compatibility aliases")
+}
+
 mixedgp_followup_identity_equal <- function(saved,current,compat=NULL) {
   if(identical(saved,current))return(TRUE)
-  # Whitelist a verified orchestration-only edit, never arbitrary inference changes.
-  if(is.null(compat)) {
-    path <- system.file("followup-scheduler-compatibility.csv",package="eivGP")
-    if(!nzchar(path))return(FALSE)
-    compat <- utils::read.csv(path,stringsAsFactors=FALSE)
-  }
-  normalize <- function(x) {
-    for(i in seq_len(nrow(compat))) {
-      row <- compat[i,]
-      if(row$field=="helpers.R" && identical(unname(x$package_manifest["helpers.R"]),row$new))
-        x$package_manifest["helpers.R"] <- row$old
-      if(row$field=="mechanism" && identical(unname(x$code["mechanism"]),row$new))
-        x$code["mechanism"] <- row$old
-    }
-    x
-  }
-  identical(normalize(saved),normalize(current))
+  # Only recorded scheduling/scoring/cache-lifecycle edits are compatible.
+  if(is.null(compat))compat<-mixedgp_followup_compatibility()
+  identical(mixedgp_followup_normalize(saved,compat),mixedgp_followup_normalize(current,compat))
 }
 
 
 # Preserve checkpoint directory keys across the audited scheduling-only edit.
 mixedgp_followup_checkpoint_modules <- function() {
-  modules <- eivgp_module_identity()
-  path <- system.file("followup-scheduler-compatibility.csv",package="eivGP")
-  if(nzchar(path)) {
-    compat <- utils::read.csv(path,stringsAsFactors=FALSE)
-    row <- compat[compat$field=="helpers.R",,drop=FALSE]
-    if(nrow(row)==1L && identical(unname(modules["helpers.R"]),row$new))
-      modules["helpers.R"] <- row$old
-  }
-  modules
+  mixedgp_followup_normalize(list(package_manifest=eivgp_module_identity()),
+    mixedgp_followup_compatibility())$package_manifest
 }
 
 

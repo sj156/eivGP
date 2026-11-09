@@ -88,6 +88,7 @@ study2_paper_workflow <- function(lane,args=list(),repo_root=getwd(),
   invisible(result)
 }
 study2_lane_cli <- function(lane,script) {
+  if(lane=="competitors")Sys.setenv(VECLIB_MAXIMUM_THREADS="1",OPENBLAS_NUM_THREADS="1",OMP_NUM_THREADS="1")
   env<-new.env(parent=globalenv())
   sys.source(file.path(dirname(normalizePath(script)),"numerical-common.R"),envir=env)
   args<-list()
@@ -97,6 +98,143 @@ study2_lane_cli <- function(lane,script) {
     if(k%in%names(args))stop("Repeated option: ",k)
     args[[k]]<-sub("^--[^=]+=","",x)
   }
+  if(lane=="competitors") {
+    if(is.null(args[["checkpoint-after-seconds"]]))args[["checkpoint-after-seconds"]]<-"0"
+    if(is.null(args[["checkpoint-seconds"]]))args[["checkpoint-seconds"]]<-"600"
+  }
   env$numerical_package_check()
   study2_paper_workflow(lane,args,env$NUMERICAL_REPO_ROOT)
+}
+
+# A second invocation should report an existing verified local run, without
+# entering the fitting driver or changing its locks/checkpoints.
+study2_active_competitor_run <- function(root,alive=function(pid)
+  getFromNamespace("mixedgp_followup_process_alive","eivGP")(pid)) {
+  locks<-list.dirs(root,recursive=TRUE,full.names=TRUE)
+  locks<-locks[basename(locks)=="RUN.lock"]
+  for(lock in locks) {
+    path<-file.path(lock,"owner.rds")
+    if(!file.exists(path))next
+    bytes<-tryCatch(readBin(path,"raw",n=file.info(path)$size),error=function(e)NULL)
+    owner<-tryCatch(readRDS(path),error=function(e)NULL)
+    pid<-owner$pid
+    if(length(pid)!=1L||!is.numeric(pid)||is.na(pid)||!is.finite(pid)||
+       pid<1||pid!=floor(pid)||pid>.Machine$integer.max)next
+    if(!identical(owner$host,unname(Sys.info()[["nodename"]])))next
+    if(!isTRUE(alive(as.integer(pid))))next
+    after<-tryCatch(readBin(path,"raw",n=file.info(path)$size),error=function(e)NULL)
+    if(identical(bytes,after))return(list(pid=as.integer(pid),lock=lock))
+  }
+  NULL
+}
+
+# Preserve the failed experiment as a read-only source. Copy verified artifacts
+# once; subsequent invocations operate only on the resumed output tree.
+study2_resume_competitors <- function(args,repo_root,runner=study2_paper_workflow,
+                                     check_runtime=function()invisible(NULL)) {
+  action<-if(is.null(args$action))"plan"else args$action
+  if(!action%in%c("plan","run","report"))stop("Resume action must be plan, run or report")
+  candidate<-file.path(repo_root,"results","study2-competitors")
+  if(is.null(args[["source-root"]]))args[["source-root"]]<-if(dir.exists(candidate))candidate else file.path(path.expand("~/eivGP-results"),"study2-competitors")
+  source<-normalizePath(path.expand(args[["source-root"]]),mustWork=TRUE)
+  if(is.null(args$output))args$output<-paste0(source,"-resumed")
+  target<-path.expand(args$output)
+  dir.create(dirname(target),recursive=TRUE,showWarnings=FALSE)
+  target<-if(dir.exists(target))normalizePath(target,mustWork=TRUE)else file.path(normalizePath(dirname(target),mustWork=TRUE),basename(target))
+  within<-function(x,y)identical(x,y)||startsWith(x,paste0(y,"/"))
+  if(within(target,source)||within(source,target))stop("Resume output must be separate from the original experiment")
+  args[["source-root"]]<-NULL;args$output<-target
+  if(is.null(args$cores))args$cores<-"12"
+  if(is.null(args[["checkpoint-after-seconds"]]))args[["checkpoint-after-seconds"]]<-"0"
+  if(is.null(args[["checkpoint-seconds"]]))args[["checkpoint-seconds"]]<-"600"
+  if(is.null(args$methods))args$methods<-"UC-GP-CC,LVGP-CC,EzGP-CC"
+  # The original grid is complete on this machine; CC defaults continue only
+  # its interrupted calibrated comparisons. Explicit methods may include it.
+  if(is.null(args[["data-root"]])) {
+    local_data<-file.path(repo_root,"results","data","study2")
+    args[["data-root"]]<-if(dir.exists(local_data))local_data else file.path(path.expand("~/eivGP-results"),"data","study2")
+  }
+  marker<-file.path(target,"resume-source.rds")
+  running_status<-function() {
+    active<-study2_active_competitor_run(target)
+    if(is.null(active))return(NULL)
+    message("Already running (PID ",active$pid,"). The existing experiment continues in the background.\n",
+      "Outputs: ",target,"\nNo second run was started. Rerun after it exits to resume unfinished work.")
+    list(status="already_running",pid=active$pid,output=target)
+  }
+  if(action=="run" && file.exists(marker)) {
+    if(!identical(readRDS(marker)$source,source))stop("This resume output belongs to another source experiment")
+    status<-running_status()
+    if(!is.null(status))return(invisible(status))
+  }
+  # An existing worker uses its already loaded runtime. Check the current
+  # checkout only when this invocation would start work or build a report.
+  check_runtime()
+  if(action=="plan") {
+    message("Original results (unchanged): ",source,"\nResume output: ",target)
+    return(runner("competitors",args,repo_root))
+  }
+  if(action=="report" && !file.exists(marker))stop("Run the resume script before reporting its output")
+  if(!file.exists(marker)) {
+    dirs<-list.dirs(source,recursive=TRUE,full.names=TRUE)
+    locks<-dirs[grepl("([.]lock$|^LOCK$)",basename(dirs))]
+    for(lock in locks) {
+      rds<-file.path(lock,"owner.rds");csv<-file.path(lock,"owner.csv");pidfile<-file.path(lock,"pid")
+      owner<-if(file.exists(rds))readRDS(rds)else if(file.exists(csv))read.csv(csv)else
+        if(file.exists(pidfile))list(pid=suppressWarnings(as.integer(readLines(pidfile,warn=FALSE))))else NULL
+      if(length(owner$pid)!=1L||is.na(owner$pid)||owner$pid<1L)stop("Cannot verify source lock: ",lock)
+      if(!is.null(owner$host)&&!identical(as.character(owner$host),unname(Sys.info()[["nodename"]])))stop("Source lock belongs to another host: ",lock)
+      alive<-getFromNamespace("mixedgp_followup_process_alive","eivGP")(owner$pid)
+      if(!identical(alive,FALSE))stop("Source worker is active or cannot be verified: ",lock)
+    }
+    files<-list.files(source,all.files=TRUE,no..=TRUE,recursive=TRUE,full.names=TRUE)
+    relative<-substring(files,nchar(source)+2L)
+    keep<-!grepl("(^|/)([^/]*[.]lock|LOCK)(/|$)",relative)
+    files<-files[keep];relative<-relative[keep]
+    if(!length(files)||any(nzchar(Sys.readlink(files))))stop("Source must contain ordinary saved files")
+    before<-setNames(unname(tools::md5sum(files)),relative)
+    dir.create(target,recursive=TRUE,showWarnings=FALSE)
+    release<-getFromNamespace("mixedgp_followup_lock","eivGP")(file.path(target,".snapshot.lock"))
+    on.exit(release(),add=TRUE)
+    # An unmarked nonempty output is never adopted accidentally. A partial copy
+    # made by this script can resume, verifying each already copied file.
+    pending<-file.path(target,"resume-copy.rds")
+    if(!file.exists(pending)) {
+      existing<-setdiff(list.files(target,all.files=TRUE,no..=TRUE),".snapshot.lock")
+      if(length(existing))stop("Resume output already contains unrelated files: ",target)
+      saveRDS(list(source=source,files=before),pending)
+    } else if(!identical(readRDS(pending),list(source=source,files=before)))stop("Source changed since the partial resume copy")
+    message("Copying ",length(files)," saved files; original results stay unchanged")
+    for(i in seq_along(files)) {
+      dest<-file.path(target,relative[i]);dir.create(dirname(dest),recursive=TRUE,showWarnings=FALSE)
+      if(file.exists(dest)) {
+        if(unname(tools::md5sum(dest))!=before[i])stop("Existing resume copy differs: ",dest)
+      } else if(!file.copy(files[i],dest,copy.mode=TRUE,copy.date=TRUE))stop("Cannot copy saved artifact: ",files[i])
+    }
+    after<-setNames(unname(tools::md5sum(files)),relative)
+    copied<-setNames(unname(tools::md5sum(file.path(target,relative))),relative)
+    if(!identical(before,after)||!identical(before,copied))stop("Source/copy verification failed; no simulation started")
+    getFromNamespace("mixedgp_atomic_rds","eivGP")(list(source=source,files=before,created=Sys.time()),marker)
+    unlink(pending);release()
+  } else if(!identical(readRDS(marker)$source,source))stop("This resume output belongs to another source experiment")
+  if(action=="run") {
+    status<-running_status()
+    if(!is.null(status))return(invisible(status))
+  }
+  message("Continuing saved experiment at ",target,"; completed jobs are reused")
+  runner("competitors",args,repo_root)
+}
+
+study2_resume_competitors_cli <- function(script) {
+  Sys.setenv(VECLIB_MAXIMUM_THREADS="1",OPENBLAS_NUM_THREADS="1",OMP_NUM_THREADS="1")
+  env<-new.env(parent=globalenv())
+  sys.source(file.path(dirname(normalizePath(script)),"numerical-common.R"),envir=env)
+  args<-list()
+  for(x in commandArgs(TRUE)) {
+    if(!grepl("^--[^=]+=.+$",x))stop("Use --name=value")
+    k<-sub("^--([^=]+)=.*$","\\1",x)
+    if(k%in%names(args))stop("Repeated option: ",k)
+    args[[k]]<-sub("^--[^=]+=","",x)
+  }
+  study2_resume_competitors(args,env$NUMERICAL_REPO_ROOT,check_runtime=env$numerical_package_check)
 }

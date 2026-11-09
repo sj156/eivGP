@@ -1,0 +1,22 @@
+test_that('Study II completeness follows requested methods and preserves EIV checks', {
+  cell<-list(id='q4',n_rep=2L,calibration_grid=c(0L,20L),run_ablations=FALSE,evaluate_f=TRUE,evaluate_u=TRUE)
+  cfg<-list(study='study2',published_methods=character())
+  keys<-expand.grid(rep=1:2,method='EIV-GP',n_calib=c(0L,20L),stringsAsFactors=FALSE)
+  outputs<-list(predictive_metrics=rbind(keys,data.frame(rep=1:2,method='Oracle',n_calib=NA_integer_)),
+    mean_recovery=keys,surface_recovery=keys[keys$n_calib>0,],
+    latent_imputation_status=merge(keys,data.frame(target=c('training_missing_U','prospective_U_given_C'))))
+  result<-list(cell=cell,outputs=outputs)
+  gates<-mixedgp_output_completeness_gates(result,cfg)
+  expect_true(all(gates$pass))
+  expect_false('latent_surface_benchmark_output_completeness'%in%gates$gate)
+  result$outputs$latent_imputation_status<-outputs$latent_imputation_status[-1,]
+  gates<-mixedgp_output_completeness_gates(result,cfg)
+  expect_false(gates$pass[gates$gate=='latent_u_task_status_completeness'])
+  result<-list(cell=cell,outputs=outputs);result$cell$run_ablations<-TRUE
+  gates<-mixedgp_output_completeness_gates(result,cfg)
+  expect_false(gates$pass[gates$gate=='latent_u_task_status_completeness'])
+  expect_false(gates$pass[gates$gate=='latent_surface_benchmark_output_completeness'])
+  result<-list(cell=cell,outputs=outputs);result$outputs$surface_recovery<-data.frame()
+  gates<-mixedgp_output_completeness_gates(result,cfg)
+  expect_false(gates$pass[gates$gate=='latent_surface_eiv_output_completeness'])
+})

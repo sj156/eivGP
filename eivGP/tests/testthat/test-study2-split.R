@@ -45,8 +45,20 @@ test_that("core competitor routing never requests EIV fitting", {
   environment(f)<-env
   base<-list(component="core-competitors",output=tempfile(),`data-root`=tempfile(),cores="1")
   f("study2",modifyList(base,list(action="run")),tempdir())
-  expect_identical(actions,"data");expect_equal(calls[[1]]$action,"run")
+  expect_identical(actions,"data");expect_equal(calls[[1]]$action,"retry")
   actions<-character();calls<-list()
   f("study2",modifyList(base,list(action="report")),tempdir())
   expect_length(actions,0);expect_equal(calls[[1]]$action,"export")
+})
+
+test_that("original competitor plans describe competitor caches without EIV fitting", {
+  f<-run_paper_study;env<-new.env(parent=environment(f))
+  env$eivgp_numerical_api<-function(...)list()
+  env$study_config<-function(...)list(cells=list(list(id="small",n_rep=2L)))
+  env$run_numerical_study<-env$mixedgp_run_competitor_workflow<-function(...)stop("Plan must not execute a workload")
+  environment(f)<-env
+  capture.output(result<-f("study2",list(component="core-competitors",action="plan",
+    competitors="UC-GP,LVGP",output=tempfile(),`data-root`=tempfile()),tempdir()))
+  expect_equal(nrow(result$jobs),4L)
+  expect_setequal(result$jobs$method,c("UC-GP","LVGP"))
 })

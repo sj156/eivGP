@@ -84,3 +84,6 @@ __pycache__/
 !/data/oai/DATASET.example.json
 /paper/applications/oai-plan*.Rmd
 /paper/applications/oai-plan*.html
+
+# Separate numerical sensitivity runs and their isolated environments
+/results-sensitivity/
